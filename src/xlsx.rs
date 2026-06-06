@@ -415,12 +415,19 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    // Run: cargo test --release big_xlsx -- --ignored --nocapture
+    // Benchmark against a large local workbook. Point VELLUM_BIG at a file:
+    //   VELLUM_BIG=/path/big.xlsx cargo test --release big_xlsx -- --ignored --nocapture
     #[test]
     #[ignore]
     fn big_xlsx() {
-        let path = std::env::var("VELLUM_BIG")
-            .unwrap_or_else(|_| format!("{}/Documents/data.xlsx", std::env::var("HOME").unwrap()));
+        let Ok(path) = std::env::var("VELLUM_BIG") else {
+            eprintln!("set VELLUM_BIG=/path/to/file.xlsx to run this benchmark");
+            return;
+        };
+        if !std::path::Path::new(&path).exists() {
+            eprintln!("VELLUM_BIG file not found: {path}");
+            return;
+        }
         let t = Instant::now();
         let book = StreamBook::open(&path).expect("open");
         println!("open() (sst+workbook parse): {:?}", t.elapsed());
