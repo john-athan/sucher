@@ -1,0 +1,19 @@
+[package]
+name = "vellum"
+version = "0.1.0"
+edition = "2021"
+description = "Markdown reader with real terminal typography (kitty text-sizing protocol)"
+
+[dependencies]
+pulldown-cmark = "0.12"
+ratatui = "0.30"
+crossterm = "0.29"
+calamine = "0.26"
+ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
+image = "0.25"
+zip = "2"
+quick-xml = "0.36"
+
+[[bin]]
+name = "vellum"
+path = "src/main.rs"
