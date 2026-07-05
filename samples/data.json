@@ -1,0 +1,15 @@
+{
+  "name": "Sucher",
+  "version": 1.4,
+  "active": true,
+  "author": {
+    "name": "Jonathan Kaleve",
+    "email": "jonathan@pareo.ai"
+  },
+  "features": ["hexdump", "grid", "syntax-highlight"],
+  "stats": {
+    "files_viewed": 12843,
+    "avg_open_ms": 3.7,
+    "cached": false
+  }
+}

@@ -1,0 +1,6 @@
+2026-07-04T08:12:03.114Z INFO  server started on 0.0.0.0:8080
+2026-07-04T08:12:03.482Z INFO  loaded 5 viewers: text, csv, zip, pptx, keynote
+2026-07-04T08:12:11.907Z DEBUG opened /home/ada/report.csv (grid viewer)
+2026-07-04T08:12:14.220Z WARN  slow preview: deck.pptx took 412ms
+2026-07-04T08:12:19.663Z ERROR failed to read /tmp/corrupt.zip: unexpected EOF
+2026-07-04T08:12:25.001Z INFO  client disconnected (session 3f9a1c)

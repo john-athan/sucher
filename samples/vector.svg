@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b1220"/>
+      <stop offset="0.6" stop-color="#1e3a5f"/>
+      <stop offset="1" stop-color="#f8b25e"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff3c4"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </radialGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="1" stop-color="#0e7490"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="640" height="400" rx="14" fill="url(#sky)"/>
+  <circle cx="470" cy="150" r="66" fill="url(#sun)"/>
+  <circle cx="470" cy="150" r="90" fill="none" stroke="#fde68a" stroke-width="2" opacity="0.4"/>
+
+  <!-- reflected water -->
+  <rect y="300" width="640" height="100" fill="#0b2a3a" opacity="0.85"/>
+  <g stroke="#7dd3fc" stroke-width="2" opacity="0.5">
+    <line x1="380" y1="330" x2="560" y2="330"/>
+    <line x1="410" y1="352" x2="530" y2="352"/>
+    <line x1="440" y1="374" x2="500" y2="374"/>
+  </g>
+
+  <!-- back range -->
+  <path d="M0 300 L120 210 L240 285 L360 190 L520 300 Z" fill="url(#hill)" opacity="0.55"/>
+  <!-- front range -->
+  <path d="M0 320 L160 235 L300 315 L430 250 L640 330 L640 320 Z" fill="#0f766e"/>
+
+  <!-- flock -->
+  <g stroke="#e2e8f0" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M120 120 q10 -10 20 0 q10 -10 20 0"/>
+    <path d="M180 100 q8 -8 16 0 q8 -8 16 0"/>
+    <path d="M95 150 q8 -8 16 0 q8 -8 16 0"/>
+  </g>
+
+  <polygon points="60,300 80,250 100,300" fill="#052e2b"/>
+  <polygon points="90,300 108,262 126,300" fill="#064e3b"/>
+</svg>

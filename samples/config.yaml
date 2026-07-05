@@ -1,0 +1,18 @@
+# Sucher sample configuration
+name: sucher
+version: 1.4.0
+debug: false
+
+# Terminal viewer settings
+viewer:
+  theme: dark
+  line_numbers: true
+  tab_width: 4
+
+# Supported preview formats
+formats:
+  - text
+  - csv
+  - zip
+  - pptx
+  - keynote

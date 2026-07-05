@@ -1,0 +1,6 @@
+id	name	language	stars	archived
+1	sucher	Rust	1240	false
+2	ripgrep	Rust	48000	false
+3	bat	Rust	46000	false
+4	fd	Rust	33000	false
+5	exa	Rust	23000	true

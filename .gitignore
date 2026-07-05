@@ -1,0 +1,9 @@
+# Rust build output
+/target
+
+# Local sample / scratch files used for manual testing
+/sample.*
+/*.tmp
+
+# macOS
+.DS_Store

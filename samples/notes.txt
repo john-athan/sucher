@@ -1,0 +1,8 @@
+Sucher is a read-only terminal file viewer.
+
+It opens a file, figures out what kind of thing it is, and shows you the
+most useful view without ever letting you change the bytes on disk. Text
+gets syntax highlighting, tables get a grid, archives get a listing, and
+anything else falls back to a clean hexdump.
+
+These sample files exist so a human can eyeball each viewer by hand.
