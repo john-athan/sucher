@@ -6,7 +6,7 @@
 use crate::config::{IconMode, Layout};
 use crate::format::Format;
 use crate::git::{self, GitStatus};
-use crate::media::ImagePane;
+use crate::media::{self, ImagePane};
 use crate::{highlight, icons, query, theme, typeahead};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use image::DynamicImage;
@@ -42,6 +42,17 @@ enum Pv {
     Text,    // styled lines in `preview`
     Loading, // async raster in flight; caption in `caption`
     Image,   // pixels in `pane`, caption in `caption`
+}
+
+/// What the async raster worker ships back over the channel (ADR 0005 D1). A
+/// still is a single decoded image (cached in `img_cache`); an animated GIF is a
+/// frame set the pane loops (never cached — frame sets are large; reselecting
+/// re-decodes off-thread). Widening this from a bare `Option<DynamicImage>` is
+/// what lets one worker feed both the still and the animated install paths while
+/// still never touching `pane`/`img_cache` itself.
+enum Rastered {
+    Still(DynamicImage),
+    Animated(Vec<media::Frame>),
 }
 
 struct App {
@@ -82,11 +93,18 @@ struct App {
     img_cache: Vec<(PathBuf, DynamicImage)>,
     // Async rasteriser (image/PDF/video posters). The worker never touches
     // `img_cache` or `pane`; it decodes on a thread and ships the finished
-    // `DynamicImage` (Send) back over the channel to the main thread.
-    raster_tx: Sender<(PathBuf, Option<DynamicImage>)>,
-    raster_rx: Receiver<(PathBuf, Option<DynamicImage>)>,
+    // `Rastered` (Send) — a still image or an animated GIF's frames — back over
+    // the channel to the main thread, which installs it.
+    raster_tx: Sender<(PathBuf, Option<Rastered>)>,
+    raster_rx: Receiver<(PathBuf, Option<Rastered>)>,
     raster_pending: Option<PathBuf>, // path in the ONE live worker
     raster_want: Option<(PathBuf, Format)>, // latest selection awaiting a raster
+    // Whether the current `Pv::Image` preview is an animated GIF that must be
+    // ticked (ADR 0005 D1). Set only when an `Animated` raster installs; cleared
+    // by `build_preview` on any new selection and by installing a still. `main_loop`
+    // gates its per-frame tick on this AND `pv == Image`, so a still (or nothing)
+    // being previewed never ticks — no idle churn off the animated path.
+    preview_animated: bool,
     // Braille-spinner frame counter for the `Loading` preview (ADR 0004 D3). It
     // advances ONLY while a raster is live (pending or wanted) — never on an idle
     // redraw — so the spinner animates during real work without the fully-idle
@@ -172,6 +190,7 @@ pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) ->
         raster_rx,
         raster_pending: None,
         raster_want: None,
+        preview_animated: false,
         spin: 0,
     };
     app.load();
@@ -303,12 +322,15 @@ impl App {
                 term.draw(|f| self.render(f))?;
                 dirty = false;
             }
-            // Poll briefly while a raster is in flight or queued so a finished
-            // image installs promptly AND the braille spinner ticks smoothly;
-            // otherwise idle at the normal cadence. A raster being "active" is the
-            // one condition under which a bare timeout advances the animation.
+            // Poll briefly while a raster is in flight or queued (so a finished
+            // image installs promptly AND the braille spinner ticks) OR while an
+            // animated GIF preview is on screen (so it loops); otherwise idle at
+            // the normal 1 s cadence. These are the ONLY conditions under which a
+            // bare timeout does any work — a fully idle browser (still image,
+            // text, or nothing selected) blocks the full second and does nothing.
             let raster_active = self.raster_pending.is_some() || self.raster_want.is_some();
-            let timeout = if raster_active {
+            let animating = self.preview_animated && matches!(self.pv, Pv::Image);
+            let timeout = if raster_active || animating {
                 Duration::from_millis(60)
             } else {
                 Duration::from_millis(1000)
@@ -324,14 +346,25 @@ impl App {
                     Event::Resize(..) => dirty = true,
                     _ => {}
                 }
-            } else if raster_active {
-                // Timeout with no input AND a raster live: advance the spinner one
-                // frame and force a redraw so it animates at ~60 ms. Gated on
-                // `raster_active` so a fully idle browser (which blocks the full
-                // 1 s above) neither ticks `spin` nor redraws — zero idle CPU,
-                // preserving the README's no-busy-loop promise (ADR 0004 D3).
-                self.spin = self.spin.wrapping_add(1);
-                dirty = true;
+            } else {
+                // Timeout with no input. Advance whatever live animation applies;
+                // both arms are gated so a fully idle browser does neither and
+                // stays at zero CPU (ADR 0004 D3 spinner, ADR 0005 D1 GIF).
+                if raster_active {
+                    // Spinner: advance one braille frame and redraw at ~60 ms.
+                    self.spin = self.spin.wrapping_add(1);
+                    dirty = true;
+                }
+                if animating {
+                    // GIF: advance to the next frame if its delay elapsed. `tick`
+                    // re-encodes and returns true only on a real frame change, so
+                    // we redraw exactly when the picture moved.
+                    if let Some(pane) = self.pane.as_mut() {
+                        if pane.tick(Instant::now()) {
+                            dirty = true;
+                        }
+                    }
+                }
             }
         }
     }
@@ -521,12 +554,26 @@ impl App {
         }
     }
 
-    /// Install a decoded image into the pane as the live preview.
+    /// Install a decoded still image into the pane as the live preview. A still
+    /// clears `preview_animated`, so any prior GIF's ticking stops.
     fn show_image(&mut self, img: DynamicImage) {
         if let Some(pane) = self.pane.as_mut() {
             pane.set(img);
         }
         self.pv = Pv::Image;
+        self.preview_animated = false;
+    }
+
+    /// Install an animated GIF's frames into the pane as the live preview and
+    /// mark it animated so `main_loop` ticks it. Deliberately NOT cached in
+    /// `img_cache` (bounded, and frame sets are large); reselecting the GIF
+    /// re-decodes off-thread — cheap and backgrounded (ADR 0005 D1).
+    fn show_animation(&mut self, frames: Vec<media::Frame>) {
+        if let Some(pane) = self.pane.as_mut() {
+            pane.set_animation(frames);
+        }
+        self.pv = Pv::Image;
+        self.preview_animated = true;
     }
 
     /// Drive the single-worker async rasteriser. Runs every main-loop tick:
@@ -537,11 +584,12 @@ impl App {
         let mut dirty = false;
         let cur = self.selected().map(|e| e.path.clone());
 
-        // 1. Drain completed rasters. Cache every success; only touch the pane
-        //    when the finished path is still the current selection.
+        // 1. Drain completed rasters. Cache every finished STILL (animations are
+        //    never cached — see `show_animation`); only touch the pane when the
+        //    finished path is still the current selection.
         while let Ok((path, result)) = self.raster_rx.try_recv() {
-            if let Some(img) = result.clone() {
-                self.cache_put(path.clone(), img);
+            if let Some(Rastered::Still(img)) = &result {
+                self.cache_put(path.clone(), img.clone());
             }
             if self.raster_pending.as_deref() == Some(path.as_path()) {
                 self.raster_pending = None;
@@ -550,7 +598,8 @@ impl App {
                 continue; // stale: scrolled away — keep it cached, leave the pane
             }
             match result {
-                Some(img) => self.show_image(img),
+                Some(Rastered::Still(img)) => self.show_image(img),
+                Some(Rastered::Animated(frames)) => self.show_animation(frames),
                 None => {
                     // Raster failed (e.g. pdftocairo/ffmpeg missing): degrade to
                     // the text preview. The header lines are already in `preview`
@@ -578,17 +627,34 @@ impl App {
                     let tx = self.raster_tx.clone();
                     let p = path.clone();
                     thread::spawn(move || {
-                        let img = match kind {
-                            Format::Image => image::ImageReader::open(&p)
-                                .map_err(|e| e.to_string())
-                                .and_then(|r| r.decode().map_err(|e| e.to_string())),
-                            Format::Pdf => crate::pdf::poster(&p.to_string_lossy()),
-                            Format::Video => crate::video::poster(&p.to_string_lossy()),
-                            Format::Svg => crate::svg::render_svg(&p.to_string_lossy()),
-                            Format::Keynote => crate::keynote::preview_image(&p.to_string_lossy()),
-                            _ => Err(String::new()),
+                        // An image may be an animated GIF: try frames first, and
+                        // fall back to a single still decode (which also covers a
+                        // static/oversized GIF, where `decode_frames` returns None).
+                        // Every other format is always a single still poster.
+                        let result: Option<Rastered> = match kind {
+                            Format::Image => media::decode_frames(&p)
+                                .map(Rastered::Animated)
+                                .or_else(|| {
+                                    image::ImageReader::open(&p)
+                                        .ok()
+                                        .and_then(|r| r.decode().ok())
+                                        .map(Rastered::Still)
+                                }),
+                            Format::Pdf => crate::pdf::poster(&p.to_string_lossy())
+                                .ok()
+                                .map(Rastered::Still),
+                            Format::Video => crate::video::poster(&p.to_string_lossy())
+                                .ok()
+                                .map(Rastered::Still),
+                            Format::Svg => crate::svg::render_svg(&p.to_string_lossy())
+                                .ok()
+                                .map(Rastered::Still),
+                            Format::Keynote => crate::keynote::preview_image(&p.to_string_lossy())
+                                .ok()
+                                .map(Rastered::Still),
+                            _ => None,
                         };
-                        let _ = tx.send((p, img.ok()));
+                        let _ = tx.send((p, result));
                     });
                     self.raster_pending = Some(path);
                 }
@@ -601,6 +667,10 @@ impl App {
     fn build_preview(&mut self) {
         self.preview.clear();
         self.pv = Pv::Text;
+        // A new selection is not (yet) an animation; clear the flag so any prior
+        // GIF's ticking stops the moment the cursor moves off it — no idle churn
+        // on the next selection until an `Animated` raster actually installs.
+        self.preview_animated = false;
         // A new selection redefines what wants rastering; drop any stale want so
         // fast-scrolling onto a cached/text entry cancels the previous request.
         self.raster_want = None;
