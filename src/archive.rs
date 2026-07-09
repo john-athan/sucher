@@ -204,13 +204,16 @@ fn tar_entries<R: Read>(reader: io::Take<R>) -> Result<Vec<Entry>, String> {
         let size = entry.header().size().unwrap_or(0);
         out.push(Entry { name, size, is_dir });
     }
-    // If the inflation cap was fully consumed the listing may be incomplete. Say
-    // so with an explicit marker row rather than silently truncating (ADR 0009) —
+    // If the inflation cap was fully consumed we can't be sure we saw every
+    // header: the listing MIGHT be missing later entries, or it might be complete
+    // with only the final member's data overrunning the cap. We cannot tell the
+    // two apart from a `Take`, so state the uncertainty honestly rather than
+    // asserting truncation or silently dropping the possibility (ADR 0009).
     // `into_inner` is reachable now the borrowing `entries()` iterator is dropped.
     if ar.into_inner().limit() == 0 && !out.is_empty() {
         out.push(Entry {
             name: format!(
-                "… listing truncated (archive exceeds {})",
+                "… archive exceeds {}; listing may be incomplete",
                 crate::util::human_size(crate::util::MAX_ARCHIVE_INFLATE as u64)
             ),
             size: 0,
