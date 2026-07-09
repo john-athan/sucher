@@ -25,6 +25,9 @@ pub struct Config {
     pub palette: Palette,
     pub icons: IconMode,
     pub layout: Layout,
+    /// Whether the browser shows the git-status gutter (ADR 0004, D2). When
+    /// off, the current pane never runs `git` and the gutter is fully absent.
+    pub git: bool,
 }
 
 /// How the browser draws the per-entry glyph column (ADR 0003, D5). Nerd Font
@@ -100,6 +103,8 @@ struct FileConfig {
     theme: Option<String>,
     icons: Option<String>,
     layout: Option<String>,
+    /// Whether to draw the git gutter (ADR 0004, D2); default on when omitted.
+    git: Option<bool>,
     /// Optional per-key hex overrides, applied last over the resolved palette.
     colors: Option<std::collections::HashMap<String, String>>,
 }
@@ -112,15 +117,18 @@ pub fn load(
     cli_theme: Option<String>,
     cli_icons: Option<String>,
     cli_layout: Option<String>,
+    cli_git: Option<bool>,
 ) -> Config {
     let file = read_file_config().unwrap_or_default();
     let env_theme = std::env::var("SUCHER_THEME").ok();
     let env_icons = std::env::var("SUCHER_ICONS").ok();
     let env_layout = std::env::var("SUCHER_LAYOUT").ok();
+    let env_git = std::env::var("SUCHER_GIT").ok();
 
     let theme_name = resolve_theme_name(cli_theme, env_theme, file.theme.clone());
     let icons = resolve_icons(cli_icons, env_icons, file.icons.clone());
     let layout = resolve_layout(cli_layout, env_layout, file.layout.clone());
+    let git = resolve_git(cli_git, env_git, file.git);
 
     let mut palette = resolve_palette(&theme_name);
     apply_color_overrides(&mut palette, file.colors.as_ref());
@@ -129,6 +137,7 @@ pub fn load(
         palette,
         icons,
         layout,
+        git,
     }
 }
 
@@ -158,6 +167,30 @@ fn resolve_layout(cli: Option<String>, env: Option<String>, file: Option<String>
         .or(file)
         .and_then(|s| Layout::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// Pure git-toggle precedence: `cli` (the `--no-git` flag) → env (`SUCHER_GIT`)
+/// → file → default `true`. The env value is parsed by [`parse_bool`]; an
+/// unrecognised spelling falls through to the file/default rather than
+/// erroring, so a typo never silently disables the gutter unexpectedly.
+fn resolve_git(cli: Option<bool>, env: Option<String>, file: Option<bool>) -> bool {
+    if let Some(c) = cli {
+        return c;
+    }
+    if let Some(b) = env.as_deref().and_then(parse_bool) {
+        return b;
+    }
+    file.unwrap_or(true)
+}
+
+/// Parse a boolean config/env spelling, case-insensitively: `1/true/yes/on` →
+/// `true`, `0/false/no/off` → `false`, anything else → `None`.
+fn parse_bool(s: &str) -> Option<bool> {
+    match s.trim().to_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
 }
 
 /// Turn a theme name into a [`Palette`]. `"auto"` picks dark/light from the
@@ -511,6 +544,35 @@ mod tests {
         );
         // Nothing set → default.
         assert_eq!(resolve_layout(None, None, None), Layout::Auto);
+    }
+
+    #[test]
+    fn parse_bool_accepts_the_spellings() {
+        for s in ["1", "true", "YES", " on ", "True"] {
+            assert_eq!(parse_bool(s), Some(true), "{s}");
+        }
+        for s in ["0", "false", "NO", " off ", "False"] {
+            assert_eq!(parse_bool(s), Some(false), "{s}");
+        }
+        assert_eq!(parse_bool("maybe"), None);
+        assert_eq!(parse_bool(""), None);
+    }
+
+    #[test]
+    fn git_precedence_and_default() {
+        // CLI (the --no-git flag) wins outright.
+        assert_eq!(
+            resolve_git(Some(false), Some("true".into()), Some(true)),
+            false
+        );
+        // No CLI → a recognised env spelling wins over the file.
+        assert_eq!(resolve_git(None, Some("no".into()), Some(true)), false);
+        // Unparseable env → falls through to the file value (forgiving).
+        assert_eq!(resolve_git(None, Some("bogus".into()), Some(false)), false);
+        // No CLI/env → the file value.
+        assert_eq!(resolve_git(None, None, Some(false)), false);
+        // Nothing set → the built-in default (on).
+        assert_eq!(resolve_git(None, None, None), true);
     }
 
     #[test]

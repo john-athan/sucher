@@ -5,7 +5,7 @@
 
 use crate::config::{IconMode, Layout};
 use crate::format::Format;
-use crate::git::GitStatus;
+use crate::git::{self, GitStatus};
 use crate::media::ImagePane;
 use crate::{highlight, icons, query, theme, typeahead};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -54,6 +54,13 @@ struct App {
     // `effective_columns`, collapsing Miller to double when the frame is too
     // narrow or there is no parent.
     layout: Layout,
+    // Whether the git gutter is enabled at all (config `git`, ADR 0004 D2). When
+    // false, `git` below stays `None` everywhere and no `git` subprocess runs.
+    git_enabled: bool,
+    // The current directory's git status map (name → state), recomputed on every
+    // `load`. `None` when git is disabled, git is absent, or `cwd` isn't a repo —
+    // in which case the gutter is not drawn and the layout is the pre-git render.
+    git: Option<std::collections::HashMap<String, GitStatus>>,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
     state: ListState,
@@ -128,7 +135,7 @@ fn browse_char(c: char) -> Option<CharAction> {
     })
 }
 
-pub fn run(start: String, icons: IconMode, layout: Layout) -> io::Result<()> {
+pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) -> io::Result<()> {
     let cwd = fs::canonicalize(&start).unwrap_or_else(|_| PathBuf::from(&start));
     // Probe the graphics protocol once, before any alternate screen. If the
     // terminal can't do pixels, previews fall back to text/metadata.
@@ -138,6 +145,8 @@ pub fn run(start: String, icons: IconMode, layout: Layout) -> io::Result<()> {
         cwd,
         icons,
         layout,
+        git_enabled,
+        git: None,
         all: Vec::new(),
         view: Vec::new(),
         state: ListState::default(),
@@ -180,6 +189,14 @@ impl App {
     /// Read the current directory into `all`, then apply the filter.
     fn load(&mut self) {
         self.all = read_entries(&self.cwd);
+        // Refresh the git gutter for the new directory (cheap, correct after a
+        // dir change — D2). Disabled, git-absent, or non-repo dirs yield `None`,
+        // which the pane renderer treats as "no gutter" (byte-for-byte pre-git).
+        self.git = if self.git_enabled {
+            git::status_map(&self.cwd)
+        } else {
+            None
+        };
         self.refilter();
     }
 
@@ -864,7 +881,7 @@ impl App {
                 order: &self.view,
                 selected: self.state.selected(),
                 title: format!(" {} ", self.view.len()),
-                git: None, // dormant until the git phase (D1/D2).
+                git: self.git.as_ref(), // current pane's gutter (D2).
                 show_size: true,
             };
             render_entry_list(f, cols[1], &view, &mut self.state, true, filter, self.icons);
@@ -881,7 +898,7 @@ impl App {
                 order: &self.view,
                 selected: self.state.selected(),
                 title: format!(" {} ", self.view.len()),
-                git: None, // dormant until the git phase (D1/D2).
+                git: self.git.as_ref(), // current pane's gutter (D2).
                 show_size: true,
             };
             render_entry_list(f, cols[0], &view, &mut self.state, true, filter, self.icons);
@@ -1044,8 +1061,9 @@ struct EntryListView<'a> {
     /// The already-formatted block title (` {count} ` for the current pane, the
     /// folder name for the parent).
     title: String,
-    /// Optional per-entry git state, keyed by file name. ALWAYS `None` this phase
-    /// — the gutter branch is dormant until the git phase populates it (D1/D2).
+    /// Optional per-entry git state, keyed by file name (ADR 0004, D2). `Some`
+    /// for the current pane in a repo (drawing the gutter); `None` for the parent
+    /// context pane and for non-repo / git-disabled dirs (no gutter, no width).
     git: Option<&'a std::collections::HashMap<String, GitStatus>>,
     /// Whether to draw the right-aligned size column. The current pane keeps it;
     /// the parent context pane drops it for a cleaner, narrower list.
@@ -1072,8 +1090,7 @@ fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
 /// The single place browser entries are drawn (ADR 0004, D1): one rounded,
 /// bordered list of icon + optional git gutter + name + optional size. Both the
 /// current pane (`active`, size column, filter-aware border) and the parent
-/// context pane (inactive, no size) route through here, so a future column (the
-/// git gutter, phase-git) is a localized change.
+/// context pane (inactive, no size) route through here.
 ///
 /// A free function, not a method, because the current pane must render through
 /// the persistent `App.state` (preserving its scroll offset byte-for-byte) while
@@ -1083,8 +1100,9 @@ fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
 /// - `active` lights the border with the accent (and the title accent+BOLD);
 ///   inactive dims both. `filter` (only ever true for the active current pane)
 ///   shifts the border to the filter yellow (`doc`), matching the status line.
-/// - `view.git` is dormant this phase (always `None`), so no gutter is drawn and
-///   its width is reclaimed by the name — keeping two-column output unchanged.
+/// - `view.git` reserves a 2-cell gutter only when `Some` (the current pane in a
+///   repo); when `None` (parent pane, non-repo, or git off) it costs zero width
+///   and the name reclaims it — so two-column output is byte-for-byte pre-git.
 fn render_entry_list(
     f: &mut Frame,
     area: Rect,
@@ -1104,7 +1122,8 @@ fn render_entry_list(
         _ => 6,              // borders + gutter + glyph cell
     };
     // The git gutter is a 2-cell slot drawn only when a git map is present; when
-    // absent (always, this phase) it costs nothing and the name reclaims it.
+    // absent (parent pane, non-repo, git off) it costs nothing and the name
+    // reclaims it, keeping the pre-git layout byte-for-byte.
     let git_w: u16 = if view.git.is_some() { 2 } else { 0 };
     let inner_w = area.width.saturating_sub(chrome_w + git_w) as usize;
     let size_w = 8usize;
@@ -1158,9 +1177,9 @@ fn render_entry_list(
                 }
                 IconMode::None => e.kind.color(),
             };
-            // Git gutter, between the icon and the name (dormant until the git
-            // phase supplies `view.git`). A tracked-but-clean entry keeps the
-            // slot blank so names stay column-aligned.
+            // Git gutter, between the icon and the name, drawn when `view.git`
+            // is present (D2). A clean/absent entry keeps the slot blank so
+            // names stay column-aligned.
             if let Some(git) = view.git {
                 match git.get(&e.name) {
                     Some(st) => spans.push(Span::styled(

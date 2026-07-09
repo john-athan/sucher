@@ -50,6 +50,8 @@ fn main() -> ExitCode {
     let mut cli_theme: Option<String> = None;
     let mut cli_icons: Option<String> = None;
     let mut cli_layout: Option<String> = None;
+    // `--no-git` forces the git gutter off, overriding env/file/default.
+    let mut cli_no_git = false;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -57,9 +59,10 @@ fn main() -> ExitCode {
             "--theme" => cli_theme = args.next(),
             "--icons" => cli_icons = args.next(),
             "--layout" => cli_layout = args.next(),
+            "--no-git" => cli_no_git = true,
             "-h" | "--help" => {
                 eprintln!(
-                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [file|dir]"
+                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [--no-git] [file|dir]"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -70,7 +73,8 @@ fn main() -> ExitCode {
     // Resolve the palette (flag > env > file > default) and install it before
     // any viewer draws. Auto light/dark detection runs here, before the
     // alternate screen. `icons` threads through to the browser for a later phase.
-    let config = config::load(cli_theme, cli_icons, cli_layout);
+    let cli_git = if cli_no_git { Some(false) } else { None };
+    let config = config::load(cli_theme, cli_icons, cli_layout, cli_git);
     theme::init(config.palette);
 
     // No argument browses the current directory.
@@ -83,7 +87,7 @@ fn main() -> ExitCode {
         // Directories open the file browser (or a plain listing when piped).
         Format::Directory => {
             if interactive {
-                if let Err(e) = dir::run(path, config.icons, config.layout) {
+                if let Err(e) = dir::run(path, config.icons, config.layout, config.git) {
                     eprintln!("sucher: {e}");
                     return ExitCode::FAILURE;
                 }
