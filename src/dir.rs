@@ -145,6 +145,18 @@ struct App {
     // directory a click there navigates to. Recorded unconditionally (harmless
     // when mouse capture is off); consumed by `crumb_hit` on a left-click.
     crumb_hits: Vec<(Range<u16>, PathBuf)>,
+    // The CURRENT entry-list pane's on-screen rectangle, recorded every `render`
+    // (ADR 0005 D2). This is the click-hit-test surface for the file list —
+    // analogous to `crumb_hits` for the breadcrumb: written unconditionally
+    // (harmless with mouse off) and read only on a left-click, where
+    // `row_to_index` maps a clicked row inside it to a `view` index. It is
+    // `cols[0]` in the two-column split and `cols[1]` (the middle pane) in Miller.
+    list_area: Rect,
+    // The Miller PARENT pane's rectangle, or `None` outside Miller (ADR 0005 D2).
+    // A left-click inside it navigates up (`go_parent`). `Some(cols[0])` only in
+    // the three-column branch; `None` in the two-column split, so a parent click
+    // is simply impossible there.
+    parent_area: Option<Rect>,
     // Braille-spinner frame counter for the `Loading` preview (ADR 0004 D3). It
     // advances ONLY while a raster is live (pending or wanted) — never on an idle
     // redraw — so the spinner animates during real work without the fully-idle
@@ -269,6 +281,8 @@ pub fn run(
         preview_animated: false,
         meta: MetaCol::Size,
         crumb_hits: Vec::new(),
+        list_area: Rect::default(),
+        parent_area: None,
         spin: 0,
     };
     app.load();
@@ -430,18 +444,53 @@ impl App {
                     }
                     // Pointer navigation while mouse capture is on (ADR 0005 D2).
                     // A left-click on the breadcrumb row jumps to the clicked
-                    // segment's directory; the wheel scrolls the selection. Any
-                    // mouse event counts as activity → redraw. When capture is
-                    // off no mouse events arrive, so this arm is simply dead.
+                    // segment's directory; a click in the current list selects a
+                    // row (a second click on the already-selected row opens it); a
+                    // click in the Miller parent pane navigates up; the wheel
+                    // scrolls the selection. Any mouse event counts as activity →
+                    // redraw. When capture is off no mouse events arrive, so this
+                    // arm is simply dead.
                     Event::Mouse(me) => match me.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
                             if me.row == 0 {
+                                // Breadcrumb row (handled first, exactly as before).
                                 if let Some(target) = crumb_hit(&self.crumb_hits, me.column) {
                                     if target != self.cwd {
                                         self.enter_dir(target);
                                         dirty = true;
                                     }
                                 }
+                            } else if let Some(idx) = row_to_index(
+                                self.list_area,
+                                self.state.offset(),
+                                me.row,
+                                me.column,
+                                self.view.len(),
+                            ) {
+                                // Single-click SELECTS a different row; a click on
+                                // the ALREADY-selected row OPENS it. One click moves
+                                // the cursor and a second on it activates — this is
+                                // discoverable and avoids the accidental opens a
+                                // click-to-open-anything rule would cause (and it
+                                // mirrors the keyboard: land, then Enter). Opening a
+                                // file yields an `Action` that must leave `main_loop`
+                                // exactly like the `Enter`/`l` path, so propagate it.
+                                if self.state.selected() == Some(idx) {
+                                    if let Some(action) = self.activate() {
+                                        return Ok(action);
+                                    }
+                                } else {
+                                    self.state.select(Some(idx));
+                                }
+                                dirty = true;
+                            } else if self
+                                .parent_area
+                                .is_some_and(|a| rect_contains(a, me.column, me.row))
+                            {
+                                // A click anywhere in the Miller parent pane simply
+                                // navigates up (the simple, robust rule from D2).
+                                self.go_parent();
+                                dirty = true;
                             }
                         }
                         MouseEventKind::ScrollDown => {
@@ -1070,6 +1119,10 @@ impl App {
                 ])
                 .split(rows[1]);
             self.render_parent(f, cols[0]);
+            // Record both panes as click-hit-test surfaces (ADR 0005 D2): the
+            // current list is the middle column, the parent the left one.
+            self.list_area = cols[1];
+            self.parent_area = Some(cols[0]);
             // `viewport_h` drives half-page paging and must track the CURRENT
             // pane — the middle column here.
             self.viewport_h = cols[1].height.saturating_sub(2);
@@ -1091,6 +1144,10 @@ impl App {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
                 .split(rows[1]);
+            // Record the current list as the click-hit-test surface; no parent
+            // pane exists in the two-column split (ADR 0005 D2).
+            self.list_area = cols[0];
+            self.parent_area = None;
             self.viewport_h = cols[0].height.saturating_sub(2);
             let view = EntryListView {
                 entries: &self.all,
@@ -1677,6 +1734,57 @@ fn crumb_hit(hits: &[(Range<u16>, PathBuf)], x: u16) -> Option<PathBuf> {
         .map(|(_, target)| target.clone())
 }
 
+/// Resolve a left-click at screen cell `(row, col)` to an index into the current
+/// pane's `view`, or `None` when the click misses an entry (ADR 0005 D2). Pure —
+/// the geometry (`list_area`, the `ListState` scroll `offset`, and the visible
+/// entry count `view_len`) is captured at render time, but the mapping itself is
+/// unit-tested here without a terminal.
+///
+/// The list is drawn inside a rounded, bordered block: the top border occupies
+/// the first row of `list_area` and the bottom border its last, so the clickable
+/// entry rows are the inner rows `list_area.y + 1 ..= list_area.y + height - 2`.
+/// The visible entries start at the `ListState` scroll `offset`, so the row's
+/// entry position is `offset + (row - (list_area.y + 1))`. The click must fall
+/// within the pane's inner rows AND inside its x-span (a click in a NEIGHBOURING
+/// pane on the same row must not select here), and the resolved index must be a
+/// real entry (`< view_len`) — a click below the last entry, on a border, or
+/// outside the column range all yield `None`.
+/// Whether a screen cell `(col, row)` lies within `r` (borders included). Used to
+/// route a left-click to the Miller parent pane (ADR 0005 D2).
+fn rect_contains(r: Rect, col: u16, row: u16) -> bool {
+    col >= r.x
+        && col < r.x.saturating_add(r.width)
+        && row >= r.y
+        && row < r.y.saturating_add(r.height)
+}
+
+fn row_to_index(
+    list_area: Rect,
+    offset: usize,
+    row: u16,
+    col: u16,
+    view_len: usize,
+) -> Option<usize> {
+    // Reject clicks outside the pane's horizontal span (borders included): a
+    // click at this row but in an adjacent column belongs to another pane.
+    if col < list_area.x || col >= list_area.x.saturating_add(list_area.width) {
+        return None;
+    }
+    // The first entry row is just below the top border; the last inner row is
+    // just above the bottom border. A degenerate pane (height < 3) has no inner
+    // rows and the range check below rejects every click.
+    let first_row = list_area.y.saturating_add(1);
+    let last_inner = list_area
+        .y
+        .saturating_add(list_area.height)
+        .saturating_sub(2);
+    if row < first_row || row > last_inner {
+        return None; // on a border or outside the pane vertically
+    }
+    let idx = offset + (row - first_row) as usize;
+    (idx < view_len).then_some(idx)
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -1776,6 +1884,51 @@ mod tests {
         assert_eq!(crumb_hit(&hits, 2), None);
         assert_eq!(crumb_hit(&hits, 6), None);
         assert_eq!(crumb_hit(&hits, 0), None);
+    }
+
+    #[test]
+    fn row_to_index_maps_clicks_inside_the_pane() {
+        // A pane at (x=10, y=2), 30 wide, 10 tall: top border at row 2, first
+        // entry row at 3, bottom border at row 11 (y+height-1), last inner row 10.
+        let area = Rect {
+            x: 10,
+            y: 2,
+            width: 30,
+            height: 10,
+        };
+        // No scroll: the first entry row → view[0].
+        assert_eq!(row_to_index(area, 0, 3, 15, 5), Some(0));
+        assert_eq!(row_to_index(area, 0, 4, 15, 5), Some(1));
+        // The top border (row 2) is not an entry → None.
+        assert_eq!(row_to_index(area, 0, 2, 15, 5), None);
+        // A row past the entries (view_len == 5, so rows 3..=7 are valid) → None.
+        assert_eq!(row_to_index(area, 0, 8, 15, 5), None);
+        // A click on the bottom border (row 11) → None.
+        assert_eq!(row_to_index(area, 0, 11, 15, 5), None);
+        // A click outside the pane's x-range (adjacent pane, same row) → None.
+        assert_eq!(row_to_index(area, 0, 3, 9, 5), None); // left of x
+        assert_eq!(row_to_index(area, 0, 3, 40, 5), None); // at x+width (excluded)
+                                                           // With a scrolled list (offset 12), the first visible row is view[12].
+        assert_eq!(row_to_index(area, 12, 3, 15, 100), Some(12));
+        assert_eq!(row_to_index(area, 12, 5, 15, 100), Some(14));
+        // Offset math must still bounds-check: row resolves to index 14 but the
+        // view only has 13 entries → None (never an out-of-bounds select).
+        assert_eq!(row_to_index(area, 12, 5, 15, 13), None);
+    }
+
+    #[test]
+    fn rect_contains_includes_borders_excludes_beyond() {
+        let r = Rect {
+            x: 5,
+            y: 1,
+            width: 4,
+            height: 3,
+        };
+        assert!(rect_contains(r, 5, 1)); // top-left corner
+        assert!(rect_contains(r, 8, 3)); // bottom-right corner (x+w-1, y+h-1)
+        assert!(!rect_contains(r, 9, 3)); // x+w is excluded
+        assert!(!rect_contains(r, 8, 4)); // y+h is excluded
+        assert!(!rect_contains(r, 4, 2)); // left of x
     }
 
     #[test]
