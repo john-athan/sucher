@@ -13,6 +13,7 @@
 // config-less in-process `imgview`, honours `animate = false`) and an opt-in
 // frame-stats sink that proves the achieved emission FPS on exit.
 
+use ratatui::layout::Rect;
 use ratatui::style::Color;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -65,6 +66,38 @@ impl Anim {
 pub fn ease_out_cubic(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     1.0 - (1.0 - t).powi(3)
+}
+
+/// The starting scale of the full-view open/close zoom (ADR 0006 D3): at `t = 0`
+/// the image is a small centred box this fraction of the display, growing to the
+/// whole area at `t = 1`. Small enough to read as "opening", large enough that
+/// even the first frame is a recognisable thumbnail.
+const ZOOM_START: f32 = 0.15;
+
+/// Centred sub-rect of `full` scaled by a factor that ramps from [`ZOOM_START`]
+/// at `t = 0` to `1.0` at `t = 1` — the geometry of the image viewer's open/close
+/// zoom (ADR 0006 D3). Pure so the "always inside, centred, exact at the ends"
+/// invariants are unit-tested without a terminal.
+///
+/// The endpoint identity matters: `zoom_rect(full, 1.0) == full` **exactly** (the
+/// scale is `1.0`, the rounded dimensions land back on `full`'s, the centring
+/// offset is zero), so the intro's settle frame renders the picture at precisely
+/// the size and position the normal `render` uses — no visible jump when the zoom
+/// hands off to the static display. `w`/`h` are floored to `1` and capped at
+/// `full`'s so the rect is never empty and never spills outside `full` (the
+/// offsets use `saturating_sub`, so a degenerate zero-width `full` can't underflow).
+pub fn zoom_rect(full: Rect, t: f32) -> Rect {
+    let scale = ZOOM_START + (1.0 - ZOOM_START) * t.clamp(0.0, 1.0);
+    let w = (full.width as f32 * scale).round() as u16;
+    let h = (full.height as f32 * scale).round() as u16;
+    let w = w.clamp(1, full.width.max(1));
+    let h = h.clamp(1, full.height.max(1));
+    Rect {
+        x: full.x + full.width.saturating_sub(w) / 2,
+        y: full.y + full.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    }
 }
 
 /// Component-wise linear interpolation between two colours at factor `t` (clamped
@@ -227,6 +260,68 @@ mod tests {
         }
         // A concrete interior point: 0.5 → 0.875.
         assert!((ease_out_cubic(0.5) - 0.875).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zoom_rect_full_at_t_one() {
+        // The no-jump identity: at t = 1 the sub-rect is exactly `full`, so the
+        // intro's settle frame matches the normal render pixel-for-pixel.
+        let full = Rect::new(3, 5, 80, 24);
+        assert_eq!(zoom_rect(full, 1.0), full);
+        // Out-of-range t clamps to the same full rect (never overshoots).
+        assert_eq!(zoom_rect(full, 2.0), full);
+    }
+
+    #[test]
+    fn zoom_rect_small_and_centred_at_t_zero() {
+        let full = Rect::new(0, 0, 100, 40);
+        let r = zoom_rect(full, 0.0);
+        // Starts at ZOOM_START (0.15) of each dimension: 15 wide, 6 tall.
+        assert_eq!(r.width, 15);
+        assert_eq!(r.height, 6);
+        // Centred: left margin == right margin (even gaps here).
+        assert_eq!(r.x, (100 - 15) / 2);
+        assert_eq!(r.y, (40 - 6) / 2);
+        // Clamped t (negative) behaves like t = 0.
+        assert_eq!(zoom_rect(full, -1.0), r);
+    }
+
+    #[test]
+    fn zoom_rect_always_inside_and_symmetric() {
+        let full = Rect::new(7, 2, 81, 25); // odd dimensions to stress centring
+        let mut prev_w = 0;
+        for i in 0..=20 {
+            let t = i as f32 / 20.0;
+            let r = zoom_rect(full, t);
+            // Never empty.
+            assert!(r.width >= 1 && r.height >= 1, "empty at t={t}");
+            // Fully contained within `full`.
+            assert!(r.x >= full.x && r.y >= full.y, "escapes top-left at t={t}");
+            assert!(r.right() <= full.right(), "escapes right at t={t}: {r:?}");
+            assert!(
+                r.bottom() <= full.bottom(),
+                "escapes bottom at t={t}: {r:?}"
+            );
+            // Symmetric centring: left and right margins differ by at most 1
+            // (integer division of an odd gap).
+            let left = r.x - full.x;
+            let right = full.right() - r.right();
+            assert!(left.abs_diff(right) <= 1, "off-centre x at t={t}");
+            let top = r.y - full.y;
+            let bottom = full.bottom() - r.bottom();
+            assert!(top.abs_diff(bottom) <= 1, "off-centre y at t={t}");
+            // Monotonically non-shrinking as t grows.
+            assert!(r.width >= prev_w, "width shrank at t={t}");
+            prev_w = r.width;
+        }
+    }
+
+    #[test]
+    fn zoom_rect_degenerate_full_does_not_panic() {
+        // A zero-width/height full must not underflow the centring offset.
+        let r = zoom_rect(Rect::new(0, 0, 0, 0), 0.0);
+        assert_eq!((r.width, r.height), (1, 1));
+        assert_eq!((r.x, r.y), (0, 0));
     }
 
     #[test]
