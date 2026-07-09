@@ -1,6 +1,6 @@
 [package]
 name = "sucher"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Jonathan Kaleve <jonathan.kaleve@gmail.com>"]
 description = "A fast terminal viewer for files that are awkward in a browser: markdown, spreadsheets, PDF, images, video, docx, pptx, Keynote, archives and binary."
