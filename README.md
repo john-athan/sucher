@@ -125,14 +125,17 @@ For pixel-perfect images / PDF / video, use a terminal with a graphics
 protocol — **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
 Without one, sucher falls back to Unicode half-blocks.
 
-## Themes & icons
+## Themes, icons & layout
 
-The browser's palette and its file icons are configurable. Resolution order,
-highest first: **CLI flag → environment variable → config file → default.**
+The browser's palette, file icons, column layout, and git gutter are
+configurable. Resolution order, highest first:
+**CLI flag → environment variable → config file → default.**
 
 ```sh
 s --theme catppuccin-mocha --icons nerd ~/projects
 SUCHER_THEME=gruvbox-dark SUCHER_ICONS=none s
+s --layout miller ~/projects        # force three columns
+s --no-git .                        # hide the git gutter
 ```
 
 Config file at `$XDG_CONFIG_HOME/sucher/config.toml` (else
@@ -140,8 +143,10 @@ Config file at `$XDG_CONFIG_HOME/sucher/config.toml` (else
 fatal:
 
 ```toml
-theme = "catppuccin-mocha"   # or "auto" | built-in name (default: sucher-dark)
-icons = "nerd"               # "unicode" (default) | "nerd" | "none"
+theme  = "catppuccin-mocha"  # or "auto" | built-in name (default: sucher-dark)
+icons  = "nerd"              # "unicode" (default) | "nerd" | "none"
+layout = "auto"              # "auto" (default) | "miller" | "double"
+git    = true                # show the git status gutter (default: true)
 
 [colors]                     # optional per-key hex overrides, applied last
 accent = "#7dd3fc"
@@ -156,6 +161,14 @@ selection = "#26324a"
   `nerd` (per-extension [Nerd Font](https://www.nerdfonts.com/) glyphs with
   per-language tints — **requires a patched Nerd Font**; not auto-detected, so
   opt in), or `none` (no icon column).
+- **Layout** — `auto` shows three columns (**parent · current · preview**, the
+  ranger-style [Miller layout](https://en.wikipedia.org/wiki/Miller_columns)) on
+  wide terminals (≥ 100 cols) and collapses to two (**current · preview**) when
+  narrow; `miller` forces three, `double` forces two. Toggle live with `M`.
+- **Git gutter** — in a git working tree, each entry shows a colored status
+  marker (`●` modified · `+` added · `?` untracked · `✗` deleted · `»` renamed ·
+  `!` conflict); directories aggregate their descendants' changes. Absent
+  outside a repo or with `git = false`.
 
 ## Usage & keys
 
@@ -168,7 +181,8 @@ s <file> | less     # piped: text dump
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l`/`→` open file or enter folder · `h`/`←`/`Backspace` parent ·
-`/` smart filter · `.` toggle dotfiles · `q` quit. The right pane renders a live
+`/` smart filter · `.` toggle dotfiles · `M` two/three-column layout · `q` quit.
+The right pane renders a live
 preview of the selection: **images, SVGs, PDFs (page 1), video posters, and
 Keynote previews as real pixels**, **markdown/docx/pptx with full typography**, a
 **grid preview for spreadsheets** (including csv/tsv), a **table of contents for
