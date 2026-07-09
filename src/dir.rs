@@ -734,15 +734,21 @@ impl App {
     }
 
     /// Activate the selected hit (ADR 0007 §8). A directory hit leaves search and
-    /// navigates into it (the new listing enters from the right, matching keyboard
-    /// `l`); an openable file returns `Action::Open` — `App` state (search included)
-    /// survives the open-and-return round trip (`run`'s outer loop), so quitting the
-    /// viewer lands back in the live results. An unopenable kind just reports it.
+    /// navigates into it; an openable file returns `Action::Open` — `App` state
+    /// (search included) survives the open-and-return round trip (`run`'s outer
+    /// loop), so quitting the viewer lands back in the live results. An unopenable
+    /// kind just reports it.
     fn activate_search(&mut self) -> Option<Action> {
         let sel = self.cur_sel()?;
         if sel.kind == Format::Directory {
             self.exit_search();
             self.enter_dir(sel.path, SlideDir::FromRight);
+            // Opening a dir HIT is a jump to an arbitrary (possibly deep) descendant,
+            // not a sibling step — and the browse pane wasn't even on screen (search
+            // was). `enter_dir` armed a slide from the stale pre-search snapshot; drop
+            // it so only the (background-anchored) colour fade plays. A slide implying
+            // spatial adjacency would be a lie here.
+            self.slide = None;
             None
         } else if sel.kind.opens() {
             Some(Action::Open(sel.path))
@@ -755,6 +761,14 @@ impl App {
     fn main_loop(&mut self, term: &mut DefaultTerminal) -> io::Result<Action> {
         let mut dirty = true;
         loop {
+            // Drain the recursive-search stream (ADR 0007 §5): append newly-arrived
+            // hits and notice completion. Run BEFORE the preview recompute so the
+            // first hit — which both arrives and sets the initial selection here —
+            // has its preview built in this same iteration, not one loop (≤60 ms)
+            // later. Inert (an early `false`) when not searching.
+            if self.pump_search() {
+                dirty = true;
+            }
             // Recompute the preview when the selection changed. Sourced from the
             // mode-aware accessor so a search hit drives the preview too (ADR 0007
             // D5); in browse/filter `cur_sel` is the browsed entry, unchanged.
@@ -767,12 +781,6 @@ impl App {
             // Service the async rasteriser: install finished posters, retire the
             // in-flight job, and launch the next wanted one.
             if self.pump_raster() {
-                dirty = true;
-            }
-            // Drain the recursive-search stream (ADR 0007 §5): append newly-arrived
-            // hits and notice completion, right beside the raster pump. Inert (an
-            // early `false`) when not searching.
-            if self.pump_search() {
                 dirty = true;
             }
             // Drive the folder fade (ADR 0006 D3). While a fade is live, redraw

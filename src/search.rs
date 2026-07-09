@@ -37,10 +37,7 @@
 //! `Query::matches`) are unit-tested without a walk.
 //!
 //! This module is the search *engine*: it exposes [`start`]/[`Search`]/[`Hit`]/
-//! [`Msg`] for the browser's `Mode::Search` arm (ADR 0007 D3/D5) to drive. Until
-//! that integration lands, nothing in the binary calls it, so we allow dead_code
-//! module-wide — the API is exercised only by this module's own tests for now.
-#![allow(dead_code)]
+//! [`Msg`] for the browser's `Mode::Search` arm (ADR 0007 D3/D5), which drives it.
 
 use crate::format::Format;
 use crate::query::Query;
