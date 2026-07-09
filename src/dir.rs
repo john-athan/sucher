@@ -8,7 +8,9 @@ use crate::format::Format;
 use crate::git::{self, GitStatus};
 use crate::media::{self, ImagePane};
 use crate::{highlight, icons, query, theme, typeahead};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
+};
 use image::DynamicImage;
 // The ratatui layout builder is aliased to `RtLayout` so `Layout` can name the
 // browser's own pane-layout mode (auto/miller/double) from `config`.
@@ -19,6 +21,7 @@ use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Pa
 use ratatui::{DefaultTerminal, Frame};
 use std::fs;
 use std::io::{self, Read};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
@@ -35,6 +38,34 @@ struct Entry {
 enum Mode {
     Browse,
     Filter,
+}
+
+/// Which trailing metadata column the entry list draws (ADR 0005, D2). The
+/// current pane toggles between `Size` and `Modified` with the `t` key; the
+/// parent context pane is always `None` (no column, reclaiming the width). One
+/// enum replaces the old `show_size: bool` so the size / relative-mtime / absent
+/// choice is a single, exhaustive decision rather than two overlapping booleans.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MetaCol {
+    /// Right-aligned human byte size (the default; directories show blank).
+    Size,
+    /// Right-aligned compact relative modified age (`3h`, `2d`, …); directories
+    /// show their mtime too.
+    Modified,
+    /// No trailing column at all — the parent pane, which reclaims the width.
+    None,
+}
+
+impl MetaCol {
+    /// The `t` toggle for the current pane: flip between `Size` and `Modified`.
+    /// `None` is a parent-only state and never user-toggled, but maps to
+    /// `Modified` for totality.
+    fn toggle(self) -> Self {
+        match self {
+            MetaCol::Modified => MetaCol::Size,
+            MetaCol::Size | MetaCol::None => MetaCol::Modified,
+        }
+    }
 }
 
 /// What the preview pane is currently showing.
@@ -105,6 +136,15 @@ struct App {
     // gates its per-frame tick on this AND `pv == Image`, so a still (or nothing)
     // being previewed never ticks — no idle churn off the animated path.
     preview_animated: bool,
+    // Which trailing metadata column the current pane draws (ADR 0005 D2).
+    // Starts at `Size` (byte-for-byte the pre-feature look); the `t` key cycles
+    // it with `Modified`. The parent pane always renders `MetaCol::None`.
+    meta: MetaCol,
+    // Clickable breadcrumb hit-targets, rebuilt every `render_crumb` (ADR 0005
+    // D2): each entry is a column span in the breadcrumb row and the absolute
+    // directory a click there navigates to. Recorded unconditionally (harmless
+    // when mouse capture is off); consumed by `crumb_hit` on a left-click.
+    crumb_hits: Vec<(Range<u16>, PathBuf)>,
     // Braille-spinner frame counter for the `Loading` preview (ADR 0004 D3). It
     // advances ONLY while a raster is live (pending or wanted) — never on an idle
     // redraw — so the spinner animates during real work without the fully-idle
@@ -132,6 +172,7 @@ enum CharAction {
     Filter,
     ToggleHidden,
     ToggleLayout,
+    ToggleMeta,
     Quit,
 }
 
@@ -153,12 +194,47 @@ fn browse_char(c: char) -> Option<CharAction> {
         // Cycle the pane layout (auto→miller→double→auto). Binding `M` here also
         // keeps typeahead correct: a bound char never starts a name search.
         'M' => CharAction::ToggleLayout,
+        // Cycle the trailing metadata column (size ↔ modified). Binding `t` here
+        // also keeps typeahead correct: a bound char never starts a name search.
+        't' => CharAction::ToggleMeta,
         'q' => CharAction::Quit,
         _ => return None,
     })
 }
 
-pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) -> io::Result<()> {
+/// Enables crossterm mouse capture on construction (when `on`) and guarantees
+/// its teardown on drop (ADR 0005 D2). Wrapping the mode in an RAII guard makes
+/// the "the shell must never be left in capture mode" invariant structural: the
+/// guard is created right after `ratatui::init()` and explicitly dropped right
+/// before `ratatui::restore()`, so capture is off on every exit — quit, the
+/// open-and-return round trip, an error return, or a panic (drop still runs
+/// while unwinding). A disabled guard (`on == false`) is inert both ways.
+struct MouseGuard(bool);
+
+impl MouseGuard {
+    fn enable(on: bool) -> Self {
+        if on {
+            let _ = crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture);
+        }
+        MouseGuard(on)
+    }
+}
+
+impl Drop for MouseGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            let _ = crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture);
+        }
+    }
+}
+
+pub fn run(
+    start: String,
+    icons: IconMode,
+    layout: Layout,
+    git_enabled: bool,
+    mouse: bool,
+) -> io::Result<()> {
     let cwd = fs::canonicalize(&start).unwrap_or_else(|_| PathBuf::from(&start));
     // Probe the graphics protocol once, before any alternate screen. If the
     // terminal can't do pixels, previews fall back to text/metadata.
@@ -191,13 +267,22 @@ pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) ->
         raster_pending: None,
         raster_want: None,
         preview_animated: false,
+        meta: MetaCol::Size,
+        crumb_hits: Vec::new(),
         spin: 0,
     };
     app.load();
 
     loop {
         let mut term = ratatui::init();
+        // Enable mouse capture right after entering the alternate screen and tear
+        // it down right before leaving it, on every path. The explicit `drop`
+        // below disables capture before `restore` (and before any opened viewer,
+        // which runs its own screen); the guard's Drop is the backstop that also
+        // covers a panic during `main_loop`.
+        let guard = MouseGuard::enable(mouse);
         let action = app.main_loop(&mut term);
+        drop(guard);
         ratatui::restore();
         match action {
             Ok(Action::Quit) => return Ok(()),
@@ -343,6 +428,32 @@ impl App {
                             return Ok(action);
                         }
                     }
+                    // Pointer navigation while mouse capture is on (ADR 0005 D2).
+                    // A left-click on the breadcrumb row jumps to the clicked
+                    // segment's directory; the wheel scrolls the selection. Any
+                    // mouse event counts as activity → redraw. When capture is
+                    // off no mouse events arrive, so this arm is simply dead.
+                    Event::Mouse(me) => match me.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            if me.row == 0 {
+                                if let Some(target) = crumb_hit(&self.crumb_hits, me.column) {
+                                    if target != self.cwd {
+                                        self.enter_dir(target);
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            self.move_sel(1);
+                            dirty = true;
+                        }
+                        MouseEventKind::ScrollUp => {
+                            self.move_sel(-1);
+                            dirty = true;
+                        }
+                        _ => {}
+                    },
                     Event::Resize(..) => dirty = true,
                     _ => {}
                 }
@@ -516,6 +627,7 @@ impl App {
                 self.refilter();
             }
             CharAction::ToggleLayout => self.layout = self.layout.cycle(),
+            CharAction::ToggleMeta => self.meta = self.meta.toggle(),
             CharAction::Quit => return Some(Action::Quit),
         }
         None
@@ -969,7 +1081,7 @@ impl App {
                 selected: self.state.selected(),
                 title: format!(" {} ", self.view.len()),
                 git: self.git.as_ref(), // current pane's gutter (D2).
-                show_size: true,
+                meta: self.meta,
             };
             render_entry_list(f, cols[1], &view, &mut self.state, true, filter, self.icons);
             self.render_preview(f, cols[2]);
@@ -986,7 +1098,7 @@ impl App {
                 selected: self.state.selected(),
                 title: format!(" {} ", self.view.len()),
                 git: self.git.as_ref(), // current pane's gutter (D2).
-                show_size: true,
+                meta: self.meta,
             };
             render_entry_list(f, cols[0], &view, &mut self.state, true, filter, self.icons);
             self.render_preview(f, cols[1]);
@@ -1029,34 +1141,49 @@ impl App {
             selected,
             title: format!(" {} ", pretty_dir_name(&parent)),
             git: None,
-            show_size: false, // drop the size column — cleaner for a context pane.
+            meta: MetaCol::None, // no trailing column — cleaner context pane.
         };
         render_entry_list(f, area, &view, &mut state, false, false, self.icons);
     }
 
-    fn render_crumb(&self, f: &mut Frame, area: Rect) {
-        let shown = pretty_path(&self.cwd);
-        // Two-tone breadcrumb: the parent portion recedes in `dim` while the
-        // final segment — the directory you're actually in — pops in accent +
-        // BOLD, so the current location reads at a glance. Split on the last
-        // '/', keeping the separator with the parent (`~/foo/` + `bar`); a
-        // path with no slash (e.g. `~`) is all accent.
+    fn render_crumb(&mut self, f: &mut Frame, area: Rect) {
+        // Clickable, two-tone breadcrumb (ADR 0005 D2). The path is laid out as a
+        // sequence of segments joined by `/`: every parent segment recedes in
+        // `dim`, the final segment — the directory you're actually in — pops in
+        // accent + BOLD, preserving the prior two-tone look (e.g. `~/foo/` dim +
+        // `bar` accent). As each label is placed we record its exact column span
+        // and absolute target so a left-click there navigates to it (`crumb_hit`).
         let accent = theme::palette().accent;
         let dim = theme::palette().dim;
+        let home = std::env::var_os("HOME").map(PathBuf::from);
+        let segments = crumb_segments(&self.cwd, home.as_deref());
+        let last = segments.len().saturating_sub(1);
+
+        self.crumb_hits.clear();
         let mut spans = vec![Span::raw(" ")];
-        match shown.rfind('/') {
-            Some(i) => {
-                let (parent, last) = shown.split_at(i + 1);
-                spans.push(Span::styled(parent.to_string(), Style::default().fg(dim)));
-                spans.push(Span::styled(
-                    last.to_string(),
-                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                ));
+        // Track the column where the NEXT span begins. The leading space occupies
+        // column `area.x`; labels and separators advance `x` by their width so
+        // each recorded hit-range is in real screen columns.
+        let mut x = area.x.saturating_add(1);
+        let mut prev_ends_slash = false;
+        for (idx, (label, target)) in segments.iter().enumerate() {
+            // Separator between segments, except after a label that already ends
+            // in '/' (the filesystem-root `/` segment) — avoids a doubled slash.
+            if idx > 0 && !prev_ends_slash {
+                spans.push(Span::styled("/".to_string(), Style::default().fg(dim)));
+                x = x.saturating_add(1);
             }
-            None => spans.push(Span::styled(
-                shown,
-                Style::default().fg(accent).add_modifier(Modifier::BOLD),
-            )),
+            let w = label.chars().count() as u16;
+            let start = x;
+            let style = if idx == last {
+                Style::default().fg(accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(dim)
+            };
+            spans.push(Span::styled(label.clone(), style));
+            x = x.saturating_add(w);
+            self.crumb_hits.push((start..x, target.clone()));
+            prev_ends_slash = label.ends_with('/');
         }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
     }
@@ -1115,7 +1242,7 @@ impl App {
         } else {
             let hidden = if self.show_hidden { "shown" } else { "hidden" };
             format!(
-                " [j/k] move  [Enter/l] open  [h] up  [/] filter  [.] dotfiles ({hidden})  [M] layout  [q] quit"
+                " [j/k] move  [Enter] open  [h] up  [/] filter  [.] dot ({hidden})  [t] time/size  [M] layout  [q] quit"
             )
         };
         // Filter mode borrows the palette's yellow (`doc`, which is exactly the
@@ -1161,9 +1288,11 @@ struct EntryListView<'a> {
     /// for the current pane in a repo (drawing the gutter); `None` for the parent
     /// context pane and for non-repo / git-disabled dirs (no gutter, no width).
     git: Option<&'a std::collections::HashMap<String, GitStatus>>,
-    /// Whether to draw the right-aligned size column. The current pane keeps it;
-    /// the parent context pane drops it for a cleaner, narrower list.
-    show_size: bool,
+    /// Which trailing metadata column to draw (ADR 0005, D2). The current pane
+    /// passes `App.meta` (`Size` or `Modified`); the parent context pane passes
+    /// `None`, dropping the column for a cleaner, narrower list and reclaiming
+    /// its width. `Size` renders byte-for-byte the pre-feature size column.
+    meta: MetaCol,
 }
 
 /// Decide the effective column count for a frame: three (Miller) only when the
@@ -1184,9 +1313,10 @@ fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
 }
 
 /// The single place browser entries are drawn (ADR 0004, D1): one rounded,
-/// bordered list of icon + optional git gutter + name + optional size. Both the
-/// current pane (`active`, size column, filter-aware border) and the parent
-/// context pane (inactive, no size) route through here.
+/// bordered list of icon + optional git gutter + name + optional trailing meta
+/// column. Both the current pane (`active`, `Size`/`Modified` column,
+/// filter-aware border) and the parent context pane (inactive, `MetaCol::None`)
+/// route through here.
 ///
 /// A free function, not a method, because the current pane must render through
 /// the persistent `App.state` (preserving its scroll offset byte-for-byte) while
@@ -1223,10 +1353,18 @@ fn render_entry_list(
     let git_w: u16 = if view.git.is_some() { 2 } else { 0 };
     let inner_w = area.width.saturating_sub(chrome_w + git_w) as usize;
     let size_w = 8usize;
-    // The current pane reserves the size column (` {size:>8}`); the parent drops
-    // it entirely so the name fills the narrow context column.
-    let size_reserve = if view.show_size { size_w + 1 } else { 0 };
+    // The trailing metadata column reserves ` {value:>8}` (9 cells) for both
+    // `Size` and `Modified` — they share the width so columns align across a
+    // `t` toggle; `None` reserves nothing so the name fills the context column.
+    let size_reserve = if view.meta == MetaCol::None {
+        0
+    } else {
+        size_w + 1
+    };
     let name_w = inner_w.saturating_sub(size_reserve).max(4);
+    // Read the clock once for the whole list — display-only, so a render-time
+    // read is fine (ADR 0005 D2); only consulted in `Modified` mode.
+    let now = SystemTime::now();
 
     let items: Vec<ListItem> = view
         .order
@@ -1234,10 +1372,22 @@ fn render_entry_list(
         .map(|&i| {
             let e = &view.entries[i];
             let name = truncate(&e.name, name_w);
-            let size = if e.kind == Format::Directory {
-                String::new()
-            } else {
-                crate::util::human_size(e.size)
+            // The trailing column's text per mode: byte size (dirs blank),
+            // relative modified age (dirs included; missing mtime blank), or —
+            // for `None` — nothing (the column isn't drawn at all below).
+            let meta_str = match view.meta {
+                MetaCol::Size => {
+                    if e.kind == Format::Directory {
+                        String::new()
+                    } else {
+                        crate::util::human_size(e.size)
+                    }
+                }
+                MetaCol::Modified => e
+                    .modified
+                    .map(|m| crate::util::human_age(m, now))
+                    .unwrap_or_default(),
+                MetaCol::None => String::new(),
             };
 
             // Icons layer above `Format` and are selected by the mode (D5):
@@ -1289,9 +1439,9 @@ fn render_entry_list(
                 format!("{name:<name_w$}"),
                 Style::default().fg(name_color),
             ));
-            if view.show_size {
+            if view.meta != MetaCol::None {
                 spans.push(Span::styled(
-                    format!(" {size:>size_w$}"),
+                    format!(" {meta_str:>size_w$}"),
                     Style::default().fg(theme::palette().dim),
                 ));
             }
@@ -1479,16 +1629,52 @@ fn head_text(path: &Path, max_bytes: usize, max_lines: usize) -> Option<String> 
     Some(s.lines().take(max_lines).collect::<Vec<_>>().join("\n"))
 }
 
-/// Home-relative, `~`-prefixed path for the breadcrumb.
-fn pretty_path(p: &Path) -> String {
-    let s = p.to_string_lossy().into_owned();
-    if let Some(home) = std::env::var_os("HOME") {
-        let home = home.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(home.as_ref()) {
-            return format!("~{rest}");
+/// Break `cwd` into clickable breadcrumb segments: `(display_label, absolute
+/// target)` pairs walking from the anchor down to `cwd` (ADR 0005 D2). Pure so
+/// the mapping is unit-tested without a terminal.
+///
+/// When `cwd` is under `home`, the first segment is `~` (target = `home`) and
+/// each further path component follows, its target the cumulative path — so
+/// `/Users/j/src` with home `/Users/j` yields `[("~", /Users/j), ("src",
+/// /Users/j/src)]`, rendering as `~/src` (the prior `pretty_path` look). A path
+/// outside home is root-anchored: the first segment is `/` (target = `/`) and
+/// each component follows, so `/usr/bin` yields `[("/", /), ("usr", /usr),
+/// ("bin", /usr/bin)]`. The filesystem root itself is the single segment `/`.
+fn crumb_segments(cwd: &Path, home: Option<&Path>) -> Vec<(String, PathBuf)> {
+    // Under home: anchor on `~`, then append each remaining component.
+    if let Some(home) = home {
+        if let Ok(rest) = cwd.strip_prefix(home) {
+            let mut out = vec![("~".to_string(), home.to_path_buf())];
+            let mut acc = home.to_path_buf();
+            for comp in rest.components() {
+                let name = comp.as_os_str().to_string_lossy().into_owned();
+                acc = acc.join(&name);
+                out.push((name, acc.clone()));
+            }
+            return out;
         }
     }
-    s
+    // Root-anchored: the `/` segment, then each normal component cumulatively.
+    let mut out = vec![("/".to_string(), PathBuf::from("/"))];
+    let mut acc = PathBuf::from("/");
+    for comp in cwd.components() {
+        if let std::path::Component::Normal(os) = comp {
+            let name = os.to_string_lossy().into_owned();
+            acc = acc.join(&name);
+            out.push((name, acc.clone()));
+        }
+    }
+    out
+}
+
+/// Resolve a breadcrumb click at column `x` to the target directory of whichever
+/// recorded segment span contains it, or `None` if the click missed every label
+/// (a separator or empty space). Pure — the geometry is built in `render_crumb`
+/// but the hit test itself is unit-tested here (ADR 0005 D2).
+fn crumb_hit(hits: &[(Range<u16>, PathBuf)], x: u16) -> Option<PathBuf> {
+    hits.iter()
+        .find(|(range, _)| range.contains(&x))
+        .map(|(_, target)| target.clone())
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -1527,6 +1713,69 @@ mod tests {
     fn double_is_always_two_columns() {
         assert_eq!(effective_columns(Layout::Double, 200, true), 2);
         assert_eq!(effective_columns(Layout::Double, 40, true), 2);
+    }
+
+    #[test]
+    fn crumb_segments_under_home_are_tilde_anchored() {
+        let home = PathBuf::from("/Users/j");
+        let segs = crumb_segments(Path::new("/Users/j/src/app"), Some(&home));
+        assert_eq!(
+            segs,
+            vec![
+                ("~".to_string(), PathBuf::from("/Users/j")),
+                ("src".to_string(), PathBuf::from("/Users/j/src")),
+                ("app".to_string(), PathBuf::from("/Users/j/src/app")),
+            ]
+        );
+        // Home itself is the single `~` segment.
+        assert_eq!(
+            crumb_segments(&home, Some(&home)),
+            vec![("~".to_string(), PathBuf::from("/Users/j"))]
+        );
+    }
+
+    #[test]
+    fn crumb_segments_outside_home_are_root_anchored() {
+        let home = PathBuf::from("/Users/j");
+        let segs = crumb_segments(Path::new("/usr/local/bin"), Some(&home));
+        assert_eq!(
+            segs,
+            vec![
+                ("/".to_string(), PathBuf::from("/")),
+                ("usr".to_string(), PathBuf::from("/usr")),
+                ("local".to_string(), PathBuf::from("/usr/local")),
+                ("bin".to_string(), PathBuf::from("/usr/local/bin")),
+            ]
+        );
+        // The filesystem root is the single `/` segment.
+        assert_eq!(
+            crumb_segments(Path::new("/"), Some(&home)),
+            vec![("/".to_string(), PathBuf::from("/"))]
+        );
+        // No home known → also root-anchored.
+        assert_eq!(
+            crumb_segments(Path::new("/etc"), None),
+            vec![
+                ("/".to_string(), PathBuf::from("/")),
+                ("etc".to_string(), PathBuf::from("/etc")),
+            ]
+        );
+    }
+
+    #[test]
+    fn crumb_hit_resolves_column_to_target() {
+        let hits = vec![
+            (1u16..2u16, PathBuf::from("/Users/j")),     // "~" at col 1
+            (3u16..6u16, PathBuf::from("/Users/j/src")), // "src" at cols 3..6
+        ];
+        // Inside a span → its target; ranges are half-open (end excluded).
+        assert_eq!(crumb_hit(&hits, 1), Some(PathBuf::from("/Users/j")));
+        assert_eq!(crumb_hit(&hits, 3), Some(PathBuf::from("/Users/j/src")));
+        assert_eq!(crumb_hit(&hits, 5), Some(PathBuf::from("/Users/j/src")));
+        // On the separator (col 2), past the end, or before the start → no hit.
+        assert_eq!(crumb_hit(&hits, 2), None);
+        assert_eq!(crumb_hit(&hits, 6), None);
+        assert_eq!(crumb_hit(&hits, 0), None);
     }
 
     #[test]

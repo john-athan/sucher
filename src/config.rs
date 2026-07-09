@@ -28,6 +28,10 @@ pub struct Config {
     /// Whether the browser shows the git-status gutter (ADR 0004, D2). When
     /// off, the current pane never runs `git` and the gutter is fully absent.
     pub git: bool,
+    /// Whether the browser captures the mouse for pointer navigation (ADR 0005,
+    /// D2): clickable breadcrumb segments and wheel scrolling. On by default;
+    /// `false` keeps the terminal's native click-drag text selection.
+    pub mouse: bool,
 }
 
 /// How the browser draws the per-entry glyph column (ADR 0003, D5). Nerd Font
@@ -105,6 +109,8 @@ struct FileConfig {
     layout: Option<String>,
     /// Whether to draw the git gutter (ADR 0004, D2); default on when omitted.
     git: Option<bool>,
+    /// Whether to capture the mouse (ADR 0005, D2); default on when omitted.
+    mouse: Option<bool>,
     /// Optional per-key hex overrides, applied last over the resolved palette.
     colors: Option<std::collections::HashMap<String, String>>,
 }
@@ -118,17 +124,20 @@ pub fn load(
     cli_icons: Option<String>,
     cli_layout: Option<String>,
     cli_git: Option<bool>,
+    cli_mouse: Option<bool>,
 ) -> Config {
     let file = read_file_config().unwrap_or_default();
     let env_theme = std::env::var("SUCHER_THEME").ok();
     let env_icons = std::env::var("SUCHER_ICONS").ok();
     let env_layout = std::env::var("SUCHER_LAYOUT").ok();
     let env_git = std::env::var("SUCHER_GIT").ok();
+    let env_mouse = std::env::var("SUCHER_MOUSE").ok();
 
     let theme_name = resolve_theme_name(cli_theme, env_theme, file.theme.clone());
     let icons = resolve_icons(cli_icons, env_icons, file.icons.clone());
     let layout = resolve_layout(cli_layout, env_layout, file.layout.clone());
     let git = resolve_git(cli_git, env_git, file.git);
+    let mouse = resolve_mouse(cli_mouse, env_mouse, file.mouse);
 
     let mut palette = resolve_palette(&theme_name);
     apply_color_overrides(&mut palette, file.colors.as_ref());
@@ -138,6 +147,7 @@ pub fn load(
         icons,
         layout,
         git,
+        mouse,
     }
 }
 
@@ -174,6 +184,20 @@ fn resolve_layout(cli: Option<String>, env: Option<String>, file: Option<String>
 /// unrecognised spelling falls through to the file/default rather than
 /// erroring, so a typo never silently disables the gutter unexpectedly.
 fn resolve_git(cli: Option<bool>, env: Option<String>, file: Option<bool>) -> bool {
+    if let Some(c) = cli {
+        return c;
+    }
+    if let Some(b) = env.as_deref().and_then(parse_bool) {
+        return b;
+    }
+    file.unwrap_or(true)
+}
+
+/// Pure mouse-toggle precedence: `cli` (the `--no-mouse` flag) → env
+/// (`SUCHER_MOUSE`) → file → default `true`. Mirrors [`resolve_git`] exactly,
+/// reusing [`parse_bool`]; an unrecognised env spelling falls through to the
+/// file/default rather than erroring, so a typo never silently disables mouse.
+fn resolve_mouse(cli: Option<bool>, env: Option<String>, file: Option<bool>) -> bool {
     if let Some(c) = cli {
         return c;
     }
@@ -573,6 +597,26 @@ mod tests {
         assert_eq!(resolve_git(None, None, Some(false)), false);
         // Nothing set → the built-in default (on).
         assert_eq!(resolve_git(None, None, None), true);
+    }
+
+    #[test]
+    fn mouse_precedence_and_default() {
+        // CLI (the --no-mouse flag) wins outright.
+        assert_eq!(
+            resolve_mouse(Some(false), Some("true".into()), Some(true)),
+            false
+        );
+        // No CLI → a recognised env spelling wins over the file.
+        assert_eq!(resolve_mouse(None, Some("off".into()), Some(true)), false);
+        // Unparseable env → falls through to the file value (forgiving).
+        assert_eq!(
+            resolve_mouse(None, Some("bogus".into()), Some(false)),
+            false
+        );
+        // No CLI/env → the file value.
+        assert_eq!(resolve_mouse(None, None, Some(false)), false);
+        // Nothing set → the built-in default (on).
+        assert_eq!(resolve_mouse(None, None, None), true);
     }
 
     #[test]

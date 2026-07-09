@@ -98,6 +98,35 @@ pub fn human_size(n: u64) -> String {
     format!("{f:.1}{}", U[i])
 }
 
+/// Compact relative age of `t` as of `now`, a single unit ≤4 chars for the
+/// browser's "modified" column: `now`/`12s`/`5m`/`3h`/`2d`/`6w`/`4mo`/`3y`.
+///
+/// `now` is a parameter so the whole mapping is pure and unit-testable without
+/// reading the clock. A `t` in the future (clock skew, a file stamped ahead)
+/// clamps to `now` rather than underflowing. Thresholds are chosen so each unit
+/// stays legible: seconds under a minute, minutes under an hour, hours under a
+/// day, days under a week, weeks under ~two months, months under a year, then
+/// years.
+pub fn human_age(t: SystemTime, now: SystemTime) -> String {
+    let secs = now.duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    const MIN: u64 = 60;
+    const HOUR: u64 = 60 * MIN;
+    const DAY: u64 = 24 * HOUR;
+    const WEEK: u64 = 7 * DAY;
+    const MONTH: u64 = 30 * DAY;
+    const YEAR: u64 = 365 * DAY;
+    match secs {
+        s if s < 5 => "now".into(),
+        s if s < MIN => format!("{s}s"),
+        s if s < HOUR => format!("{}m", s / MIN),
+        s if s < DAY => format!("{}h", s / HOUR),
+        s if s < WEEK => format!("{}d", s / DAY),
+        s if s < 2 * MONTH => format!("{}w", s / WEEK),
+        s if s < YEAR => format!("{}mo", s / MONTH),
+        s => format!("{}y", s / YEAR),
+    }
+}
+
 /// Coarse relative time since `t` (e.g. `just now`, `3d ago`).
 pub fn rel_time(t: SystemTime) -> String {
     let secs = SystemTime::now()
@@ -134,6 +163,32 @@ mod tests {
         assert_eq!(rel_time(now), "just now");
         assert_eq!(rel_time(now - Duration::from_secs(120)), "2m ago");
         assert_eq!(rel_time(now - Duration::from_secs(3 * 86_400)), "3d ago");
+    }
+
+    #[test]
+    fn human_age_across_the_ranges() {
+        let now = SystemTime::now();
+        let ago = |d: Duration| now - d;
+        // Under 5s (and exactly now) reads "now".
+        assert_eq!(human_age(now, now), "now");
+        assert_eq!(human_age(ago(Duration::from_secs(3)), now), "now");
+        // Seconds, minutes, hours.
+        assert_eq!(human_age(ago(Duration::from_secs(30)), now), "30s");
+        assert_eq!(human_age(ago(Duration::from_secs(5 * 60)), now), "5m");
+        assert_eq!(human_age(ago(Duration::from_secs(3 * 3600)), now), "3h");
+        // Days, weeks (6w = 42d must be reachable), months, years.
+        assert_eq!(human_age(ago(Duration::from_secs(2 * 86_400)), now), "2d");
+        assert_eq!(human_age(ago(Duration::from_secs(42 * 86_400)), now), "6w");
+        assert_eq!(
+            human_age(ago(Duration::from_secs(120 * 86_400)), now),
+            "4mo"
+        );
+        assert_eq!(
+            human_age(ago(Duration::from_secs(3 * 365 * 86_400)), now),
+            "3y"
+        );
+        // A timestamp in the future clamps to "now" rather than underflowing.
+        assert_eq!(human_age(now + Duration::from_secs(60), now), "now");
     }
 
     #[test]
