@@ -15,7 +15,7 @@ use image::DynamicImage;
 // The ratatui layout builder is aliased to `RtLayout` so `Layout` can name the
 // browser's own pane-layout mode (auto/miller/double) from `config`.
 use ratatui::layout::{Constraint, Direction, Layout as RtLayout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
@@ -162,6 +162,18 @@ struct App {
     // redraw — so the spinner animates during real work without the fully-idle
     // browser ever churning the CPU. See the tick in `main_loop`.
     spin: usize,
+    // Whether navigation animations run (config `animate`, ADR 0006 D4). Snapshot
+    // of `anim::enabled()` at construction. When false, `fade` is never armed and
+    // the browser is byte-for-byte the pre-animation build.
+    animate: bool,
+    // The in-flight current-pane fade-in after a directory change (ADR 0006 D3),
+    // or `None` when no fade is live. A time-based `Anim`, so its duration is
+    // identical whatever FPS the loop sustains. Armed at the end of `enter_dir`
+    // (only when `animate`); driven and cleared in `main_loop`.
+    fade: Option<crate::anim::Anim>,
+    // Frames drawn during the current fade, for the `SUCHER_ANIM_STATS` proof.
+    // Reset when a fade is armed; reported to `anim::record` when it completes.
+    fade_frames: u32,
 }
 
 enum Action {
@@ -284,6 +296,12 @@ pub fn run(
         list_area: Rect::default(),
         parent_area: None,
         spin: 0,
+        // Read the animate toggle once from the process global (installed in
+        // `main` beside the palette), consistent with how the browser reads the
+        // theme — no new parameter threaded through `run`.
+        animate: crate::anim::enabled(),
+        fade: None,
+        fade_frames: 0,
     };
     app.load();
 
@@ -368,6 +386,18 @@ impl App {
         self.typeahead.clear();
         self.typeahead_at = None;
         self.load();
+        // Arm the current-pane fade-in AFTER the new listing loads, so the fresh
+        // entries are what resolve from the background (ADR 0006 D3). Only when
+        // animations are enabled — otherwise the transition stays instant and no
+        // fade state is ever created. `go_parent` funnels through here, so both
+        // directions (down into a child, up to the parent) fade identically.
+        if self.animate {
+            self.fade = Some(crate::anim::Anim::new(
+                Instant::now(),
+                Duration::from_millis(120),
+            ));
+            self.fade_frames = 0;
+        }
     }
 
     fn go_parent(&mut self) {
@@ -417,6 +447,22 @@ impl App {
             if self.pump_raster() {
                 dirty = true;
             }
+            // Drive the folder fade (ADR 0006 D3). While a fade is live, redraw
+            // every loop so the eased colours advance, counting frames for the
+            // stats proof. On completion, record the achieved FPS and clear it —
+            // the very next render (with `fade == None`) is the final, identity
+            // frame, so a fade always settles on the exact non-animated colours.
+            // Independent of the raster/GIF arms: a fade and a GIF preview coexist.
+            if let Some(fade) = self.fade {
+                let now = Instant::now();
+                dirty = true;
+                if fade.done(now) {
+                    crate::anim::record("folder-fade", self.fade_frames, fade.elapsed(now));
+                    self.fade = None;
+                } else {
+                    self.fade_frames = self.fade_frames.saturating_add(1);
+                }
+            }
             if dirty {
                 term.draw(|f| self.render(f))?;
                 dirty = false;
@@ -429,7 +475,16 @@ impl App {
             // text, or nothing selected) blocks the full second and does nothing.
             let raster_active = self.raster_pending.is_some() || self.raster_want.is_some();
             let animating = self.preview_animated && matches!(self.pv, Pv::Image);
-            let timeout = if raster_active || animating {
+            // A live fade emits as fast as the per-frame budget allows (~4 ms ⇒
+            // ≤250 fps) so the interpolation is smooth up to the display refresh
+            // (ADR 0006 D2); the heavier raster/GIF paths keep their 60 ms cadence.
+            // The block above already cleared `fade` if it just completed, so a
+            // fully idle browser (no fade, no raster, no GIF) still blocks the full
+            // second and does nothing — no new idle churn.
+            let fading = self.fade.is_some();
+            let timeout = if fading {
+                Duration::from_millis(4)
+            } else if raster_active || animating {
                 Duration::from_millis(60)
             } else {
                 Duration::from_millis(1000)
@@ -438,6 +493,11 @@ impl App {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
+                        // Interrupt any in-flight fade: complete it at once so the
+                        // next render is the final state (ADR 0006 D2 — motion never
+                        // adds latency). A key that changes directory re-arms a
+                        // fresh fade inside `handle_key`/`enter_dir`.
+                        self.fade = None;
                         if let Some(action) = self.handle_key(key) {
                             return Ok(action);
                         }
@@ -1108,6 +1168,15 @@ impl App {
         // yellow (as before); the parent pane is always inactive.
         let has_parent = self.cwd.parent().is_some();
         let filter = matches!(self.mode, Mode::Filter);
+        // The eased fade factor for the CURRENT pane after a directory change
+        // (ADR 0006 D3): eased progress in 0..1, or `None` when no fade is live.
+        // Read once here at the render edge (the clock lives only at the edges).
+        // Only the current pane fades — the parent (Miller) pane didn't change, so
+        // it always gets `None`. At progress 1.0 the eased factor is 1.0 and every
+        // lerp is the identity, so the final frame equals the non-animated render.
+        let fade_t = self
+            .fade
+            .map(|a| crate::anim::ease_out_cubic(a.progress(Instant::now())));
         if effective_columns(self.layout, area.width, has_parent) == 3 {
             // Miller: parent | current | preview  (~[20%, 34%, 46%]).
             let cols = RtLayout::default()
@@ -1135,6 +1204,7 @@ impl App {
                 title: format!(" {} ", self.view.len()),
                 git: self.git.as_ref(), // current pane's gutter (D2).
                 meta: self.meta,
+                fade_t, // the current pane fades in after a dir change (D3).
             };
             render_entry_list(f, cols[1], &view, &mut self.state, true, filter, self.icons);
             self.render_preview(f, cols[2]);
@@ -1156,6 +1226,7 @@ impl App {
                 title: format!(" {} ", self.view.len()),
                 git: self.git.as_ref(), // current pane's gutter (D2).
                 meta: self.meta,
+                fade_t, // the current pane fades in after a dir change (D3).
             };
             render_entry_list(f, cols[0], &view, &mut self.state, true, filter, self.icons);
             self.render_preview(f, cols[1]);
@@ -1199,7 +1270,10 @@ impl App {
             title: format!(" {} ", pretty_dir_name(&parent)),
             git: None,
             meta: MetaCol::None, // no trailing column — cleaner context pane.
+            fade_t: None,        // the parent pane didn't change — never fades (D3).
         };
+        // The parent context pane didn't change on this navigation, so it never
+        // fades — always `None` in the view (ADR 0006 D3).
         render_entry_list(f, area, &view, &mut state, false, false, self.icons);
     }
 
@@ -1321,6 +1395,14 @@ impl App {
 /// collapses to the classic two-column split (ADR 0004, D1).
 const MILLER_MIN: u16 = 100;
 
+/// The assumed terminal background the current-pane fade resolves FROM (ADR 0006
+/// D3). A TUI cannot portably query the real background colour, so rather than
+/// over-engineer detection we interpolate toward this documented near-black
+/// constant; on a terminal whose true background differs the fade origin is
+/// approximate, but it lasts only ~120 ms. Because `lerp_color(FADE_BG, c, 1.0)`
+/// is exactly `c`, the settle frame is byte-for-byte the non-animated colours.
+const FADE_BG: Color = Color::Rgb(16, 16, 20);
+
 /// The classic 10-frame braille spinner cycled in the `Loading` preview while a
 /// poster rasters (ADR 0004 D3). Indexed as `SPINNER[spin % SPINNER.len()]`; the
 /// `App::spin` counter only advances during live raster work, so this animates
@@ -1350,6 +1432,12 @@ struct EntryListView<'a> {
     /// `None`, dropping the column for a cleaner, narrower list and reclaiming
     /// its width. `Size` renders byte-for-byte the pre-feature size column.
     meta: MetaCol,
+    /// The eased fade factor for this pane's fade-in after a directory change
+    /// (ADR 0006, D3): `Some(t)` (t in 0..1) lerps every entry colour from
+    /// [`FADE_BG`] toward its true value; `None` draws the normal colours. Only
+    /// the current pane ever sets `Some` (right after a directory change); the
+    /// parent context pane — which didn't change — always passes `None`.
+    fade_t: Option<f32>,
 }
 
 /// Decide the effective column count for a frame: three (Miller) only when the
@@ -1395,6 +1483,19 @@ fn render_entry_list(
     filter: bool,
     icons: IconMode,
 ) {
+    // The current-pane fade-in after a directory change (ADR 0006 D3).
+    // `view.fade_t` is the eased progress in 0..1 (or `None` when no fade is live
+    // / for the parent pane). `fade` lerps a colour from the assumed background
+    // [`FADE_BG`] toward its true value at that factor, so the new listing
+    // resolves out of the background; it is the identity when `fade_t` is `None`,
+    // and — because `lerp_color(bg, c, 1.0) == c` — the settle frame at progress
+    // 1.0 is drawn with exactly the normal colours (byte-for-byte non-animated).
+    let fade = |c: Color| -> Color {
+        match view.fade_t {
+            Some(t) => crate::anim::lerp_color(FADE_BG, c, t),
+            None => c,
+        }
+    };
     // Width reserved before the name: 2 for the block borders, 2 for the
     // selection cursor gutter (the `highlight_symbol` List reserves on every row
     // so names align whether selected or not), plus a 2-cell glyph column ("X ")
@@ -1460,7 +1561,7 @@ fn render_entry_list(
                     let c = e.kind.color();
                     spans.push(Span::styled(
                         format!("{} ", e.kind.glyph()),
-                        Style::default().fg(c),
+                        Style::default().fg(fade(c)),
                     ));
                     c
                 }
@@ -1474,7 +1575,7 @@ fn render_entry_list(
                     let c = icons::nerd_color(&ext, e.kind);
                     spans.push(Span::styled(
                         format!("{} ", icons::nerd_glyph(&ext, e.kind)),
-                        Style::default().fg(c),
+                        Style::default().fg(fade(c)),
                     ));
                     c
                 }
@@ -1487,19 +1588,19 @@ fn render_entry_list(
                 match git.get(&e.name) {
                     Some(st) => spans.push(Span::styled(
                         format!("{} ", st.glyph()),
-                        Style::default().fg(st.color()),
+                        Style::default().fg(fade(st.color())),
                     )),
                     None => spans.push(Span::raw("  ")),
                 }
             }
             spans.push(Span::styled(
                 format!("{name:<name_w$}"),
-                Style::default().fg(name_color),
+                Style::default().fg(fade(name_color)),
             ));
             if view.meta != MetaCol::None {
                 spans.push(Span::styled(
                     format!(" {meta_str:>size_w$}"),
-                    Style::default().fg(theme::palette().dim),
+                    Style::default().fg(fade(theme::palette().dim)),
                 ));
             }
             ListItem::new(Line::from(spans))
@@ -1536,10 +1637,12 @@ fn render_entry_list(
         )
         // Soft background tint + accent cursor gutter, replacing the harsh
         // reverse-video bar. The gutter bar ("▎") takes the selection bg too;
-        // the tint carries the accent read.
+        // the tint carries the accent read. The selection background lerps from
+        // FADE_BG too, so the highlight fades in with the rest of the listing (ADR
+        // 0006 D3) and settles on the exact `selection` colour at progress 1.0.
         .highlight_style(
             Style::default()
-                .bg(theme::palette().selection)
+                .bg(fade(theme::palette().selection))
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("▎ ");

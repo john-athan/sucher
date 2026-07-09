@@ -32,6 +32,11 @@ pub struct Config {
     /// D2): clickable breadcrumb segments and wheel scrolling. On by default;
     /// `false` keeps the terminal's native click-drag text selection.
     pub mouse: bool,
+    /// Whether navigation animations run (ADR 0006, D4): the ~120 ms fade-in of
+    /// the current pane on a directory change (and, in a later phase, the
+    /// full-view zoom). On by default; `false` makes every transition instant and
+    /// no animation code executes — behaviour is byte-for-byte the pre-feature UI.
+    pub animate: bool,
 }
 
 /// How the browser draws the per-entry glyph column (ADR 0003, D5). Nerd Font
@@ -111,6 +116,8 @@ struct FileConfig {
     git: Option<bool>,
     /// Whether to capture the mouse (ADR 0005, D2); default on when omitted.
     mouse: Option<bool>,
+    /// Whether navigation animations run (ADR 0006, D4); default on when omitted.
+    animate: Option<bool>,
     /// Optional per-key hex overrides, applied last over the resolved palette.
     colors: Option<std::collections::HashMap<String, String>>,
 }
@@ -125,6 +132,7 @@ pub fn load(
     cli_layout: Option<String>,
     cli_git: Option<bool>,
     cli_mouse: Option<bool>,
+    cli_animate: Option<bool>,
 ) -> Config {
     let file = read_file_config().unwrap_or_default();
     let env_theme = std::env::var("SUCHER_THEME").ok();
@@ -132,12 +140,14 @@ pub fn load(
     let env_layout = std::env::var("SUCHER_LAYOUT").ok();
     let env_git = std::env::var("SUCHER_GIT").ok();
     let env_mouse = std::env::var("SUCHER_MOUSE").ok();
+    let env_animate = std::env::var("SUCHER_ANIMATE").ok();
 
     let theme_name = resolve_theme_name(cli_theme, env_theme, file.theme.clone());
     let icons = resolve_icons(cli_icons, env_icons, file.icons.clone());
     let layout = resolve_layout(cli_layout, env_layout, file.layout.clone());
     let git = resolve_git(cli_git, env_git, file.git);
     let mouse = resolve_mouse(cli_mouse, env_mouse, file.mouse);
+    let animate = resolve_animate(cli_animate, env_animate, file.animate);
 
     let mut palette = resolve_palette(&theme_name);
     apply_color_overrides(&mut palette, file.colors.as_ref());
@@ -148,6 +158,7 @@ pub fn load(
         layout,
         git,
         mouse,
+        animate,
     }
 }
 
@@ -198,6 +209,21 @@ fn resolve_git(cli: Option<bool>, env: Option<String>, file: Option<bool>) -> bo
 /// reusing [`parse_bool`]; an unrecognised env spelling falls through to the
 /// file/default rather than erroring, so a typo never silently disables mouse.
 fn resolve_mouse(cli: Option<bool>, env: Option<String>, file: Option<bool>) -> bool {
+    if let Some(c) = cli {
+        return c;
+    }
+    if let Some(b) = env.as_deref().and_then(parse_bool) {
+        return b;
+    }
+    file.unwrap_or(true)
+}
+
+/// Pure animate-toggle precedence: `cli` (the `--no-animate` flag) → env
+/// (`SUCHER_ANIMATE`) → file → default `true` (ADR 0006, D4). Mirrors
+/// [`resolve_mouse`]/[`resolve_git`] exactly, reusing [`parse_bool`]; an
+/// unrecognised env spelling falls through to the file/default rather than
+/// erroring, so a typo never silently disables animations unexpectedly.
+fn resolve_animate(cli: Option<bool>, env: Option<String>, file: Option<bool>) -> bool {
     if let Some(c) = cli {
         return c;
     }
@@ -617,6 +643,26 @@ mod tests {
         assert_eq!(resolve_mouse(None, None, Some(false)), false);
         // Nothing set → the built-in default (on).
         assert_eq!(resolve_mouse(None, None, None), true);
+    }
+
+    #[test]
+    fn animate_precedence_and_default() {
+        // CLI (the --no-animate flag) wins outright.
+        assert_eq!(
+            resolve_animate(Some(false), Some("true".into()), Some(true)),
+            false
+        );
+        // No CLI → a recognised env spelling wins over the file.
+        assert_eq!(resolve_animate(None, Some("off".into()), Some(true)), false);
+        // Unparseable env → falls through to the file value (forgiving).
+        assert_eq!(
+            resolve_animate(None, Some("bogus".into()), Some(false)),
+            false
+        );
+        // No CLI/env → the file value.
+        assert_eq!(resolve_animate(None, None, Some(false)), false);
+        // Nothing set → the built-in default (on).
+        assert_eq!(resolve_animate(None, None, None), true);
     }
 
     #[test]

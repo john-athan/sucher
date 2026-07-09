@@ -9,6 +9,7 @@
 // big headings). The few still-unopenable files (legacy .doc/.ppt binaries,
 // audio) print a metadata line rather than being force-rendered.
 
+mod anim;
 mod archive;
 mod config;
 mod dir;
@@ -43,6 +44,16 @@ use std::process::ExitCode;
 use std::{env, fs};
 
 fn main() -> ExitCode {
+    let code = run();
+    // Flush the animation frame-stats (opt-in via `SUCHER_ANIM_STATS`) only now,
+    // after every viewer has restored the terminal — printing to stderr while the
+    // alternate screen was live would corrupt the TUI (ADR 0006). A no-op when
+    // the env var is unset, so a normal run stays byte-for-byte silent.
+    anim::dump_stats();
+    code
+}
+
+fn run() -> ExitCode {
     let mut plain_flag = false;
     let mut path: Option<String> = None;
     // Theme/icons overrides from the command line (highest precedence — see
@@ -54,6 +65,8 @@ fn main() -> ExitCode {
     let mut cli_no_git = false;
     // `--no-mouse` forces mouse capture off, overriding env/file/default.
     let mut cli_no_mouse = false;
+    // `--no-animate` forces navigation animations off, overriding env/file/default.
+    let mut cli_no_animate = false;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -63,9 +76,10 @@ fn main() -> ExitCode {
             "--layout" => cli_layout = args.next(),
             "--no-git" => cli_no_git = true,
             "--no-mouse" => cli_no_mouse = true,
+            "--no-animate" => cli_no_animate = true,
             "-h" | "--help" => {
                 eprintln!(
-                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [--no-git] [--no-mouse] [file|dir]"
+                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [--no-git] [--no-mouse] [--no-animate] [file|dir]"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -78,8 +92,19 @@ fn main() -> ExitCode {
     // alternate screen. `icons` threads through to the browser for a later phase.
     let cli_git = if cli_no_git { Some(false) } else { None };
     let cli_mouse = if cli_no_mouse { Some(false) } else { None };
-    let config = config::load(cli_theme, cli_icons, cli_layout, cli_git, cli_mouse);
+    let cli_animate = if cli_no_animate { Some(false) } else { None };
+    let config = config::load(
+        cli_theme,
+        cli_icons,
+        cli_layout,
+        cli_git,
+        cli_mouse,
+        cli_animate,
+    );
     theme::init(config.palette);
+    // Install the navigation-animation toggle beside the palette so any viewer —
+    // including the config-less in-process `imgview` — can gate on `anim::enabled()`.
+    anim::set_enabled(config.animate);
 
     // No argument browses the current directory.
     let path = path.unwrap_or_else(|| ".".to_string());
