@@ -147,7 +147,8 @@ theme  = "catppuccin-mocha"  # or "auto" | built-in name (default: sucher-dark)
 icons  = "nerd"              # "unicode" (default) | "nerd" | "none"
 layout = "auto"              # "auto" (default) | "miller" | "double"
 git    = true                # show the git status gutter (default: true)
-mouse  = true                # click breadcrumb segments / wheel-scroll (default: true)
+mouse  = true                # click rows/breadcrumb, wheel-scroll (default: true)
+animate = true               # folder fade + full-view zoom (default: true)
 
 [colors]                     # optional per-key hex overrides, applied last
 accent = "#7dd3fc"
@@ -170,10 +171,19 @@ selection = "#26324a"
   marker (`●` modified · `+` added · `?` untracked · `✗` deleted · `»` renamed ·
   `!` conflict); directories aggregate their descendants' changes. Absent
   outside a repo or with `git = false`.
-- **Mouse** — click a breadcrumb segment to jump to that directory; scroll the
-  wheel to move the selection. Capturing the mouse disables the terminal's own
-  click-drag text selection inside sucher (Shift/Option-drag still bypasses it in
-  most terminals); set `mouse = false` to keep native selection.
+- **Mouse** — click a file row to select it, click the highlighted row to open
+  it (or enter a folder); click a breadcrumb segment to jump there; in the
+  three-column layout click the left pane to go up; scroll the wheel to move the
+  selection. Capturing the mouse disables the terminal's own click-drag text
+  selection inside sucher (Shift/Option-drag still bypasses it in most
+  terminals); set `mouse = false` to keep native selection.
+- **Animations** — entering/leaving a folder fades the new listing in; opening a
+  file in the full-screen image viewer zooms it up (and back down on close). Both
+  are time-based (~120–150 ms), interruptible by any keypress, and disabled with
+  `animate = false`. The folder fade is a cheap cell redraw that presents at the
+  display's refresh rate; the image zoom re-encodes the picture each frame, so it
+  runs at whatever the graphics pipeline sustains (constant duration either way).
+  `SUCHER_ANIM_STATS=1` prints each animation's achieved frame rate on exit.
 
 ## Usage & keys
 
