@@ -58,16 +58,32 @@ GIF); when no animation is live the loop still blocks at the 1 s idle poll — *
 new idle churn**. Any keypress during an animation ends it immediately (jump to
 the final state) and is then handled normally — motion never adds latency.
 
-**D3 — What animates.** *Folder enter/leave* → a fast (~120 ms) `ease_out_cubic`
-**fade-in** of the current pane: each entry's foreground is `lerp(bg, colour,
-eased)` so the new listing resolves from the background. This is the cheap-cell
-path that can present at the display refresh. *Full-view open/close* → the image's
-render rect grows from a small centred box to full (open) and shrinks back
-(close) over ~150 ms, time-based; intermediate frames use a downscaled image so
-encode stays cheap, the settle frame is full-res. Directory-slide (panes
-translating) is deliberately *not* done now — a true cell-slide needs
-buffer-blitting and reads as jank on slower terminals; the fade is the reliable,
-honestly-smooth choice and a slide can layer on later.
+**D3 — What animates.** *Folder enter/leave* → a directional **horizontal slide
+of the current pane's content, with the colour fade layered on** (~150 ms
+`ease_out_cubic`). Entering a child slides the old listing out to the left while
+the new one enters from the right; going to the parent reverses it. The pane's
+border/title stay static; only the inner entry region translates. The incoming
+listing also fades its entry colours up from the background (`lerp(bg, colour,
+eased)`), so it's a slide *and* a resolve. Implemented by snapshotting the old
+inner content into an owned `Buffer` at navigation time (before the new listing
+loads), rendering the new inner content into a scratch `Buffer` each frame, and
+blitting both into the frame shifted by `±offset` and clipped to the inner rect.
+*(An earlier revision used fade-only; the slide was adopted because the fade alone
+was imperceptible on dark themes.)*
+
+*Cell-granularity ceiling (honest):* a terminal can only translate content in
+whole character cells, so a slide has at most `inner_width` distinct positions
+(~40). At 150 ms that is smooth, but beyond ~250 fps extra frames repeat a
+position — the slide's smoothness is bounded by **column width, not refresh
+rate**. The colour fade (continuous RGB) is what actually exercises high frame
+rates; the slide rides along on top. Only the *current* pane slides; in Miller
+the parent/preview panes are left static (a full three-column reflow is out of
+scope).
+
+*Full-view open/close* → the image's render rect grows from a small centred box
+to full (open) and shrinks back (close) over ~150 ms, time-based; intermediate
+frames are cheaper by construction (smaller rect ⇒ smaller encode), the settle
+frame is full-res.
 
 **D4 — Config `animate = true|false` (default true).** Precedence flag
 (`--no-animate`) > env (`SUCHER_ANIMATE`) > file > default, same shape as

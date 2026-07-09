@@ -14,10 +14,13 @@ use crossterm::event::{
 use image::DynamicImage;
 // The ratatui layout builder is aliased to `RtLayout` so `Layout` can name the
 // browser's own pane-layout mode (auto/miller/double) from `config`.
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Direction, Layout as RtLayout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{
+    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget,
+};
 use ratatui::{DefaultTerminal, Frame};
 use std::fs;
 use std::io::{self, Read};
@@ -84,6 +87,38 @@ enum Pv {
 enum Rastered {
     Still(DynamicImage),
     Animated(Vec<media::Frame>),
+}
+
+/// The direction a folder-navigation slide travels (ADR 0006 D3). Names the
+/// motion by where the NEW listing enters from: entering a child pushes the old
+/// listing left and brings the new one in from the right; going to the parent
+/// reverses it. One `Copy` enum so `render` and the offset maths can read it
+/// without borrowing the owned snapshot buffer beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum SlideDir {
+    /// Entered a child: the new listing enters from the right (old exits left).
+    FromRight,
+    /// Went to the parent: the new listing enters from the left (old exits right).
+    FromLeft,
+}
+
+/// One in-flight folder slide (ADR 0006 D3): the time-based `Anim`, the direction,
+/// an owned snapshot of the OLD pane's inner content, and a frame counter for the
+/// `SUCHER_ANIM_STATS` proof. Snapshotted at navigation time (before the new
+/// listing loads) and driven/cleared in `main_loop` exactly like the colour
+/// `fade`, which runs in lockstep so the incoming listing slides AND resolves its
+/// colours together.
+///
+/// *Cell-granularity ceiling (ADR 0006 D3):* a terminal can only translate content
+/// in whole character cells, so the slide has at most `inner_width` (~40) distinct
+/// positions; beyond ~250 fps extra frames repeat a position. The slide's
+/// smoothness is bounded by column width, not refresh rate — the continuous part
+/// is the colour fade layered on top.
+struct Slide {
+    anim: crate::anim::Anim,
+    dir: SlideDir,
+    old: Buffer,
+    frames: u32,
 }
 
 struct App {
@@ -174,6 +209,14 @@ struct App {
     // Frames drawn during the current fade, for the `SUCHER_ANIM_STATS` proof.
     // Reset when a fade is armed; reported to `anim::record` when it completes.
     fade_frames: u32,
+    // The in-flight current-pane directional slide after a directory change (ADR
+    // 0006 D3), or `None` when none is live. Holds an owned snapshot of the OLD
+    // listing's inner content, taken at navigation time before the new listing
+    // loads. Armed alongside `fade` (only when `animate` AND a real pane rect
+    // exists), and driven/cleared beside it in `main_loop`; a keypress clears it
+    // so the next render is the settled state. Only the current pane slides — in
+    // Miller the parent/preview panes stay static (D3).
+    slide: Option<Slide>,
 }
 
 enum Action {
@@ -302,6 +345,7 @@ pub fn run(
         animate: crate::anim::enabled(),
         fade: None,
         fade_frames: 0,
+        slide: None,
     };
     app.load();
 
@@ -377,7 +421,17 @@ impl App {
         self.state.select(Some(next as usize));
     }
 
-    fn enter_dir(&mut self, path: PathBuf) {
+    fn enter_dir(&mut self, path: PathBuf, dir: SlideDir) {
+        // Snapshot the OUTGOING listing's inner content BEFORE any state mutates,
+        // so the slide's "old" layer is exactly what was on screen (ADR 0006 D3).
+        // Only when animating and a real pane rect already exists (a prior render
+        // set `list_area`); the first navigation, or `animate = false`, yields
+        // `None` and no slide is armed.
+        let old = if self.animate {
+            self.snapshot_current_inner()
+        } else {
+            None
+        };
         self.cwd = path;
         self.filter.clear();
         self.mode = Mode::Browse;
@@ -386,17 +440,24 @@ impl App {
         self.typeahead.clear();
         self.typeahead_at = None;
         self.load();
-        // Arm the current-pane fade-in AFTER the new listing loads, so the fresh
-        // entries are what resolve from the background (ADR 0006 D3). Only when
+        // Arm the current-pane fade-in AND the directional slide AFTER the new
+        // listing loads, so the fresh entries are what resolve from the background
+        // and slide into place (ADR 0006 D3). Both are time-based `Anim`s started
+        // at the same instant with the same duration, so they run in lockstep: the
+        // incoming listing slides in while its colours fade up. Only when
         // animations are enabled — otherwise the transition stays instant and no
-        // fade state is ever created. `go_parent` funnels through here, so both
-        // directions (down into a child, up to the parent) fade identically.
+        // anim state is ever created. The slide is additionally gated on a valid
+        // old snapshot (skipped on the first navigation, before any render).
         if self.animate {
-            self.fade = Some(crate::anim::Anim::new(
-                Instant::now(),
-                Duration::from_millis(120),
-            ));
+            let now = Instant::now();
+            self.fade = Some(crate::anim::Anim::new(now, NAV_ANIM));
             self.fade_frames = 0;
+            self.slide = old.map(|old| Slide {
+                anim: crate::anim::Anim::new(now, NAV_ANIM),
+                dir,
+                old,
+                frames: 0,
+            });
         }
     }
 
@@ -406,7 +467,8 @@ impl App {
                 .cwd
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned());
-            self.enter_dir(parent);
+            // Going up: the new (parent) listing enters from the left.
+            self.enter_dir(parent, SlideDir::FromLeft);
             // Land on the directory we came out of.
             if let Some(name) = from {
                 if let Some(pos) = self.view.iter().position(|&i| self.all[i].name == name) {
@@ -416,11 +478,49 @@ impl App {
         }
     }
 
+    /// Snapshot the CURRENT pane's inner content into an owned [`Buffer`] for the
+    /// folder slide's "old" layer (ADR 0006 D3). Built from the live
+    /// `all`/`view`/`state` at FULL colour (`fade_t: None`) through the exact same
+    /// item path as the normal render, so the outgoing layer looks identical to
+    /// what was on screen. Returns `None` when there's no real pane rect yet — the
+    /// first navigation happens before any render sets `list_area`, and snapshotting
+    /// a zero-sized region would be garbage — in which case the caller skips the
+    /// slide and the transition is instant (the fade still resolves the new colours).
+    fn snapshot_current_inner(&self) -> Option<Buffer> {
+        let area = self.list_area;
+        let inner = entry_inner(area);
+        if inner.width == 0 || inner.height == 0 {
+            return None;
+        }
+        // The outgoing listing: same fields the current pane renders with, minus
+        // the title (only the inner items are snapshotted; the border/title are
+        // static and drawn fresh each frame) and with no fade (full colour).
+        let view = EntryListView {
+            entries: &self.all,
+            order: &self.view,
+            selected: self.state.selected(),
+            title: String::new(),
+            git: self.git.as_ref(),
+            meta: self.meta,
+            fade_t: None,
+        };
+        let items = entry_items(area, &view, self.icons);
+        let list = entry_list(items, None);
+        let mut buf = Buffer::empty(inner);
+        // A copy of the live state carries the exact scroll offset onto the
+        // snapshot without disturbing the real one (`ListState` is `Copy`).
+        let mut state = self.state;
+        state.select(view.selected);
+        render_items_into(&mut buf, inner, list, &mut state);
+        Some(buf)
+    }
+
     fn activate(&mut self) -> Option<Action> {
         let e = self.selected()?;
         if e.kind == Format::Directory {
             let p = e.path.clone();
-            self.enter_dir(p);
+            // Entering a child: the new listing enters from the right.
+            self.enter_dir(p, SlideDir::FromRight);
             None
         } else if e.kind.opens() {
             Some(Action::Open(e.path.clone()))
@@ -463,6 +563,32 @@ impl App {
                     self.fade_frames = self.fade_frames.saturating_add(1);
                 }
             }
+            // Drive the folder slide in lockstep with the fade (ADR 0006 D3). Same
+            // shape: redraw every loop while live, count frames for the stats
+            // proof, and on completion record the achieved FPS and clear it — the
+            // next render (with `slide == None`) is the settled frame, which the
+            // offset maths make identical to the normal render. `done` is read
+            // before the `&mut` borrow so `self.slide` can be cleared cleanly.
+            let slide_done = self
+                .slide
+                .as_ref()
+                .map(|s| s.anim.done(Instant::now()))
+                .unwrap_or(false);
+            if let Some(slide) = self.slide.as_mut() {
+                dirty = true;
+                if slide_done {
+                    crate::anim::record(
+                        "folder-slide",
+                        slide.frames,
+                        slide.anim.elapsed(Instant::now()),
+                    );
+                } else {
+                    slide.frames = slide.frames.saturating_add(1);
+                }
+            }
+            if slide_done {
+                self.slide = None;
+            }
             if dirty {
                 term.draw(|f| self.render(f))?;
                 dirty = false;
@@ -478,10 +604,12 @@ impl App {
             // A live fade emits as fast as the per-frame budget allows (~4 ms ⇒
             // ≤250 fps) so the interpolation is smooth up to the display refresh
             // (ADR 0006 D2); the heavier raster/GIF paths keep their 60 ms cadence.
-            // The block above already cleared `fade` if it just completed, so a
-            // fully idle browser (no fade, no raster, no GIF) still blocks the full
-            // second and does nothing — no new idle churn.
-            let fading = self.fade.is_some();
+            // The blocks above already cleared `fade`/`slide` if they just
+            // completed, so a fully idle browser (no fade, no slide, no raster, no
+            // GIF) still blocks the full second and does nothing — no new idle
+            // churn. A live slide emits at the same ~4 ms cadence as the fade
+            // (they run together), so the two share the fast-poll arm.
+            let fading = self.fade.is_some() || self.slide.is_some();
             let timeout = if fading {
                 Duration::from_millis(4)
             } else if raster_active || animating {
@@ -493,11 +621,13 @@ impl App {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
-                        // Interrupt any in-flight fade: complete it at once so the
-                        // next render is the final state (ADR 0006 D2 — motion never
-                        // adds latency). A key that changes directory re-arms a
-                        // fresh fade inside `handle_key`/`enter_dir`.
+                        // Interrupt any in-flight fade AND slide: complete them at
+                        // once so the next render is the final state (ADR 0006 D2 —
+                        // motion never adds latency). A key that changes directory
+                        // re-arms a fresh fade+slide inside `handle_key`/`enter_dir`.
+                        // Dropping the slide here also frees its owned snapshot buffer.
                         self.fade = None;
+                        self.slide = None;
                         if let Some(action) = self.handle_key(key) {
                             return Ok(action);
                         }
@@ -516,7 +646,10 @@ impl App {
                                 // Breadcrumb row (handled first, exactly as before).
                                 if let Some(target) = crumb_hit(&self.crumb_hits, me.column) {
                                     if target != self.cwd {
-                                        self.enter_dir(target);
+                                        // A breadcrumb always jumps to an ancestor
+                                        // (up), so the new listing enters from the
+                                        // left, matching `go_parent` (ADR 0006 D3).
+                                        self.enter_dir(target, SlideDir::FromLeft);
                                         dirty = true;
                                     }
                                 }
@@ -1174,9 +1307,12 @@ impl App {
         // Only the current pane fades — the parent (Miller) pane didn't change, so
         // it always gets `None`. At progress 1.0 the eased factor is 1.0 and every
         // lerp is the identity, so the final frame equals the non-animated render.
+        // Read the clock once at this render edge and reuse it for both the fade
+        // and the slide (the clock lives only at the edges — ADR 0006).
+        let now = Instant::now();
         let fade_t = self
             .fade
-            .map(|a| crate::anim::ease_out_cubic(a.progress(Instant::now())));
+            .map(|a| crate::anim::ease_out_cubic(a.progress(now)));
         if effective_columns(self.layout, area.width, has_parent) == 3 {
             // Miller: parent | current | preview  (~[20%, 34%, 46%]).
             let cols = RtLayout::default()
@@ -1206,7 +1342,25 @@ impl App {
                 meta: self.meta,
                 fade_t, // the current pane fades in after a dir change (D3).
             };
-            render_entry_list(f, cols[1], &view, &mut self.state, true, filter, self.icons);
+            // Only the CURRENT (middle) pane slides; the parent and preview render
+            // statically (ADR 0006 D3). A live slide composes the static block plus
+            // the old/new inner blits; otherwise the normal one-shot render.
+            match self.slide.as_ref().filter(|s| !s.anim.done(now)) {
+                Some(slide) => render_entry_slide(
+                    f,
+                    cols[1],
+                    &view,
+                    &self.state,
+                    self.icons,
+                    true,
+                    filter,
+                    slide,
+                    now,
+                ),
+                None => {
+                    render_entry_list(f, cols[1], &view, &mut self.state, true, filter, self.icons)
+                }
+            }
             self.render_preview(f, cols[2]);
         } else {
             // Double: current | preview — the classic, byte-for-byte split.
@@ -1228,7 +1382,23 @@ impl App {
                 meta: self.meta,
                 fade_t, // the current pane fades in after a dir change (D3).
             };
-            render_entry_list(f, cols[0], &view, &mut self.state, true, filter, self.icons);
+            // The current pane slides; the preview renders statically (ADR 0006 D3).
+            match self.slide.as_ref().filter(|s| !s.anim.done(now)) {
+                Some(slide) => render_entry_slide(
+                    f,
+                    cols[0],
+                    &view,
+                    &self.state,
+                    self.icons,
+                    true,
+                    filter,
+                    slide,
+                    now,
+                ),
+                None => {
+                    render_entry_list(f, cols[0], &view, &mut self.state, true, filter, self.icons)
+                }
+            }
             self.render_preview(f, cols[1]);
         }
 
@@ -1395,11 +1565,17 @@ impl App {
 /// collapses to the classic two-column split (ADR 0004, D1).
 const MILLER_MIN: u16 = 100;
 
+/// The duration of a folder-navigation animation (ADR 0006 D3): the colour fade
+/// and the directional slide are both started at the same instant with this
+/// duration, so they run in lockstep — the incoming listing slides into place
+/// while its colours resolve up from the background, and both settle together.
+const NAV_ANIM: Duration = Duration::from_millis(150);
+
 /// The assumed terminal background the current-pane fade resolves FROM (ADR 0006
 /// D3). A TUI cannot portably query the real background colour, so rather than
 /// over-engineer detection we interpolate toward this documented near-black
 /// constant; on a terminal whose true background differs the fade origin is
-/// approximate, but it lasts only ~120 ms. Because `lerp_color(FADE_BG, c, 1.0)`
+/// approximate, but it lasts only ~150 ms. Because `lerp_color(FADE_BG, c, 1.0)`
 /// is exactly `c`, the settle frame is byte-for-byte the non-animated colours.
 const FADE_BG: Color = Color::Rgb(16, 16, 20);
 
@@ -1483,19 +1659,137 @@ fn render_entry_list(
     filter: bool,
     icons: IconMode,
 ) {
-    // The current-pane fade-in after a directory change (ADR 0006 D3).
-    // `view.fade_t` is the eased progress in 0..1 (or `None` when no fade is live
-    // / for the parent pane). `fade` lerps a colour from the assumed background
-    // [`FADE_BG`] toward its true value at that factor, so the new listing
-    // resolves out of the background; it is the identity when `fade_t` is `None`,
-    // and — because `lerp_color(bg, c, 1.0) == c` — the settle frame at progress
-    // 1.0 is drawn with exactly the normal colours (byte-for-byte non-animated).
-    let fade = |c: Color| -> Color {
-        match view.fade_t {
-            Some(t) => crate::anim::lerp_color(FADE_BG, c, t),
-            None => c,
+    // Draw the static border block, then render the items into its inner rect of
+    // the frame's own buffer. This is byte-for-byte the pre-slide render: the List
+    // widget used to carry the block and render it into `area` before drawing the
+    // items into `block.inner(area)`; splitting the block off and rendering the
+    // items into that SAME inner rect produces an identical buffer (the List's
+    // base `style` is the default, whose `set_style` over the border cells is a
+    // no-op), and the `ListState` offset mutation is identical because it depends
+    // only on the inner height. Splitting them is what lets the slide keep the
+    // border static while the inner content translates (ADR 0006 D3).
+    let block = entry_block(view, active, filter);
+    f.render_widget(block, area);
+    let inner = entry_inner(area);
+    let items = entry_items(area, view, icons);
+    let list = entry_list(items, view.fade_t);
+    // Sync the passed state to the view's selection (a no-op for the current
+    // pane, whose state already holds it — so its scroll offset is untouched).
+    state.select(view.selected);
+    render_items_into(f.buffer_mut(), inner, list, state);
+}
+
+/// Compose one frame of the current pane's folder slide (ADR 0006 D3). The border
+/// block is drawn STATICALLY into the frame; then the OLD snapshot and a freshly
+/// rendered NEW inner buffer are blitted into the frame, each translated
+/// horizontally by the eased offset and clipped to the inner rect. At progress 1.0
+/// the new content lands exactly in `inner` (offset 0) and the old is fully
+/// off-screen, so the settle frame is byte-for-byte the normal render — the very
+/// reason the loop can clear the slide on completion and let `render_entry_list`
+/// draw the final frame.
+///
+/// Only the current pane is ever slid; the caller passes its `list_area`. The new
+/// content carries `view.fade_t`, so it slides in AND resolves its colours up from
+/// the background at the same time.
+#[allow(clippy::too_many_arguments)]
+fn render_entry_slide(
+    f: &mut Frame,
+    area: Rect,
+    view: &EntryListView,
+    state: &ListState,
+    icons: IconMode,
+    active: bool,
+    filter: bool,
+    slide: &Slide,
+    now: Instant,
+) {
+    let block = entry_block(view, active, filter);
+    f.render_widget(block, area);
+    let inner = entry_inner(area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+    // Render the NEW inner content (with the colour fade) into a scratch buffer
+    // sized to the inner rect. `Buffer::empty(inner)` addresses cells at the
+    // inner's GLOBAL coordinates, matching the snapshot and the frame, so the blit
+    // is a straight column shift.
+    let items = entry_items(area, view, icons);
+    let list = entry_list(items, view.fade_t);
+    let mut new_buf = Buffer::empty(inner);
+    let mut st = *state; // `ListState` is `Copy`; don't disturb the caller's.
+    st.select(view.selected);
+    render_items_into(&mut new_buf, inner, list, &mut st);
+    // Eased factor → whole-cell offsets for the two layers.
+    let t = crate::anim::ease_out_cubic(slide.anim.progress(now));
+    let (old_dx, new_dx) = slide_offsets(slide.dir, t, inner.width);
+    blit_shifted(f.buffer_mut(), &slide.old, inner, old_dx);
+    blit_shifted(f.buffer_mut(), &new_buf, inner, new_dx);
+}
+
+/// The inner content rect of an entry pane: the pane rect minus its 1-cell rounded
+/// border on every side. Factored so the normal render, the slide's scratch
+/// buffer, and the old-content snapshot all agree on exactly where the items live
+/// (`border_type` doesn't affect `inner`, only the border glyphs, so a plain
+/// `borders(ALL)` block yields the same rect as the styled [`entry_block`]).
+fn entry_inner(area: Rect) -> Rect {
+    Block::default().borders(Borders::ALL).inner(area)
+}
+
+/// The eased fade tint for a colour (ADR 0006 D3): lerp from the assumed
+/// background [`FADE_BG`] toward `c` at factor `t`, or `c` unchanged when `t` is
+/// `None` (no fade live, or the parent context pane). Shared by the item spans and
+/// the selection highlight so the whole listing resolves together; because
+/// `lerp_color(FADE_BG, c, 1.0) == c`, the settle frame is the exact normal colour.
+fn fade_color(fade_t: Option<f32>, c: Color) -> Color {
+    match fade_t {
+        Some(t) => crate::anim::lerp_color(FADE_BG, c, t),
+        None => c,
+    }
+}
+
+/// Build a pane's STATIC border block (ADR 0006 D3): a rounded border plus the
+/// styled title. Never fades — during a folder slide the frame stays put while
+/// only the inner items translate, so the border/title are drawn once per frame at
+/// full colour and the sliding content passes beneath them.
+///
+/// - `active` lights the border with the accent (and the title accent+BOLD);
+///   inactive dims both. `filter` (only ever true for the active current pane)
+///   shifts the border to the filter yellow (`doc`), matching the status line.
+fn entry_block(view: &EntryListView, active: bool, filter: bool) -> Block<'static> {
+    let accent = theme::palette().accent;
+    let border = if active {
+        if filter {
+            theme::palette().doc
+        } else {
+            accent
         }
+    } else {
+        theme::palette().dim
     };
+    let title_style = if active {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme::palette().dim)
+    };
+    let title = Line::from(Span::styled(view.title.clone(), title_style));
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(border))
+        .title(title)
+}
+
+/// Build a pane's rows as `ListItem`s (ADR 0004 D1): icon + optional git gutter +
+/// name + optional trailing meta column, each colour passed through the fade tint
+/// from `view.fade_t`. `area` is the OUTER pane rect — its width drives the exact
+/// same chrome/name arithmetic as before the block/items split, so the produced
+/// items are byte-for-byte identical to the pre-refactor renderer.
+///
+/// - `view.git` reserves a 2-cell gutter only when `Some` (the current pane in a
+///   repo); when `None` (parent pane, non-repo, or git off) it costs zero width
+///   and the name reclaims it — so two-column output is byte-for-byte pre-git.
+fn entry_items(area: Rect, view: &EntryListView, icons: IconMode) -> Vec<ListItem<'static>> {
+    let fade = |c: Color| fade_color(view.fade_t, c);
     // Width reserved before the name: 2 for the block borders, 2 for the
     // selection cursor gutter (the `highlight_symbol` List reserves on every row
     // so names align whether selected or not), plus a 2-cell glyph column ("X ")
@@ -1524,8 +1818,7 @@ fn render_entry_list(
     // read is fine (ADR 0005 D2); only consulted in `Modified` mode.
     let now = SystemTime::now();
 
-    let items: Vec<ListItem> = view
-        .order
+    view.order
         .iter()
         .map(|&i| {
             let e = &view.entries[i];
@@ -1605,51 +1898,79 @@ fn render_entry_list(
             }
             ListItem::new(Line::from(spans))
         })
-        .collect();
+        .collect()
+}
 
-    let accent = theme::palette().accent;
-    // The active pane lights its border with the accent (and its title
-    // accent+BOLD); the passive parent pane dims both so it recedes. In Filter
-    // mode the active border shifts to the filter yellow (`doc`), matching the
-    // status line's filter colour.
-    let border = if active {
-        if filter {
-            theme::palette().doc
-        } else {
-            accent
-        }
-    } else {
-        theme::palette().dim
-    };
-    let title_style = if active {
-        Style::default().fg(accent).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(theme::palette().dim)
-    };
-    let title = Line::from(Span::styled(view.title.clone(), title_style));
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(border))
-                .title(title),
-        )
-        // Soft background tint + accent cursor gutter, replacing the harsh
-        // reverse-video bar. The gutter bar ("▎") takes the selection bg too;
-        // the tint carries the accent read. The selection background lerps from
-        // FADE_BG too, so the highlight fades in with the rest of the listing (ADR
-        // 0006 D3) and settles on the exact `selection` colour at progress 1.0.
+/// Wrap items into the `List` widget with the faded selection highlight and the
+/// cursor gutter, WITHOUT a block — the block is drawn separately so it can stay
+/// static during a slide (ADR 0006 D3). The selection background lerps from
+/// [`FADE_BG`] with the rest of the listing and settles on the exact `selection`
+/// colour at progress 1.0, replacing the old harsh reverse-video bar with a soft
+/// tint plus the accent gutter ("▎").
+fn entry_list<'a>(items: Vec<ListItem<'a>>, fade_t: Option<f32>) -> List<'a> {
+    List::new(items)
         .highlight_style(
             Style::default()
-                .bg(fade(theme::palette().selection))
+                .bg(fade_color(fade_t, theme::palette().selection))
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▎ ");
-    // Sync the passed state to the view's selection (a no-op for the current
-    // pane, whose state already holds it — so its scroll offset is untouched).
-    state.select(view.selected);
-    f.render_stateful_widget(list, area, state);
+        .highlight_symbol("▎ ")
+}
+
+/// Render a pane's `List` items into an arbitrary buffer at `inner`. The one place
+/// the item widget meets a `Buffer`, so the normal render (into the frame's own
+/// buffer) and the slide's scratch/snapshot buffers share the identical draw path
+/// (ADR 0006 D3). A thin wrapper over `StatefulWidget::render`, which draws into
+/// any `&mut Buffer`, not just the frame's.
+fn render_items_into(buf: &mut Buffer, inner: Rect, list: List, state: &mut ListState) {
+    StatefulWidget::render(list, inner, buf, state);
+}
+
+/// Whole-cell horizontal offsets for the two layers of a folder slide at eased
+/// factor `t` over an inner pane `w` cells wide (ADR 0006 D3). Returns
+/// `(old_dx, new_dx)` — how far to translate the OLD snapshot and the NEW content.
+///
+/// `FromRight` (entered a child): the old listing slides left (`-round(t*w)`) while
+/// the new one enters from the right (`+round((1-t)*w)`). `FromLeft` (went to the
+/// parent) mirrors both. The endpoints are the whole point:
+/// - `t = 0` → old at `0` (in place), new at `±w` (fully off-screen);
+/// - `t = 1` → old at `∓w` (fully off), new at `0` — so the settle frame lands the
+///   new content exactly in `inner`, identical to the normal render.
+///
+/// Pure so the offset maths is unit-tested without a terminal.
+fn slide_offsets(dir: SlideDir, t: f32, w: u16) -> (i32, i32) {
+    let w = w as f32;
+    let shift = (t * w).round() as i32; // how far the outgoing layer has travelled
+    let anti = ((1.0 - t) * w).round() as i32; // how far the incoming layer still is
+    match dir {
+        SlideDir::FromRight => (-shift, anti),
+        SlideDir::FromLeft => (shift, -anti),
+    }
+}
+
+/// Copy every cell of `src` into `dst`, translated horizontally by `dx` and
+/// clipped to `inner` (ADR 0006 D3). `src.area` is the inner rect in GLOBAL
+/// coordinates, so a source cell at `(x, y)` lands at `(x + dx, y)` iff that
+/// column is still inside `inner`; cells shifted past either edge are dropped (the
+/// off-screen part of the slide). The frame buffer is reset each draw, so any
+/// 1-cell rounding gap between the two layers shows the clean background.
+fn blit_shifted(dst: &mut Buffer, src: &Buffer, inner: Rect, dx: i32) {
+    let (left, right) = (inner.left() as i32, inner.right() as i32);
+    for y in inner.top()..inner.bottom() {
+        for x in inner.left()..inner.right() {
+            let x2 = x as i32 + dx;
+            if x2 < left || x2 >= right {
+                continue; // shifted off-screen
+            }
+            let Some(cell) = src.cell((x, y)) else {
+                continue;
+            };
+            let cell = cell.clone();
+            if let Some(d) = dst.cell_mut((x2 as u16, y)) {
+                *d = cell;
+            }
+        }
+    }
 }
 
 /// Read a directory's entries, classified by extension and sorted
@@ -2032,6 +2353,28 @@ mod tests {
         assert!(!rect_contains(r, 9, 3)); // x+w is excluded
         assert!(!rect_contains(r, 8, 4)); // y+h is excluded
         assert!(!rect_contains(r, 4, 2)); // left of x
+    }
+
+    #[test]
+    fn slide_offsets_endpoints_and_midpoint() {
+        // FromRight (entered a child): old exits left, new enters from the right.
+        // t = 0 → old in place (0), new fully off to the right (+w).
+        assert_eq!(slide_offsets(SlideDir::FromRight, 0.0, 40), (0, 40));
+        // t = 1 → old fully off left (-w), new landed exactly in place (0). THIS is
+        // the identity: at the settle frame the new content sits at offset 0, so it
+        // matches the normal render pixel-for-pixel.
+        assert_eq!(slide_offsets(SlideDir::FromRight, 1.0, 40), (-40, 0));
+        // Midpoint: old has travelled round(0.5*40)=20 left, new is round(0.5*40)=20
+        // still to the right — the two layers tile the inner width.
+        assert_eq!(slide_offsets(SlideDir::FromRight, 0.5, 40), (-20, 20));
+
+        // FromLeft (went to the parent): mirror image of FromRight.
+        // t = 0 → old in place (0), new fully off to the left (-w).
+        assert_eq!(slide_offsets(SlideDir::FromLeft, 0.0, 40), (0, -40));
+        // t = 1 → old fully off right (+w), new landed in place (0) — the identity.
+        assert_eq!(slide_offsets(SlideDir::FromLeft, 1.0, 40), (40, 0));
+        // Midpoint mirrored.
+        assert_eq!(slide_offsets(SlideDir::FromLeft, 0.5, 40), (20, -20));
     }
 
     #[test]
