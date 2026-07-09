@@ -375,6 +375,13 @@ struct App {
     git: Option<std::collections::HashMap<String, GitStatus>>,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
+    // The parent directory's entries, already ordered by `sort` — the cache
+    // behind the Miller parent pane (perf). Recomputed once per directory change
+    // in `load` (a single `read_dir` + sort) and re-sorted in place by `resort`,
+    // so `render_parent` reads this slice instead of re-listing the parent on
+    // every render frame — which, on a remote S3/GCS mount, was a network LIST
+    // per keystroke and per animation frame. Empty when `cwd` has no parent.
+    parent: Vec<Entry>,
     state: ListState,
     filter: String,
     mode: Mode,
@@ -586,6 +593,7 @@ pub fn run(
         git: None,
         all: Vec::new(),
         view: Vec::new(),
+        parent: Vec::new(),
         state: ListState::default(),
         filter: String::new(),
         mode: Mode::Browse,
@@ -697,6 +705,15 @@ impl App {
     /// Read the current directory into `all`, then apply the filter.
     fn load(&mut self) {
         self.all = read_entries(&self.cwd, self.sort);
+        // Cache the parent listing once for the whole time we're in this directory
+        // (perf): `render_parent` reads this slice every frame instead of re-listing
+        // the parent, so the Miller parent pane costs one `read_dir` per navigation
+        // rather than one per render — critical on remote mounts. Empty when there
+        // is no parent (the parent pane is a no-op then anyway).
+        self.parent = match self.cwd.parent() {
+            Some(p) => read_entries(p, self.sort),
+            None => Vec::new(),
+        };
         // Refresh the git gutter for the new directory (cheap, correct after a
         // dir change — D2). Disabled, git-absent, or non-repo dirs yield `None`,
         // which the pane renderer treats as "no gutter" (byte-for-byte pre-git).
@@ -736,6 +753,10 @@ impl App {
     fn resort(&mut self) {
         let sort = self.sort;
         self.all.sort_by(|a, b| sort_cmp(a, b, sort));
+        // Re-order the cached parent listing with the SAME comparator so the parent
+        // pane reflects the new sort without a re-read (the cwd didn't change, so
+        // the parent's entries are unchanged — only their order is).
+        self.parent.sort_by(|a, b| sort_cmp(a, b, sort));
         self.refilter();
         self.status = Some(self.sort.label());
     }
@@ -838,13 +859,21 @@ impl App {
             meta: self.meta,
             fade_t: None,
         };
-        let items = entry_items(area, &view, self.icons);
+        // Snapshot only the visible window (perf: list virtualisation), sized from
+        // the live scroll offset so the "old" layer matches what was on screen.
+        let (_, window) = visible_window(
+            self.state.offset(),
+            view.selected,
+            view.order.len(),
+            inner.height as usize,
+        );
+        let items = entry_items(area, &view, self.icons, window.clone());
         let list = entry_list(items, None);
         let mut buf = Buffer::empty(inner);
-        // A copy of the live state carries the exact scroll offset onto the
-        // snapshot without disturbing the real one (`ListState` is `Copy`).
-        let mut state = self.state;
-        state.select(view.selected);
+        // A local state renders the window at offset 0 without disturbing the real
+        // one, with the selection rebased into the window.
+        let mut state = ListState::default();
+        state.select(window_selection(view.selected, &window));
         render_items_into(&mut buf, inner, list, &mut state);
         Some(buf)
     }
@@ -2008,7 +2037,9 @@ impl App {
         let Some(parent) = self.cwd.parent().map(Path::to_path_buf) else {
             return;
         };
-        let entries = read_entries(&parent, self.sort);
+        // The parent listing is cached in `self.parent` (kept sorted by `load`/
+        // `resort`), so this pane costs no directory read on a render frame.
+        let entries = &self.parent;
         // Same hidden-file policy as the current pane, but no smart-query filter:
         // the parent is context, so every visible sibling shows in sorted order.
         let order: Vec<usize> = entries
@@ -2028,7 +2059,7 @@ impl App {
         let mut state = ListState::default();
         state.select(selected);
         let view = EntryListView {
-            entries: &entries,
+            entries,
             order: &order,
             selected,
             title: format!(" {} ", pretty_dir_name(&parent)),
@@ -2224,9 +2255,17 @@ impl App {
             .title(title);
         f.render_widget(block, area);
         let inner = entry_inner(area);
+        // Materialise only the visible window (perf: list virtualisation), sized the
+        // same way the browse list is: from the results state's previous offset and
+        // selection. Read those before borrowing `&self` for the item build.
+        let (offset, len, selected) = match self.search.as_ref() {
+            Some(s) => (s.state.offset(), s.results.len(), s.state.selected()),
+            None => (0, 0, None),
+        };
+        let (new_offset, window) = visible_window(offset, selected, len, inner.height as usize);
         // Build items first (borrows `&self`), then render through the state (borrows
         // `&mut self.search`) — sequential, so no aliasing.
-        let items = self.search_items(area.width);
+        let items = self.search_items(area.width, window.clone());
         // The same soft selection tint + accent cursor gutter the browse list uses
         // (see `entry_list`), so the two surfaces read as one system.
         let list = List::new(items)
@@ -2237,7 +2276,13 @@ impl App {
             )
             .highlight_symbol("▎ ");
         if let Some(search) = self.search.as_mut() {
-            render_items_into(f.buffer_mut(), inner, list, &mut search.state);
+            // Render the window through a LOCAL state at offset 0 so ratatui doesn't
+            // re-scroll, then write the true first-visible index back into the real
+            // results state for `row_to_index`'s click hit-testing (§9).
+            let mut local = ListState::default();
+            local.select(window_selection(selected, &window));
+            render_items_into(f.buffer_mut(), inner, list, &mut local);
+            *search.state.offset_mut() = new_offset;
         }
     }
 
@@ -2246,7 +2291,12 @@ impl App {
     /// the hit's path RELATIVE to cwd (coloured by `hit.kind.color()`), and for a
     /// content match a dimmed ` N: text` snippet. The whole line is length-budgeted
     /// to the inner width so a row never wraps (reusing `truncate`/`snippet_suffix`).
-    fn search_items(&self, width: u16) -> Vec<ListItem<'static>> {
+    ///
+    /// Only the `window` slice of the results is materialised (perf: list
+    /// virtualisation) — the width budget depends only on `width`, so every row that
+    /// IS built is identical whatever the window; the caller sizes `window` with
+    /// [`visible_window`] and renders it through a local state at offset 0.
+    fn search_items(&self, width: u16, window: std::ops::Range<usize>) -> Vec<ListItem<'static>> {
         let Some(search) = self.search.as_ref() else {
             return Vec::new();
         };
@@ -2259,8 +2309,7 @@ impl App {
             _ => 6,
         };
         let inner_w = width.saturating_sub(chrome_w) as usize;
-        search
-            .results
+        search.results[window]
             .iter()
             .map(|hit| {
                 let mut spans: Vec<Span> = Vec::with_capacity(3);
@@ -2447,12 +2496,31 @@ fn render_entry_list(
     let block = entry_block(view, active, filter);
     f.render_widget(block, area);
     let inner = entry_inner(area);
-    let items = entry_items(area, view, icons);
+    // Materialise only the visible window (perf: list virtualisation). We compute
+    // the scroll offset ourselves from the state's PREVIOUS offset, so the window
+    // is byte-for-byte what ratatui would have shown the full list.
+    let (offset, window) =
+        visible_window(state.offset(), view.selected, view.order.len(), inner.height as usize);
+    let items = entry_items(area, view, icons, window.clone());
     let list = entry_list(items, view.fade_t);
-    // Sync the passed state to the view's selection (a no-op for the current
-    // pane, whose state already holds it — so its scroll offset is untouched).
+    // Render through a LOCAL state at offset 0 with the selection rebased into the
+    // window, so ratatui — which only sees the window's rows — never re-scrolls.
+    let mut local = ListState::default();
+    local.select(window_selection(view.selected, &window));
+    render_items_into(f.buffer_mut(), inner, list, &mut local);
+    // Write the TRUE first-visible index back into the real state so `row_to_index`
+    // (which reads `state.offset()`) still maps a clicked row to its absolute entry.
     state.select(view.selected);
-    render_items_into(f.buffer_mut(), inner, list, state);
+    *state.offset_mut() = offset;
+}
+
+/// Rebase a listing selection (an index into the full `order`) into a virtualised
+/// window (perf: list virtualisation): `Some(local)` when the selection falls
+/// inside `window` — as it always does once [`visible_window`] has scrolled to
+/// keep it visible — else `None`. The local index is what the windowed `ListState`
+/// highlights, since that state renders only the window at offset 0.
+fn window_selection(selected: Option<usize>, window: &std::ops::Range<usize>) -> Option<usize> {
+    selected.filter(|s| window.contains(s)).map(|s| s - window.start)
 }
 
 /// Compose one frame of the current pane's folder slide (ADR 0006 D3). The border
@@ -2489,11 +2557,15 @@ fn render_entry_slide(
     // sized to the inner rect. `Buffer::empty(inner)` addresses cells at the
     // inner's GLOBAL coordinates, matching the snapshot and the frame, so the blit
     // is a straight column shift.
-    let items = entry_items(area, view, icons);
+    // Same virtualised window as the settled render (perf), computed from the same
+    // state offset — so the sliding-in content is byte-for-byte the settle frame.
+    let (_, window) =
+        visible_window(state.offset(), view.selected, view.order.len(), inner.height as usize);
+    let items = entry_items(area, view, icons, window.clone());
     let list = entry_list(items, view.fade_t);
     let mut new_buf = Buffer::empty(inner);
-    let mut st = *state; // `ListState` is `Copy`; don't disturb the caller's.
-    st.select(view.selected);
+    let mut st = ListState::default(); // local: render the window at offset 0.
+    st.select(window_selection(view.selected, &window));
     render_items_into(&mut new_buf, inner, list, &mut st);
     // Eased factor → whole-cell offsets for the two layers.
     let t = crate::anim::ease_out_cubic(slide.anim.progress(now));
@@ -2555,16 +2627,67 @@ fn entry_block(view: &EntryListView, active: bool, filter: bool) -> Block<'stati
         .title(title)
 }
 
+/// The scroll offset and the index range of rows actually visible in a list pane
+/// (perf: list virtualisation). Replays ratatui's `List` scroll clamp for the
+/// uniform 1-cell rows this browser draws — given the PREVIOUS `offset`, the
+/// `selected` index, the total `len`, and the viewport `height` — so a caller can
+/// build `ListItem`s for ONLY the visible window instead of the whole listing, yet
+/// render a buffer byte-for-byte identical to feeding ratatui the full list.
+///
+/// The returned `offset` is the true first-visible index: scrolled minimally so
+/// `selected` stays on screen (up when it's above the window, down when below),
+/// then clamped into `[0, len - height]`. Callers WRITE THIS BACK into the real
+/// `ListState` so [`row_to_index`] (which reads `state.offset()`) still maps a
+/// clicked screen row to the right absolute entry. A zero height or empty list has
+/// no visible rows → offset 0 and an empty range.
+///
+/// Pure so the clamp maths is unit-tested without a terminal.
+fn visible_window(
+    offset: usize,
+    selected: Option<usize>,
+    len: usize,
+    height: usize,
+) -> (usize, std::ops::Range<usize>) {
+    if height == 0 || len == 0 {
+        return (0, 0..0);
+    }
+    let max_offset = len.saturating_sub(height);
+    let mut offset = offset.min(max_offset);
+    if let Some(sel) = selected {
+        let sel = sel.min(len - 1);
+        if sel < offset {
+            offset = sel; // selection above the window → scroll up to it
+        } else if sel >= offset + height {
+            offset = sel - height + 1; // below the window → scroll down to it
+        }
+        offset = offset.min(max_offset);
+    }
+    let end = (offset + height).min(len);
+    (offset, offset..end)
+}
+
 /// Build a pane's rows as `ListItem`s (ADR 0004 D1): icon + optional git gutter +
 /// name + optional trailing meta column, each colour passed through the fade tint
 /// from `view.fade_t`. `area` is the OUTER pane rect — its width drives the exact
 /// same chrome/name arithmetic as before the block/items split, so the produced
 /// items are byte-for-byte identical to the pre-refactor renderer.
 ///
+/// Only the `window` slice of `view.order` is materialised (perf: list
+/// virtualisation) — the width arithmetic depends solely on `area.width`, not on
+/// how many rows are built, so every row that IS built is identical whatever the
+/// window. The caller sizes the window with [`visible_window`] and renders it
+/// through a local `ListState` at offset 0, so the on-screen buffer matches a
+/// full-list render exactly while off-screen rows cost nothing.
+///
 /// - `view.git` reserves a 2-cell gutter only when `Some` (the current pane in a
 ///   repo); when `None` (parent pane, non-repo, or git off) it costs zero width
 ///   and the name reclaims it — so two-column output is byte-for-byte pre-git.
-fn entry_items(area: Rect, view: &EntryListView, icons: IconMode) -> Vec<ListItem<'static>> {
+fn entry_items(
+    area: Rect,
+    view: &EntryListView,
+    icons: IconMode,
+    window: std::ops::Range<usize>,
+) -> Vec<ListItem<'static>> {
     let fade = |c: Color| fade_color(view.fade_t, c);
     // Width reserved before the name: 2 for the block borders, 2 for the
     // selection cursor gutter (the `highlight_symbol` List reserves on every row
@@ -2594,7 +2717,7 @@ fn entry_items(area: Rect, view: &EntryListView, icons: IconMode) -> Vec<ListIte
     // read is fine (ADR 0005 D2); only consulted in `Modified` mode.
     let now = SystemTime::now();
 
-    view.order
+    view.order[window]
         .iter()
         .map(|&i| {
             let e = &view.entries[i];
@@ -3422,6 +3545,33 @@ mod tests {
         // Offset math must still bounds-check: row resolves to index 14 but the
         // view only has 13 entries → None (never an out-of-bounds select).
         assert_eq!(row_to_index(area, 12, 5, 15, 13), None);
+    }
+
+    #[test]
+    fn visible_window_scrolls_to_keep_selection_visible() {
+        // Selection already inside the current window → no scroll, window is
+        // `offset..offset+height`.
+        assert_eq!(visible_window(0, Some(3), 100, 10), (0, 0..10));
+        assert_eq!(visible_window(5, Some(8), 100, 10), (5, 5..15));
+        // Scroll DOWN: selection past the bottom of the window → offset lands it on
+        // the last visible row (`selected - height + 1`).
+        assert_eq!(visible_window(0, Some(50), 100, 10), (41, 41..51));
+        assert_eq!(visible_window(0, Some(9), 100, 10), (0, 0..10)); // last row still fits
+        assert_eq!(visible_window(0, Some(10), 100, 10), (1, 1..11)); // one past → scroll 1
+        // Scroll UP: selection above the window → offset drops to the selection.
+        assert_eq!(visible_window(40, Some(12), 100, 10), (12, 12..22));
+        // Clamp at the end: a big offset with no lower selection can't scroll past
+        // `len - height`, so the last page is fully filled.
+        assert_eq!(visible_window(999, None, 100, 10), (90, 90..100));
+        assert_eq!(visible_window(0, Some(99), 100, 10), (90, 90..100));
+        // Empty / short list, and zero height → offset 0 and an empty range.
+        assert_eq!(visible_window(0, None, 0, 10), (0, 0..0));
+        assert_eq!(visible_window(7, Some(3), 0, 10), (0, 0..0));
+        assert_eq!(visible_window(0, Some(0), 100, 0), (0, 0..0));
+        // Shorter than the viewport: the whole list is the window, offset 0.
+        assert_eq!(visible_window(0, Some(2), 4, 10), (0, 0..4));
+        // A stale offset left over from a bigger listing is clamped down.
+        assert_eq!(visible_window(30, Some(0), 5, 40), (0, 0..5));
     }
 
     #[test]
