@@ -283,6 +283,35 @@ fn read_entry(zip: &mut zip::ZipArchive<File>, name: &str) -> Option<String> {
     Some(s)
 }
 
+/// Bounded, synchronous first-rows reader for the directory preview pane.
+///
+/// Parses ONLY the first worksheet's XML on the calling thread and stops after
+/// `max_rows` rows — no background thread, no polling. The decompressed sheet
+/// XML is read through [`Read::take`] at [`crate::util::MAX_DECODE_BYTES`] so a
+/// zip bomb cannot inflate unbounded even if it presents few `<row>` elements.
+/// Each row is truncated to `max_cols`. Shares the row/cell decoding with the
+/// streaming loader via [`parse_sheet_xml`], so the two never drift (ADR 0009).
+pub fn preview_rows(file: &str, max_rows: usize, max_cols: usize) -> Result<Vec<Vec<String>>, String> {
+    let f = File::open(file).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
+    let sheets = read_workbook_sheets(&mut zip)?;
+    let sst = read_shared_strings(&mut zip);
+    // A crafted workbook may declare no usable sheets; never index blindly.
+    let sheet_path = sheets.first().ok_or("workbook has no sheets")?.1.clone();
+    let entry = zip.by_name(&sheet_path).map_err(|e| e.to_string())?;
+    // Cap the DECOMPRESSED sheet-XML bytes: a bomb inflates at most this much
+    // before quick-xml simply hits EOF on the truncated stream.
+    let bounded = entry.take(crate::util::MAX_DECODE_BYTES as u64);
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    parse_sheet_xml(bounded, &sst, || false, |mut row| {
+        row.truncate(max_cols);
+        rows.push(row);
+        rows.len() >= max_rows
+    });
+    Ok(rows)
+}
+
 fn stream_sheet(
     file: &str,
     sheet_path: &str,
@@ -297,7 +326,44 @@ fn stream_sheet(
     let Ok(entry) = zip.by_name(sheet_path) else {
         return;
     };
-    let mut rd = Reader::from_reader(BufReader::with_capacity(1 << 20, entry));
+
+    parse_sheet_xml(
+        entry,
+        sst,
+        || stop.load(Ordering::Relaxed),
+        |row| {
+            let mut d = data.lock().unwrap();
+            d.ncols = d.ncols.max(row.len());
+            d.rows.push(row);
+            if d.rows.len() >= ROW_CAP {
+                d.capped = true;
+                d.done = true;
+                true
+            } else {
+                false
+            }
+        },
+    );
+
+    if let Ok(mut d) = data.lock() {
+        d.done = true;
+    }
+}
+
+/// Shared worksheet-XML row parser used by both the streaming loader and the
+/// bounded preview. Reads `<row>`/`<c>` elements from `reader`, resolving shared
+/// strings against `sst`, and hands each completed row to `on_row`. Stops when
+/// `on_row` returns `true` (the consumer is full) or `should_abort` returns
+/// `true` (checked per event, so the streaming worker can cancel promptly when
+/// the user switches sheets), or at EOF. Keeping the cell/row decoding here
+/// means the interactive grid and the preview can never disagree (ADR 0009).
+fn parse_sheet_xml<R, A, F>(reader: R, sst: &[String], should_abort: A, mut on_row: F)
+where
+    R: Read,
+    A: Fn() -> bool,
+    F: FnMut(Vec<String>) -> bool,
+{
+    let mut rd = Reader::from_reader(BufReader::with_capacity(1 << 20, reader));
     let mut buf = Vec::new();
 
     let mut row: Vec<String> = Vec::new();
@@ -308,7 +374,7 @@ fn stream_sheet(
     let mut in_t = false;
 
     loop {
-        if stop.load(Ordering::Relaxed) {
+        if should_abort() {
             return;
         }
         match rd.read_event_into(&mut buf) {
@@ -388,19 +454,7 @@ fn stream_sheet(
                     col += 1;
                 }
                 b"row" => {
-                    let finished = {
-                        let mut d = data.lock().unwrap();
-                        d.ncols = d.ncols.max(row.len());
-                        d.rows.push(std::mem::take(&mut row));
-                        if d.rows.len() >= ROW_CAP {
-                            d.capped = true;
-                            d.done = true;
-                            true
-                        } else {
-                            false
-                        }
-                    };
-                    if finished {
+                    if on_row(std::mem::take(&mut row)) {
                         return;
                     }
                 }
@@ -410,10 +464,6 @@ fn stream_sheet(
             _ => {}
         }
         buf.clear();
-    }
-
-    if let Ok(mut d) = data.lock() {
-        d.done = true;
     }
 }
 
@@ -478,5 +528,64 @@ mod tests {
         assert!(contains_ci("ABC", "abc"));
         assert!(!contains_ci("abc", "xyz"));
         assert!(contains_ci("anything", ""));
+    }
+
+    // Collect every row the shared parser yields from an inline sheet-XML blob.
+    fn parse_all(xml: &str, sst: &[String]) -> Vec<Vec<String>> {
+        let mut rows = Vec::new();
+        parse_sheet_xml(xml.as_bytes(), sst, || false, |row| {
+            rows.push(row);
+            false
+        });
+        rows
+    }
+
+    #[test]
+    fn parses_shared_inline_and_typed_cells() {
+        // A shared-string ref (t="s"), an inline string (t="inlineStr"), a
+        // number, and a boolean — the four cell shapes the resolver handles.
+        let sst = vec!["Alpha".to_string(), "Beta".to_string()];
+        let xml = "<worksheet><sheetData>\
+            <row r=\"1\"><c r=\"A1\" t=\"s\"><v>1</v></c>\
+            <c r=\"B1\" t=\"inlineStr\"><is><t>Inline</t></is></c></row>\
+            <row r=\"2\"><c r=\"A2\" t=\"n\"><v>42</v></c>\
+            <c r=\"B2\" t=\"b\"><v>1</v></c></row>\
+            </sheetData></worksheet>";
+        let rows = parse_all(xml, &sst);
+        assert_eq!(
+            rows,
+            vec![
+                vec!["Beta".to_string(), "Inline".to_string()],
+                vec!["42".to_string(), "TRUE".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn parser_stops_when_on_row_signals_full() {
+        // Returning `true` from on_row halts parsing immediately — the mechanism
+        // both the ROW_CAP and the preview cap rely on.
+        let xml = "<worksheet><sheetData>\
+            <row r=\"1\"><c r=\"A1\" t=\"n\"><v>1</v></c></row>\
+            <row r=\"2\"><c r=\"A2\" t=\"n\"><v>2</v></c></row>\
+            <row r=\"3\"><c r=\"A3\" t=\"n\"><v>3</v></c></row>\
+            </sheetData></worksheet>";
+        let mut rows = Vec::new();
+        parse_sheet_xml(xml.as_bytes(), &[], || false, |row| {
+            rows.push(row);
+            rows.len() >= 2 // stop after two rows
+        });
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1], vec!["2".to_string()]);
+    }
+
+    #[test]
+    fn preview_rows_reads_and_caps() {
+        // samples/sample.xlsx sheet1 is A1:D5 (5 rows x 4 cols, inline strings).
+        let g = preview_rows("samples/sample.xlsx", 2, 3).expect("first worksheet rows");
+        assert_eq!(g.len(), 2, "row cap");
+        assert!(g.iter().all(|r| r.len() <= 3), "col cap");
+        assert_eq!(g[0], vec!["Item", "Qty", "Unit"]);
+        assert_eq!(g[1], vec!["Coffee", "3", "4.5"]);
     }
 }

@@ -14,6 +14,13 @@ use std::time::SystemTime;
 /// much before we stop and report honestly instead of OOM-ing.
 pub const MAX_DECODE_BYTES: usize = 32 * 1024 * 1024;
 
+/// Hard cap on bytes read for a directory-browser *preview* of a delimited-text
+/// file (csv/tsv) (ADR 0009). A preview only ever shows the first handful of
+/// rows, so 1 MiB holds far more than can be displayed. Unlike a full open, a
+/// preview may legitimately show only a prefix of a huge file: the reader takes
+/// at most this many bytes and parses what it got rather than erroring.
+pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
+
 /// Hard cap on bytes inflated while *listing* an archive (ADR 0009). Larger than
 /// [`MAX_DECODE_BYTES`] because a legitimate `.tar`/`.tar.gz` of source or media
 /// easily exceeds 32 MiB and listing must stream through every member's bytes to

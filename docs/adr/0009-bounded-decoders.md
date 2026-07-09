@@ -43,10 +43,17 @@ Concretely:
    before we stop) and *time* (parse work is proportional to the cap). Applies to
    html, docx, pptx, and archive inflation. The cap is generous enough for real
    documents and small enough that a bounded parse is sub-second.
-2. **Spreadsheets use the streaming reader, not full materialisation.** The
-   preview path uses the existing `StreamBook` + row cap rather than calamine's
-   `worksheet_range`, so a huge sheet is bounded by the same row cap the
-   interactive grid already relies on. csv/tsv reads are byte-capped like the rest.
+2. **Spreadsheets read bounded first rows, never full materialisation.** xlsx/xlsm
+   previews go through `xlsx::preview_rows`, which parses only the first
+   worksheet's XML synchronously, stops after the requested rows, and reads the
+   decompressed sheet XML through a `MAX_DECODE_BYTES`-bounded reader — sharing
+   the exact row/cell decoder (`parse_sheet_xml`) with `StreamBook`'s streaming
+   loader (itself capped at `ROW_CAP`), so preview and interactive open agree and
+   neither materialises a whole sheet. The interactive/dump csv path
+   (`MemBook::from_csv`) is byte-capped at `MAX_DECODE_BYTES` and row-capped at
+   `ROW_CAP`; the csv/tsv preview reads at most `MAX_PREVIEW_BYTES`. The
+   calamine-backed formats (xls/ods/xlsb, which materialise eagerly) are gated by
+   an on-disk file-size precheck against `MAX_DECODE_BYTES`.
 3. **Images set explicit pixel limits.** Every `image::ImageReader` sets
    `Limits` with a `max_image_width`/`max_image_height` tied to a sane multiple of
    the display, so a small file claiming enormous dimensions cannot force a huge
@@ -86,3 +93,13 @@ against untrusted input, which caps handle correctly.
   visible, correct degradation.
 - The byte-limited reader and the caps are pure/small and unit-tested.
 - No new async surface; the ADR 0005 sync-text / async-raster split stands.
+- **Calamine-backend residual (xls/ods/xlsb).** These formats are read through
+  calamine, which materialises a whole sheet and, for the zip-based `.ods`/`.xlsb`,
+  decompresses internally. A plain `.xls` is fully bounded by the on-disk
+  file-size precheck (it is uncompressed, so file size caps memory). But `.ods`
+  and `.xlsb` are zip containers: the precheck bounds only their *compressed*
+  input, and calamine 0.35 exposes no API to bound the *decompression*. A crafted
+  under-cap `.ods`/`.xlsb` decompression bomb therefore remains a narrow residual
+  — the xlsx path avoids it by streaming through our own bounded reader, but the
+  calamine formats cannot until the library grows a limits API. Revisit if/when
+  calamine adds one. The xlsx-native path (the common case) has no such gap.

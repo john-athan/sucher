@@ -13,7 +13,8 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::{DefaultTerminal, Frame};
-use std::io;
+use std::fs::File;
+use std::io::{self, Read};
 use std::time::Duration;
 
 const COL_W: u16 = 14;
@@ -53,6 +54,18 @@ fn fmt_cell(d: &Data) -> String {
 
 impl MemBook {
     fn open(path: &str) -> Result<Self, String> {
+        // Bound calamine, which materialises the whole workbook. Prechecking the
+        // on-disk size caps a plain .xls outright; for the zip-based .ods/.xlsb
+        // it bounds only the COMPRESSED input — calamine 0.35 exposes no
+        // decompression limit, so a crafted sub-cap decompression bomb remains a
+        // residual documented in ADR 0009.
+        let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+        if len > crate::util::MAX_DECODE_BYTES as u64 {
+            return Err(format!(
+                "file too large to open ({} limit)",
+                crate::util::human_size(crate::util::MAX_DECODE_BYTES as u64)
+            ));
+        }
         let mut wb = open_workbook_auto(path).map_err(|e| e.to_string())?;
         let names = wb.sheet_names().to_owned();
         let mut sheets = Vec::new();
@@ -78,9 +91,11 @@ impl MemBook {
     /// Build an eager in-memory book from a delimited-text file (csv/tsv).
     ///
     /// Deliberate limitations, documented for future readers:
-    ///   * Eager load: the whole file is read and parsed up front, bounded by
-    ///     `crate::xlsx::ROW_CAP` rows (mirrors the xlsx streaming cap). Past that
-    ///     the sheet is truncated and reported `capped`.
+    ///   * Eager load, but bounded twice (ADR 0009): at most
+    ///     `crate::util::MAX_DECODE_BYTES` bytes are read, and the parsed rows are
+    ///     capped at `crate::xlsx::ROW_CAP`. Hitting either bound truncates the
+    ///     sheet and reports `capped`, so a huge csv opens as an honest prefix
+    ///     rather than exhausting memory.
     ///   * `.csv` is comma-only — no semicolon or delimiter auto-detection; `.tsv`
     ///     is tab-only. The delimiter is chosen by the caller from the extension.
     ///   * Decoding is lossy UTF-8 (invalid bytes become U+FFFD).
@@ -88,13 +103,26 @@ impl MemBook {
     /// An empty file is *not* an error: it opens as a sheet with zero rows. Only a
     /// filesystem read failure returns `Err`.
     fn from_csv(path: &str, delim: char) -> Result<Self, String> {
-        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        // Read at most MAX_DECODE_BYTES (+1 to detect overflow): past the cap we
+        // keep the prefix and mark `capped`, mirroring the row cap below rather
+        // than erroring, so a huge csv opens truncated-but-honest.
+        let mut bytes = Vec::new();
+        File::open(path)
+            .map_err(|e| e.to_string())?
+            .take(crate::util::MAX_DECODE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        let byte_capped = bytes.len() > crate::util::MAX_DECODE_BYTES;
+        if byte_capped {
+            bytes.truncate(crate::util::MAX_DECODE_BYTES);
+        }
         let text = String::from_utf8_lossy(&bytes);
         let mut rows = parse_delimited(&text, delim);
-        let capped = rows.len() > crate::xlsx::ROW_CAP;
-        if capped {
+        let row_capped = rows.len() > crate::xlsx::ROW_CAP;
+        if row_capped {
             rows.truncate(crate::xlsx::ROW_CAP);
         }
+        let capped = byte_capped || row_capped;
         let ncols = rows.iter().map(|r| r.len()).max().unwrap_or(0);
         let name = std::path::Path::new(path)
             .file_stem()
@@ -349,9 +377,29 @@ pub fn preview_grid(path: &str, max_rows: usize, max_cols: usize) -> Option<Vec<
     let lower = path.to_lowercase();
     let mut rows: Vec<Vec<String>> = if lower.ends_with(".csv") || lower.ends_with(".tsv") {
         let delim = if lower.ends_with(".tsv") { '\t' } else { ',' };
-        let bytes = std::fs::read(path).ok()?;
+        // A preview may legitimately show only a prefix, so read at most
+        // MAX_PREVIEW_BYTES and parse what we got rather than erroring (ADR 0009).
+        let mut bytes = Vec::new();
+        File::open(path)
+            .ok()?
+            .take(crate::util::MAX_PREVIEW_BYTES as u64)
+            .read_to_end(&mut bytes)
+            .ok()?;
         parse_delimited(&String::from_utf8_lossy(&bytes), delim)
+    } else if lower.ends_with(".xlsx") || lower.ends_with(".xlsm") {
+        // Bounded, synchronous first-rows read — never materialises the whole
+        // sheet the way calamine's `worksheet_range` would (ADR 0009).
+        crate::xlsx::preview_rows(path, max_rows, max_cols).ok()?
     } else {
+        // xls/ods/xlsb via calamine, which materialises the whole sheet. Precheck
+        // the on-disk size: a plain .xls is bounded outright; for the zip-based
+        // .ods/.xlsb this bounds only the COMPRESSED input, since calamine 0.35
+        // exposes no decompression limit — a sub-cap bomb is a residual noted in
+        // ADR 0009.
+        let len = std::fs::metadata(path).ok()?.len();
+        if len > crate::util::MAX_DECODE_BYTES as u64 {
+            return None;
+        }
         let mut wb = open_workbook_auto(path).ok()?;
         let name = wb.sheet_names().first()?.clone();
         let range = wb.worksheet_range(&name).ok()?;
@@ -704,6 +752,16 @@ mod tests {
         assert_eq!(g[0], vec!["a", "b"]);
         assert_eq!(g[1], vec!["1", "2"]);
         std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn preview_grid_reads_and_caps_xlsx() {
+        // Routes through the bounded xlsx::preview_rows, not calamine's full
+        // materialisation. sample.xlsx sheet1 is 5x4.
+        let g = preview_grid("samples/sample.xlsx", 3, 2).expect("some rows");
+        assert_eq!(g.len(), 3, "row cap");
+        assert!(g.iter().all(|r| r.len() <= 2), "col cap");
+        assert_eq!(g[0], vec!["Item", "Qty"]);
     }
 
     #[test]
