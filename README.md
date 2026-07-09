@@ -125,6 +125,38 @@ For pixel-perfect images / PDF / video, use a terminal with a graphics
 protocol — **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
 Without one, sucher falls back to Unicode half-blocks.
 
+## Themes & icons
+
+The browser's palette and its file icons are configurable. Resolution order,
+highest first: **CLI flag → environment variable → config file → default.**
+
+```sh
+s --theme catppuccin-mocha --icons nerd ~/projects
+SUCHER_THEME=gruvbox-dark SUCHER_ICONS=none s
+```
+
+Config file at `$XDG_CONFIG_HOME/sucher/config.toml` (else
+`~/.config/sucher/config.toml`); a missing or malformed file is ignored, never
+fatal:
+
+```toml
+theme = "catppuccin-mocha"   # or "auto" | built-in name (default: sucher-dark)
+icons = "nerd"               # "unicode" (default) | "nerd" | "none"
+
+[colors]                     # optional per-key hex overrides, applied last
+accent = "#7dd3fc"
+selection = "#26324a"
+```
+
+- **Themes** — built-ins: `sucher-dark` (the default), `sucher-light`,
+  `catppuccin-mocha`, `gruvbox-dark`, `tokyo-night`. `theme = "auto"` picks a
+  light or dark default from the terminal background (`COLORFGBG` / OSC 11,
+  falling back to dark).
+- **Icons** — `unicode` (geometric glyphs, renders on any font — the default),
+  `nerd` (per-extension [Nerd Font](https://www.nerdfonts.com/) glyphs with
+  per-language tints — **requires a patched Nerd Font**; not auto-detected, so
+  opt in), or `none` (no icon column).
+
 ## Usage & keys
 
 ```sh
