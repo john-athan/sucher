@@ -10,6 +10,7 @@
 // audio) print a metadata line rather than being force-rendered.
 
 mod archive;
+mod config;
 mod dir;
 mod docx;
 mod format;
@@ -42,16 +43,31 @@ use std::{env, fs};
 fn main() -> ExitCode {
     let mut plain_flag = false;
     let mut path: Option<String> = None;
-    for arg in env::args().skip(1) {
+    // Theme/icons overrides from the command line (highest precedence — see
+    // `config::load`). Both flags take the following argument.
+    let mut cli_theme: Option<String> = None;
+    let mut cli_icons: Option<String> = None;
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--plain" | "-p" => plain_flag = true,
+            "--theme" => cli_theme = args.next(),
+            "--icons" => cli_icons = args.next(),
             "-h" | "--help" => {
-                eprintln!("usage: sucher [--plain] [file|dir]");
+                eprintln!(
+                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [file|dir]"
+                );
                 return ExitCode::SUCCESS;
             }
             _ => path = Some(arg),
         }
     }
+
+    // Resolve the palette (flag > env > file > default) and install it before
+    // any viewer draws. Auto light/dark detection runs here, before the
+    // alternate screen. `icons` threads through to the browser for a later phase.
+    let config = config::load(cli_theme, cli_icons);
+    theme::init(config.palette);
 
     // No argument browses the current directory.
     let path = path.unwrap_or_else(|| ".".to_string());
@@ -63,7 +79,7 @@ fn main() -> ExitCode {
         // Directories open the file browser (or a plain listing when piped).
         Format::Directory => {
             if interactive {
-                if let Err(e) = dir::run(path) {
+                if let Err(e) = dir::run(path, config.icons) {
                     eprintln!("sucher: {e}");
                     return ExitCode::FAILURE;
                 }

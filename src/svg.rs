@@ -151,7 +151,7 @@ impl App {
             self.title
         );
         f.render_widget(
-            Paragraph::new(status).style(Style::default().fg(theme::DIM)),
+            Paragraph::new(status).style(Style::default().fg(theme::palette().dim)),
             rows[2],
         );
     }

@@ -314,13 +314,20 @@ impl App {
                 } else {
                     format!("{:>8}", crate::util::human_size(n.size))
                 };
-                let color = if n.is_dir { theme::DIR } else { theme::OTHER };
+                let color = if n.is_dir {
+                    theme::palette().dir
+                } else {
+                    theme::palette().other
+                };
                 let mut style = Style::default().fg(color);
                 if i == self.sel {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
                 Line::from(vec![
-                    Span::styled(format!(" {size}  "), Style::default().fg(theme::DIM)),
+                    Span::styled(
+                        format!(" {size}  "),
+                        Style::default().fg(theme::palette().dim),
+                    ),
                     Span::styled(n.label.clone(), style),
                 ])
             })
@@ -332,7 +339,7 @@ impl App {
             self.view.len(),
         );
         f.render_widget(
-            Paragraph::new(status).style(Style::default().fg(theme::DIM)),
+            Paragraph::new(status).style(Style::default().fg(theme::palette().dim)),
             body[1],
         );
     }

@@ -249,7 +249,7 @@ impl App {
             .map(|gidx| {
                 let gutter = Span::styled(
                     format!("{n:>num_w$} │ ", n = gidx + 1),
-                    Style::default().fg(theme::DIM),
+                    Style::default().fg(theme::palette().dim),
                 );
                 let mut spans = vec![gutter];
                 for tok in slice_tokens(&self.hl[gidx], self.hoffset, content_w) {
@@ -296,7 +296,7 @@ impl App {
             trunc,
         );
         f.render_widget(
-            Paragraph::new(status).style(Style::default().fg(theme::DIM)),
+            Paragraph::new(status).style(Style::default().fg(theme::palette().dim)),
             body[1],
         );
     }
@@ -315,7 +315,7 @@ impl App {
             self.query
         );
         f.render_widget(
-            Paragraph::new(txt).style(Style::default().fg(theme::DOC)),
+            Paragraph::new(txt).style(Style::default().fg(theme::palette().doc)),
             bar,
         );
     }

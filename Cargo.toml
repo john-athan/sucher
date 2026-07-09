@@ -27,6 +27,9 @@ quick-xml = "0.41"
 flate2 = "1"
 tar = "0.4"
 resvg = "0.47"
+toml = "0.8"
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
 
 [[bin]]
 name = "sucher"

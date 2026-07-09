@@ -159,15 +159,15 @@ impl Format {
     /// Palette colour for the browser (see `crate::theme`).
     pub fn color(&self) -> Color {
         match self {
-            Format::Directory => theme::DIR,
-            Format::Image | Format::Svg | Format::Keynote => theme::IMAGE,
-            Format::Video | Format::Audio => theme::VIDEO,
-            Format::Pdf => theme::PDF,
-            Format::Sheet => theme::SHEET,
-            Format::Markdown | Format::Docx | Format::Pptx | Format::Doc => theme::DOC,
-            Format::Text => theme::CODE,
-            Format::Archive => theme::ARCHIVE,
-            Format::Binary => theme::OTHER,
+            Format::Directory => theme::palette().dir,
+            Format::Image | Format::Svg | Format::Keynote => theme::palette().image,
+            Format::Video | Format::Audio => theme::palette().video,
+            Format::Pdf => theme::palette().pdf,
+            Format::Sheet => theme::palette().sheet,
+            Format::Markdown | Format::Docx | Format::Pptx | Format::Doc => theme::palette().doc,
+            Format::Text => theme::palette().code,
+            Format::Archive => theme::palette().archive,
+            Format::Binary => theme::palette().other,
         }
     }
 

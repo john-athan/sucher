@@ -150,7 +150,7 @@ impl App {
             self.data.len(),
         );
         f.render_widget(
-            Paragraph::new(status).style(Style::default().fg(theme::DIM)),
+            Paragraph::new(status).style(Style::default().fg(theme::palette().dim)),
             body[1],
         );
     }
@@ -161,14 +161,14 @@ impl App {
 fn row_line(offset: usize, chunk: &[u8]) -> Line<'static> {
     let mut spans = vec![Span::styled(
         format!("{offset:08x}  "),
-        Style::default().fg(theme::DIM),
+        Style::default().fg(theme::palette().dim),
     )];
     for i in 0..ROW {
         if let Some(&b) = chunk.get(i) {
             let color = if b == 0 {
-                theme::DIM
+                theme::palette().dim
             } else if is_print(b) {
-                theme::OTHER
+                theme::palette().other
             } else {
                 Color::Rgb(160, 160, 170)
             };
@@ -189,7 +189,7 @@ fn row_line(offset: usize, chunk: &[u8]) -> Line<'static> {
         .collect();
     spans.push(Span::styled(
         format!(" │{ascii}"),
-        Style::default().fg(theme::OTHER),
+        Style::default().fg(theme::palette().other),
     ));
     Line::from(spans)
 }

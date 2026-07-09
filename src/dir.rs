@@ -3,6 +3,7 @@
 // listing for folders, head of the file for text, dimensions for images,
 // metadata otherwise). Enter opens a file in its viewer and returns here.
 
+use crate::config::IconMode;
 use crate::format::Format;
 use crate::media::ImagePane;
 use crate::{highlight, query, theme, typeahead};
@@ -42,6 +43,11 @@ enum Pv {
 
 struct App {
     cwd: PathBuf,
+    // The resolved icon mode (ADR 0003, D5). Stored now so the browser can key
+    // its glyph column off it; wired but not yet consumed — glyph rendering
+    // changes land in a later phase.
+    #[allow(dead_code)]
+    icons: IconMode,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
     state: ListState,
@@ -112,7 +118,7 @@ fn browse_char(c: char) -> Option<CharAction> {
     })
 }
 
-pub fn run(start: String) -> io::Result<()> {
+pub fn run(start: String, icons: IconMode) -> io::Result<()> {
     let cwd = fs::canonicalize(&start).unwrap_or_else(|_| PathBuf::from(&start));
     // Probe the graphics protocol once, before any alternate screen. If the
     // terminal can't do pixels, previews fall back to text/metadata.
@@ -120,6 +126,7 @@ pub fn run(start: String) -> io::Result<()> {
     let (raster_tx, raster_rx) = std::sync::mpsc::channel();
     let mut app = App {
         cwd,
+        icons,
         all: Vec::new(),
         view: Vec::new(),
         state: ListState::default(),
@@ -606,7 +613,7 @@ impl App {
         )));
         self.preview.push(Line::from(Span::styled(
             meta.clone(),
-            Style::default().fg(theme::DIM),
+            Style::default().fg(theme::palette().dim),
         )));
         self.preview.push(Line::from(""));
 
@@ -689,7 +696,7 @@ impl App {
         if total == 0 {
             self.preview.push(Line::from(Span::styled(
                 "empty",
-                Style::default().fg(theme::DIM),
+                Style::default().fg(theme::palette().dim),
             )));
             return;
         }
@@ -697,14 +704,14 @@ impl App {
             2,
             Line::from(Span::styled(
                 format!("{total} items"),
-                Style::default().fg(theme::DIM),
+                Style::default().fg(theme::palette().dim),
             )),
         );
         for (n, d) in kids.into_iter().take(300) {
             let (c, suffix) = if d {
-                (theme::DIR, "/")
+                (theme::palette().dir, "/")
             } else {
-                (theme::OTHER, "")
+                (theme::palette().other, "")
             };
             self.preview.push(Line::from(Span::styled(
                 format!("{n}{suffix}"),
@@ -741,7 +748,11 @@ impl App {
             let spans: Vec<Span> = (0..ncols)
                 .map(|i| {
                     let cell = r.get(i).map(String::as_str).unwrap_or("");
-                    let color = if ri == 0 { theme::ACCENT } else { theme::OTHER };
+                    let color = if ri == 0 {
+                        theme::palette().accent
+                    } else {
+                        theme::palette().other
+                    };
                     Span::styled(
                         format!("{}  ", pad_cell(cell, widths[i])),
                         Style::default().fg(color),
@@ -760,7 +771,7 @@ impl App {
                     2,
                     Line::from(Span::styled(
                         format!("{} entries", list.len()),
-                        Style::default().fg(theme::DIM),
+                        Style::default().fg(theme::palette().dim),
                     )),
                 );
                 for e in list.into_iter().take(500) {
@@ -769,9 +780,16 @@ impl App {
                     } else {
                         format!("{:>8}", crate::util::human_size(e.size))
                     };
-                    let color = if e.is_dir { theme::DIR } else { theme::OTHER };
+                    let color = if e.is_dir {
+                        theme::palette().dir
+                    } else {
+                        theme::palette().other
+                    };
                     self.preview.push(Line::from(vec![
-                        Span::styled(format!("{size}  "), Style::default().fg(theme::DIM)),
+                        Span::styled(
+                            format!("{size}  "),
+                            Style::default().fg(theme::palette().dim),
+                        ),
                         Span::styled(e.name, Style::default().fg(color)),
                     ]));
                 }
@@ -785,7 +803,7 @@ impl App {
         for line in crate::hex::preview(&path.to_string_lossy(), 500) {
             self.preview.push(Line::from(Span::styled(
                 line,
-                Style::default().fg(theme::OTHER),
+                Style::default().fg(theme::palette().other),
             )));
         }
     }
@@ -808,7 +826,7 @@ impl App {
             for l in text.lines() {
                 self.preview.push(Line::from(Span::styled(
                     l.to_string(),
-                    Style::default().fg(theme::OTHER),
+                    Style::default().fg(theme::palette().other),
                 )));
             }
             return;
@@ -855,7 +873,7 @@ impl App {
                 Span::styled(
                     shown,
                     Style::default()
-                        .fg(theme::ACCENT)
+                        .fg(theme::palette().accent)
                         .add_modifier(Modifier::BOLD),
                 ),
             ])),
@@ -889,7 +907,10 @@ impl App {
                         format!("{name:<name_w$}"),
                         Style::default().fg(e.kind.color()),
                     ),
-                    Span::styled(format!(" {size:>size_w$}"), Style::default().fg(theme::DIM)),
+                    Span::styled(
+                        format!(" {size:>size_w$}"),
+                        Style::default().fg(theme::palette().dim),
+                    ),
                 ]))
             })
             .collect();
@@ -929,7 +950,7 @@ impl App {
                 f.render_widget(
                     Paragraph::new(Line::from(Span::styled(
                         "rendering…",
-                        Style::default().fg(theme::DIM),
+                        Style::default().fg(theme::palette().dim),
                     ))),
                     inner,
                 );
@@ -964,7 +985,7 @@ impl App {
         let color = if let Mode::Filter = self.mode {
             Color::Rgb(252, 211, 77)
         } else {
-            theme::DIM
+            theme::palette().dim
         };
         f.render_widget(
             Paragraph::new(Line::from(txt)).style(Style::default().fg(color)),
@@ -1014,7 +1035,10 @@ fn read_capped(path: &Path) -> String {
 }
 
 fn no_preview() -> Line<'static> {
-    Line::from(Span::styled("No preview", Style::default().fg(theme::DIM)))
+    Line::from(Span::styled(
+        "No preview",
+        Style::default().fg(theme::palette().dim),
+    ))
 }
 
 /// Read the head of a file as text, or None if it looks binary / unreadable.
