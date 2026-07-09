@@ -231,7 +231,9 @@ keep working whenever you're not mid-type.
 
 **Search** (`S`) is the filter's recursive sibling: instead of narrowing the
 current listing, it walks the whole tree from here downward and **streams matches
-in live** as they're found. Type to refine; `↑`/`↓` (and `PgUp`/`PgDn`) move
+in live** as they're found, kept **sorted** (by the current sort — relative path
+by default, so results group by folder) as they arrive rather than in the
+walker's nondeterministic finish order. Type to refine; `↑`/`↓` (and `PgUp`/`PgDn`) move
 through results, `Enter` opens the selected hit (or jumps into it if it's a
 folder), `Esc` returns to browsing. It takes the **same query language** as the
 filter — every `kind:` / `ext:` / `size:` / `modified:` predicate works — plus

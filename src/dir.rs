@@ -78,7 +78,7 @@ impl MetaCol {
 
 /// The key the entry listing is ordered by (the browser's analogue of yazi's
 /// sort modes). Directories are ALWAYS grouped first regardless of key — that
-/// invariant predates this feature and is preserved by [`entry_cmp`]; the key
+/// invariant predates this feature and is preserved by [`sort_cmp`]; the key
 /// only decides the order *within* each group. `Name` is the default and, with
 /// `reverse: false`, reproduces the old fixed ordering byte-for-byte.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -150,26 +150,72 @@ fn name_ext(name: &str) -> String {
     }
 }
 
-/// Total order over entries for a given [`Sort`]. Pure — unit-tested without any
-/// filesystem. Directories always sort before files (the pre-feature invariant);
-/// the `Sort` only orders within each group, and every key breaks ties by
-/// case-insensitive name so the order is deterministic. `reverse` flips the
-/// within-group order (directories stay first — reversing name gives Z→A, not
-/// files-before-dirs), matching how file managers reverse.
-fn entry_cmp(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
-    let ad = a.kind == Format::Directory;
-    let bd = b.kind == Format::Directory;
-    let dirs_first = bd.cmp(&ad);
+/// The fields [`sort_cmp`] orders by, abstracted over the two things the browser
+/// sorts: a directory [`Entry`] and a recursive-search [`crate::search::Hit`]. One
+/// comparator then serves both surfaces, so browse listings and search results
+/// order identically under the same [`Sort`] (the search results inherit whatever
+/// sort the browser is set to). The only per-type wrinkle is the sort name: an
+/// entry sorts by its bare name, a hit by its relative path so the flat result
+/// list still groups by folder.
+trait Sortable {
+    /// The string the `Name`/`Ext` keys order and tie-break by.
+    fn sort_name(&self) -> &str;
+    fn sort_is_dir(&self) -> bool;
+    fn sort_size(&self) -> u64;
+    fn sort_modified(&self) -> Option<SystemTime>;
+}
+
+impl Sortable for Entry {
+    fn sort_name(&self) -> &str {
+        &self.name
+    }
+    fn sort_is_dir(&self) -> bool {
+        self.kind == Format::Directory
+    }
+    fn sort_size(&self) -> u64 {
+        self.size
+    }
+    fn sort_modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+}
+
+impl Sortable for crate::search::Hit {
+    /// Sort by the relative path (not the bare file name) so the flat result list
+    /// reads in a folder-grouped order — `sub/a.rs` sorts beside its siblings, not
+    /// scattered among every other `a.*` in the tree.
+    fn sort_name(&self) -> &str {
+        &self.rel
+    }
+    fn sort_is_dir(&self) -> bool {
+        self.kind == Format::Directory
+    }
+    fn sort_size(&self) -> u64 {
+        self.size
+    }
+    fn sort_modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+}
+
+/// Total order over anything [`Sortable`] for a given [`Sort`]. Pure — unit-tested
+/// without any filesystem. Directories always sort before files (the pre-feature
+/// invariant); the `Sort` only orders within each group, and every key breaks ties
+/// by case-insensitive [`Sortable::sort_name`] so the order is deterministic.
+/// `reverse` flips the within-group order (directories stay first — reversing name
+/// gives Z→A, not files-before-dirs), matching how file managers reverse.
+fn sort_cmp<T: Sortable>(a: &T, b: &T, sort: Sort) -> Ordering {
+    let dirs_first = b.sort_is_dir().cmp(&a.sort_is_dir());
     if dirs_first != Ordering::Equal {
         return dirs_first; // group boundary — never affected by key or reverse
     }
-    let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+    let by_name = || a.sort_name().to_lowercase().cmp(&b.sort_name().to_lowercase());
     let ord = match sort.key {
         SortKey::Name => by_name(),
-        SortKey::Size => a.size.cmp(&b.size).then_with(by_name),
-        SortKey::Modified => a.modified.cmp(&b.modified).then_with(by_name),
-        SortKey::Ext => name_ext(&a.name)
-            .cmp(&name_ext(&b.name))
+        SortKey::Size => a.sort_size().cmp(&b.sort_size()).then_with(by_name),
+        SortKey::Modified => a.sort_modified().cmp(&b.sort_modified()).then_with(by_name),
+        SortKey::Ext => name_ext(a.sort_name())
+            .cmp(&name_ext(b.sort_name()))
             .then_with(by_name),
     };
     if sort.reverse {
@@ -244,8 +290,9 @@ struct SearchState {
     /// Dropping it cancels the walk, so replacing it (a query edit) or clearing it
     /// (leaving search) stops the superseded walk promptly (D3).
     engine: Option<crate::search::Search>,
-    /// Hits received so far, in arrival order — the walk streams them live and this
-    /// grows as [`App::pump_search`] drains the channel.
+    /// Hits received so far, kept sorted by the active [`Sort`] — the walk streams
+    /// them live and [`App::pump_search`] re-sorts on each drain (the walker itself
+    /// surfaces them in nondeterministic arrival order).
     results: Vec<crate::search::Hit>,
     /// Selection + scroll state for the results list: the search analogue of the
     /// browse `App.state`, so [`App::cur_sel`] can source the hit under the cursor
@@ -391,7 +438,7 @@ struct App {
     // outside search mode (no search mouse events are routed there).
     search_area: Rect,
     // The active sort for the entry listing (feature: yazi-style sort modes). The
-    // current and parent panes both order through `entry_cmp` with this; `o`
+    // current and parent panes both order through `sort_cmp` with this; `o`
     // cycles the key and `O` toggles reverse. Starts at the default (name,
     // ascending) — byte-for-byte the pre-feature ordering.
     sort: Sort,
@@ -664,7 +711,7 @@ impl App {
     /// unchanged — only their order is. Selection is re-clamped by `refilter`.
     fn resort(&mut self) {
         let sort = self.sort;
-        self.all.sort_by(|a, b| entry_cmp(a, b, sort));
+        self.all.sort_by(|a, b| sort_cmp(a, b, sort));
         self.refilter();
         self.status = Some(self.sort.label());
     }
@@ -833,9 +880,16 @@ impl App {
 
     /// Drain the search channel into `results`, mirroring [`App::pump_raster`] (ADR
     /// 0007 §5). Appends every streamed `Hit`; on `Done` records completion + the
-    /// cap flag and drops the engine (the walk is over). Selects the first row the
-    /// moment the first hit arrives. Returns whether anything changed (→ redraw).
+    /// cap flag and drops the engine (the walk is over). Keeps the growing list
+    /// **sorted** by the active [`Sort`] (via [`sort_cmp`]) so results present in a
+    /// deterministic, folder-grouped order rather than nondeterministic walk-arrival
+    /// order — the parallel walker surfaces hits in whatever order its worker threads
+    /// finish, which two runs need not agree on. Returns whether anything changed
+    /// (→ redraw).
     fn pump_search(&mut self) -> bool {
+        // Read the app-wide sort before borrowing `self.search` (search results
+        // inherit whatever sort the browser is set to — one sort preference).
+        let sort = self.sort;
         let Some(search) = self.search.as_mut() else {
             return false;
         };
@@ -846,7 +900,10 @@ impl App {
         if msgs.is_empty() {
             return false;
         }
-        let was_empty = search.results.is_empty();
+        // Remember which hit is under the cursor (by path) BEFORE appending/sorting,
+        // so re-ordering the list as new hits stream in doesn't shift the selection
+        // off the row the user is looking at.
+        let anchor = search.selected().map(|h| h.path.clone());
         for msg in msgs {
             match msg {
                 crate::search::Msg::Hit(h) => search.results.push(h),
@@ -857,11 +914,17 @@ impl App {
                 }
             }
         }
-        // Land the cursor on the first hit as soon as results appear, so the preview
-        // pipeline (D5) has something to render immediately.
-        if was_empty && !search.results.is_empty() {
-            search.state.select(Some(0));
-        }
+        // Re-sort the whole (possibly grown) list each drain. Trivially cheap even
+        // at the 5000-hit cap, and it lets a late-arriving hit slot into its correct
+        // position rather than tacking onto the end.
+        search.results.sort_by(|a, b| sort_cmp(a, b, sort));
+        // Re-anchor the cursor to the same hit after the re-order; if nothing was
+        // selected yet (the first hits just arrived), land on the first row so the
+        // preview pipeline (D5) has something to render immediately.
+        let restored = anchor.and_then(|p| search.results.iter().position(|h| h.path == p));
+        search
+            .state
+            .select(restored.or((!search.results.is_empty()).then_some(0)));
         true
     }
 
@@ -2659,7 +2722,7 @@ fn blit_shifted(dst: &mut Buffer, src: &Buffer, inner: Rect, dx: i32) {
 }
 
 /// Read a directory's entries, classified by extension and ordered by `sort`
-/// (directories always first — see [`entry_cmp`]) — the one lister shared by the
+/// (directories always first — see [`sort_cmp`]) — the one lister shared by the
 /// current pane, the parent pane, and `App::load` (ADR 0004, D1). Pure of app
 /// state beyond the passed `sort`; the only IO is the `read_dir`. An unreadable
 /// directory yields an empty list rather than erroring, matching the browser's
@@ -2689,8 +2752,9 @@ fn read_entries(dir: &Path, sort: Sort) -> Vec<Entry> {
         }
     }
     // Directories first (invariant), then by the requested key — the one place
-    // the listing order is decided, shared with in-place re-sorts (`App::resort`).
-    entries.sort_by(|a, b| entry_cmp(a, b, sort));
+    // the listing order is decided, shared with in-place re-sorts (`App::resort`)
+    // and the search results (`App::pump_search`) via `sort_cmp`.
+    entries.sort_by(|a, b| sort_cmp(a, b, sort));
     entries
 }
 
@@ -3019,7 +3083,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// Build a bare `Entry` for comparator tests — only the fields `entry_cmp`
+    /// Build a bare `Entry` for comparator tests — only the fields `sort_cmp`
     /// reads (`name`, `kind`, `size`, `modified`) matter; `path` is a throwaway.
     fn entry(name: &str, kind: Format, size: u64, mtime: Option<SystemTime>) -> Entry {
         Entry {
@@ -3033,7 +3097,7 @@ mod tests {
 
     /// Sort a list with `sort` and return the names, for order assertions.
     fn sorted_names(mut v: Vec<Entry>, sort: Sort) -> Vec<String> {
-        v.sort_by(|a, b| entry_cmp(a, b, sort));
+        v.sort_by(|a, b| sort_cmp(a, b, sort));
         v.into_iter().map(|e| e.name).collect()
     }
 
@@ -3152,6 +3216,25 @@ mod tests {
         assert_eq!(name_ext("archive.tar.gz"), "gz"); // last component only
         assert_eq!(name_ext("README"), ""); // none
         assert_eq!(name_ext(".gitignore"), ""); // leading dot = stem, not ext
+    }
+
+    #[test]
+    fn search_hits_sort_by_relative_path_grouped_by_folder() {
+        // Hits sort by `rel` (their Sortable name), so the flat result list reads
+        // folder-grouped — every `src/…` before `zzz.txt`, siblings adjacent —
+        // rather than in nondeterministic walk-arrival order.
+        let hit = |rel: &str| crate::search::Hit {
+            path: PathBuf::from(rel),
+            rel: rel.to_string(),
+            kind: Format::Text,
+            size: 0,
+            modified: None,
+            snippet: None,
+        };
+        let mut v = vec![hit("zzz.txt"), hit("src/b.rs"), hit("src/a.rs"), hit("readme.md")];
+        v.sort_by(|a, b| sort_cmp(a, b, Sort::default()));
+        let rels: Vec<&str> = v.iter().map(|h| h.rel.as_str()).collect();
+        assert_eq!(rels, vec!["readme.md", "src/a.rs", "src/b.rs", "zzz.txt"]);
     }
 
     #[test]
