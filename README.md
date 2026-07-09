@@ -202,8 +202,10 @@ s <file> | less     # piped: text dump
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l`/`→` open file or enter folder · `h`/`←`/`Backspace` parent ·
-`/` smart filter · `S` recursive search · `.` toggle dotfiles ·
-`M` two/three-column layout · `t` size/modified column · `q` quit. Click a
+`/` smart filter · `S` recursive search · `o` cycle sort (name/size/modified/ext) ·
+`O` reverse sort · `.` toggle dotfiles · `M` two/three-column layout ·
+`t` size/modified column · `?` key overlay · `q` quit. Press `?` for a
+which-key overlay of every binding (it also shows the current sort). Click a
 breadcrumb segment to jump there;
 the wheel scrolls the list. The right pane renders a live
 preview of the selection: **images (animated GIFs loop in place), SVGs, PDFs

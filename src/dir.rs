@@ -19,9 +19,10 @@ use ratatui::layout::{Constraint, Direction, Layout as RtLayout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, BorderType, Borders, List, ListItem, ListState, Paragraph, StatefulWidget,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, StatefulWidget,
 };
 use ratatui::{DefaultTerminal, Frame};
+use std::cmp::Ordering;
 use std::fs;
 use std::io::{self, Read};
 use std::ops::Range;
@@ -72,6 +73,109 @@ impl MetaCol {
             MetaCol::Modified => MetaCol::Size,
             MetaCol::Size | MetaCol::None => MetaCol::Modified,
         }
+    }
+}
+
+/// The key the entry listing is ordered by (the browser's analogue of yazi's
+/// sort modes). Directories are ALWAYS grouped first regardless of key — that
+/// invariant predates this feature and is preserved by [`entry_cmp`]; the key
+/// only decides the order *within* each group. `Name` is the default and, with
+/// `reverse: false`, reproduces the old fixed ordering byte-for-byte.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SortKey {
+    /// Case-insensitive by file name (the default).
+    Name,
+    /// By byte size, ascending; directories (size 0) sort among themselves by name.
+    Size,
+    /// By modified time, oldest first (reverse for newest first). Missing mtimes
+    /// sort as oldest.
+    Modified,
+    /// By file extension (lower-cased), then name — groups like files together.
+    Ext,
+}
+
+impl SortKey {
+    /// The `o` cycle: Name → Size → Modified → Ext → Name.
+    fn cycle(self) -> Self {
+        match self {
+            SortKey::Name => SortKey::Size,
+            SortKey::Size => SortKey::Modified,
+            SortKey::Modified => SortKey::Ext,
+            SortKey::Ext => SortKey::Name,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SortKey::Name => "name",
+            SortKey::Size => "size",
+            SortKey::Modified => "modified",
+            SortKey::Ext => "ext",
+        }
+    }
+}
+
+/// The full sort spec: which [`SortKey`] and whether it's reversed. `Copy` so the
+/// comparator and the panes can read it freely. Default (`Name`, not reversed) is
+/// the pre-feature ordering.
+#[derive(Clone, Copy)]
+struct Sort {
+    key: SortKey,
+    reverse: bool,
+}
+
+impl Sort {
+    fn default() -> Self {
+        Sort {
+            key: SortKey::Name,
+            reverse: false,
+        }
+    }
+
+    /// A short status blurb, e.g. `sort: size ↓` (↑ ascending, ↓ reversed).
+    fn label(self) -> String {
+        let arrow = if self.reverse { "↓" } else { "↑" };
+        format!("sort: {} {arrow}", self.key.label())
+    }
+}
+
+/// The lower-cased extension of a file name, or `""` when it has none. Pure —
+/// unit-tested. Used only by [`SortKey::Ext`]; kept a free fn so the comparator
+/// and its tests share one definition.
+fn name_ext(name: &str) -> String {
+    match name.rsplit_once('.') {
+        // A leading-dot name (`.gitignore`) is all "stem", no extension.
+        Some((stem, ext)) if !stem.is_empty() => ext.to_lowercase(),
+        _ => String::new(),
+    }
+}
+
+/// Total order over entries for a given [`Sort`]. Pure — unit-tested without any
+/// filesystem. Directories always sort before files (the pre-feature invariant);
+/// the `Sort` only orders within each group, and every key breaks ties by
+/// case-insensitive name so the order is deterministic. `reverse` flips the
+/// within-group order (directories stay first — reversing name gives Z→A, not
+/// files-before-dirs), matching how file managers reverse.
+fn entry_cmp(a: &Entry, b: &Entry, sort: Sort) -> Ordering {
+    let ad = a.kind == Format::Directory;
+    let bd = b.kind == Format::Directory;
+    let dirs_first = bd.cmp(&ad);
+    if dirs_first != Ordering::Equal {
+        return dirs_first; // group boundary — never affected by key or reverse
+    }
+    let by_name = || a.name.to_lowercase().cmp(&b.name.to_lowercase());
+    let ord = match sort.key {
+        SortKey::Name => by_name(),
+        SortKey::Size => a.size.cmp(&b.size).then_with(by_name),
+        SortKey::Modified => a.modified.cmp(&b.modified).then_with(by_name),
+        SortKey::Ext => name_ext(&a.name)
+            .cmp(&name_ext(&b.name))
+            .then_with(by_name),
+    };
+    if sort.reverse {
+        ord.reverse()
+    } else {
+        ord
     }
 }
 
@@ -286,6 +390,15 @@ struct App {
     // read on a left-click by `row_to_index` against the search results. Inert
     // outside search mode (no search mouse events are routed there).
     search_area: Rect,
+    // The active sort for the entry listing (feature: yazi-style sort modes). The
+    // current and parent panes both order through `entry_cmp` with this; `o`
+    // cycles the key and `O` toggles reverse. Starts at the default (name,
+    // ascending) — byte-for-byte the pre-feature ordering.
+    sort: Sort,
+    // Whether the which-key help overlay is up. Toggled by `?` in browse mode and
+    // dismissed by the next keypress (which-key convention). Only ever true in
+    // browse mode — every mode change dismisses it first (see `handle_key`).
+    help: bool,
 }
 
 enum Action {
@@ -311,6 +424,12 @@ enum CharAction {
     ToggleHidden,
     ToggleLayout,
     ToggleMeta,
+    /// Cycle the sort key (name → size → modified → ext). Bound to `o`.
+    CycleSort,
+    /// Toggle sort direction. Bound to `O` (shift-o).
+    ReverseSort,
+    /// Toggle the which-key help overlay. Bound to `?`.
+    Help,
     Quit,
 }
 
@@ -338,6 +457,13 @@ fn browse_char(c: char) -> Option<CharAction> {
         // Cycle the trailing metadata column (size ↔ modified). Binding `t` here
         // also keeps typeahead correct: a bound char never starts a name search.
         't' => CharAction::ToggleMeta,
+        // Sort controls: `o` cycles the key, `O` toggles direction. Bound here so
+        // typeahead treats them as motions, never as the start of a name search.
+        'o' => CharAction::CycleSort,
+        'O' => CharAction::ReverseSort,
+        // Toggle the help overlay. Bound (not left to typeahead) so `?` never
+        // starts a name search; the overlay is dismissed by the next key.
+        '?' => CharAction::Help,
         'q' => CharAction::Quit,
         _ => return None,
     })
@@ -422,6 +548,8 @@ pub fn run(
         slide: None,
         search: None,
         search_area: Rect::default(),
+        sort: Sort::default(),
+        help: false,
     };
     app.load();
 
@@ -497,7 +625,7 @@ impl App {
 
     /// Read the current directory into `all`, then apply the filter.
     fn load(&mut self) {
-        self.all = read_entries(&self.cwd);
+        self.all = read_entries(&self.cwd, self.sort);
         // Refresh the git gutter for the new directory (cheap, correct after a
         // dir change — D2). Disabled, git-absent, or non-repo dirs yield `None`,
         // which the pane renderer treats as "no gutter" (byte-for-byte pre-git).
@@ -527,6 +655,18 @@ impl App {
         };
         self.state.select(sel);
         self.preview_for = None;
+    }
+
+    /// Re-order the loaded entries in place after a sort change, then rebuild the
+    /// filtered view. Uses the SAME comparator as `read_entries`, so an in-place
+    /// re-sort and a fresh directory read can never disagree. Cheaper than a full
+    /// `load` (no `read_dir`, no git subprocess) since the entries themselves are
+    /// unchanged — only their order is. Selection is re-clamped by `refilter`.
+    fn resort(&mut self) {
+        let sort = self.sort;
+        self.all.sort_by(|a, b| entry_cmp(a, b, sort));
+        self.refilter();
+        self.status = Some(self.sort.label());
     }
 
     fn selected(&self) -> Option<&Entry> {
@@ -914,6 +1054,12 @@ impl App {
                         }
                         _ => {}
                     },
+                    // A click or wheel while the help overlay is up dismisses it
+                    // (and is otherwise swallowed), mirroring the keyboard rule.
+                    Event::Mouse(_) if self.help => {
+                        self.help = false;
+                        dirty = true;
+                    }
                     Event::Mouse(me) => match me.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
                             if me.row == 0 {
@@ -1053,6 +1199,15 @@ impl App {
             return None;
         }
 
+        // The which-key overlay is up (only reachable in browse mode): the next
+        // key dismisses it and is otherwise swallowed — the which-key convention.
+        // Handling it here also keeps `help` a browse-only invariant: any key that
+        // would enter filter/search is consumed by the dismiss first.
+        if self.help {
+            self.help = false;
+            return None;
+        }
+
         // Browse mode. Typeahead runs BEFORE the normal key handling: a timed
         // name-buffer that coexists with the vim motions (ADR 0002 D1).
         let now = Instant::now();
@@ -1181,6 +1336,15 @@ impl App {
             }
             CharAction::ToggleLayout => self.layout = self.layout.cycle(),
             CharAction::ToggleMeta => self.meta = self.meta.toggle(),
+            CharAction::CycleSort => {
+                self.sort.key = self.sort.key.cycle();
+                self.resort();
+            }
+            CharAction::ReverseSort => {
+                self.sort.reverse = !self.sort.reverse;
+                self.resort();
+            }
+            CharAction::Help => self.help = !self.help,
             CharAction::Quit => return Some(Action::Quit),
         }
         None
@@ -1735,6 +1899,13 @@ impl App {
         }
 
         self.render_status(f, rows[2]);
+
+        // The which-key overlay draws last, over everything (ADR 0007's search
+        // frame returns early above, so this is browse/filter only — and `help` is
+        // browse-only anyway). `Clear` punches a hole so the popup isn't see-through.
+        if self.help {
+            render_browse_help(f, area, self.sort);
+        }
     }
 
     /// Render the parent-directory pane (Miller's left column): the siblings of
@@ -1746,7 +1917,7 @@ impl App {
         let Some(parent) = self.cwd.parent().map(Path::to_path_buf) else {
             return;
         };
-        let entries = read_entries(&parent);
+        let entries = read_entries(&parent, self.sort);
         // Same hidden-file policy as the current pane, but no smart-query filter:
         // the parent is context, so every visible sibling shows in sorted order.
         let order: Vec<usize> = entries
@@ -1874,8 +2045,11 @@ impl App {
             format!(" {s}")
         } else {
             let hidden = if self.show_hidden { "shown" } else { "hidden" };
+            // Concise now that `?` opens the full which-key overlay; the dot state
+            // stays inline because it's a toggle whose current value matters at a
+            // glance. Everything else (sort, layout, meta) lives in the overlay.
             format!(
-                " [j/k] move  [Enter] open  [h] up  [/] filter  [S] search  [.] dot ({hidden})  [t] time/size  [M] layout  [q] quit"
+                " [j/k] move  [Enter] open  [/] filter  [S] search  [.] dot ({hidden})  [?] help"
             )
         };
         // Filter mode borrows the palette's yellow (`doc`, which is exactly the
@@ -2484,12 +2658,13 @@ fn blit_shifted(dst: &mut Buffer, src: &Buffer, inner: Rect, dx: i32) {
     }
 }
 
-/// Read a directory's entries, classified by extension and sorted
-/// directories-first then case-insensitive by name — the one lister shared by
-/// the current pane, the parent pane, and `App::load` (ADR 0004, D1). Pure of
-/// app state; the only IO is the `read_dir`. An unreadable directory yields an
-/// empty list rather than erroring, matching the browser's forgiving load.
-fn read_entries(dir: &Path) -> Vec<Entry> {
+/// Read a directory's entries, classified by extension and ordered by `sort`
+/// (directories always first — see [`entry_cmp`]) — the one lister shared by the
+/// current pane, the parent pane, and `App::load` (ADR 0004, D1). Pure of app
+/// state beyond the passed `sort`; the only IO is the `read_dir`. An unreadable
+/// directory yields an empty list rather than erroring, matching the browser's
+/// forgiving load.
+fn read_entries(dir: &Path, sort: Sort) -> Vec<Entry> {
     let mut entries = Vec::new();
     if let Ok(rd) = fs::read_dir(dir) {
         for ent in rd.flatten() {
@@ -2513,14 +2688,93 @@ fn read_entries(dir: &Path) -> Vec<Entry> {
             });
         }
     }
-    // Directories first, then case-insensitive by name.
-    entries.sort_by(|a, b| {
-        let ad = a.kind == Format::Directory;
-        let bd = b.kind == Format::Directory;
-        bd.cmp(&ad)
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    // Directories first (invariant), then by the requested key — the one place
+    // the listing order is decided, shared with in-place re-sorts (`App::resort`).
+    entries.sort_by(|a, b| entry_cmp(a, b, sort));
     entries
+}
+
+/// A `pct`-sized rectangle centred in `area` (mirrors the markdown viewer's
+/// popup geometry). Kept local so the browser owns its overlay layout.
+fn centered_rect(area: Rect, pct_w: u16, pct_h: u16) -> Rect {
+    let w = area.width * pct_w / 100;
+    let h = area.height * pct_h / 100;
+    Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w,
+        height: h,
+    }
+}
+
+/// Draw the which-key help overlay: a centred, bordered popup grouping every
+/// browser binding under headings, plus a live line echoing the current sort so
+/// the overlay doubles as the sort indicator. `Clear` first so the panes behind
+/// don't bleed through. Content is a single authored table — the one reference a
+/// new user reaches for; the bindings themselves stay sourced from `browse_char`.
+fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
+    let popup = centered_rect(area, 60, 80);
+    f.render_widget(Clear, popup);
+
+    let accent = theme::palette().accent;
+    let dim = theme::palette().dim;
+    let heading = |s: &str| {
+        Line::from(Span::styled(
+            s.to_string(),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ))
+    };
+    // `keys` in accent, `desc` dim — the two-tone look the breadcrumb/list use.
+    let row = |keys: &str, desc: &str| {
+        Line::from(vec![
+            Span::styled(format!("  {keys:<12}"), Style::default().fg(accent)),
+            Span::styled(desc.to_string(), Style::default().fg(dim)),
+        ])
+    };
+
+    let mut lines = vec![
+        heading(" Navigate"),
+        row("j / k", "down / up  (↑/↓ too)"),
+        row("d / u", "half-page down / up"),
+        row("g / G", "top / bottom"),
+        row("h / l", "parent / open  (←/→, Enter)"),
+        row("type…", "jump to a name (typeahead)"),
+        Line::from(""),
+        heading(" Find"),
+        row("/", "filter this folder  (kind: ext: size: modified:)"),
+        row("S", "recursive search  (also content:)"),
+        Line::from(""),
+        heading(" Sort"),
+        row("o", "cycle key: name → size → modified → ext"),
+        row("O", "reverse direction"),
+        Line::from(""),
+        heading(" Display"),
+        row(".", "toggle hidden files"),
+        row("t", "toggle size / modified column"),
+        row("M", "cycle layout: auto → miller → double"),
+        Line::from(""),
+        heading(" Other"),
+        row("q / Esc", "quit"),
+        row("?", "close this help"),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("  {}", sort.label()),
+            Style::default().fg(dim).add_modifier(Modifier::ITALIC),
+        )),
+    ];
+    // Trim to the popup's inner height so a short terminal never panics/clips oddly.
+    let inner_h = popup.height.saturating_sub(2) as usize;
+    lines.truncate(inner_h);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(accent))
+        .title(Line::from(Span::styled(
+            " Keys — any key to close ",
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        )));
+    f.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
 }
 
 /// The bare folder name for a pane title (`~/src/foo` → `foo`), or `/` for the
@@ -2763,6 +3017,155 @@ fn pad_cell(s: &str, w: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    /// Build a bare `Entry` for comparator tests — only the fields `entry_cmp`
+    /// reads (`name`, `kind`, `size`, `modified`) matter; `path` is a throwaway.
+    fn entry(name: &str, kind: Format, size: u64, mtime: Option<SystemTime>) -> Entry {
+        Entry {
+            name: name.to_string(),
+            path: PathBuf::from(name),
+            kind,
+            size,
+            modified: mtime,
+        }
+    }
+
+    /// Sort a list with `sort` and return the names, for order assertions.
+    fn sorted_names(mut v: Vec<Entry>, sort: Sort) -> Vec<String> {
+        v.sort_by(|a, b| entry_cmp(a, b, sort));
+        v.into_iter().map(|e| e.name).collect()
+    }
+
+    #[test]
+    fn dirs_always_sort_before_files_regardless_of_key_or_reverse() {
+        // A big-sized dir and a small file: under size sort (and its reverse) the
+        // directory must still lead — the group boundary is never crossed.
+        let v = || {
+            vec![
+                entry("zzz.txt", Format::Text, 1, None),
+                entry("adir", Format::Directory, 999, None),
+            ]
+        };
+        for reverse in [false, true] {
+            let names = sorted_names(
+                v(),
+                Sort {
+                    key: SortKey::Size,
+                    reverse,
+                },
+            );
+            assert_eq!(names[0], "adir", "dir must lead (reverse={reverse})");
+        }
+    }
+
+    #[test]
+    fn name_sort_is_case_insensitive_and_reverses() {
+        let v = || {
+            vec![
+                entry("Banana", Format::Text, 0, None),
+                entry("apple", Format::Text, 0, None),
+                entry("Cherry", Format::Text, 0, None),
+            ]
+        };
+        assert_eq!(
+            sorted_names(v(), Sort::default()),
+            vec!["apple", "Banana", "Cherry"]
+        );
+        assert_eq!(
+            sorted_names(
+                v(),
+                Sort {
+                    key: SortKey::Name,
+                    reverse: true
+                }
+            ),
+            vec!["Cherry", "Banana", "apple"]
+        );
+    }
+
+    #[test]
+    fn size_sort_orders_ascending_then_breaks_ties_by_name() {
+        let v = vec![
+            entry("big", Format::Text, 100, None),
+            entry("small", Format::Text, 10, None),
+            entry("mid_b", Format::Text, 50, None),
+            entry("mid_a", Format::Text, 50, None), // tie with mid_b → name breaks it
+        ];
+        assert_eq!(
+            sorted_names(
+                v,
+                Sort {
+                    key: SortKey::Size,
+                    reverse: false
+                }
+            ),
+            vec!["small", "mid_a", "mid_b", "big"]
+        );
+    }
+
+    #[test]
+    fn modified_sort_oldest_first_missing_counts_as_oldest() {
+        let base = SystemTime::UNIX_EPOCH;
+        let older = base + Duration::from_secs(100);
+        let newer = base + Duration::from_secs(200);
+        let v = vec![
+            entry("new", Format::Text, 0, Some(newer)),
+            entry("none", Format::Text, 0, None), // None < Some → oldest
+            entry("old", Format::Text, 0, Some(older)),
+        ];
+        assert_eq!(
+            sorted_names(
+                v,
+                Sort {
+                    key: SortKey::Modified,
+                    reverse: false
+                }
+            ),
+            vec!["none", "old", "new"]
+        );
+    }
+
+    #[test]
+    fn ext_sort_groups_by_extension_then_name() {
+        let v = vec![
+            entry("b.rs", Format::Text, 0, None),
+            entry("a.rs", Format::Text, 0, None),
+            entry("c.md", Format::Text, 0, None),
+            entry("readme", Format::Text, 0, None), // no ext → sorts first ("")
+        ];
+        assert_eq!(
+            sorted_names(
+                v,
+                Sort {
+                    key: SortKey::Ext,
+                    reverse: false
+                }
+            ),
+            vec!["readme", "c.md", "a.rs", "b.rs"]
+        );
+    }
+
+    #[test]
+    fn name_ext_handles_dotfiles_and_missing() {
+        assert_eq!(name_ext("photo.JPG"), "jpg"); // lower-cased
+        assert_eq!(name_ext("archive.tar.gz"), "gz"); // last component only
+        assert_eq!(name_ext("README"), ""); // none
+        assert_eq!(name_ext(".gitignore"), ""); // leading dot = stem, not ext
+    }
+
+    #[test]
+    fn sort_key_cycles_through_all_four() {
+        let k = SortKey::Name;
+        let k = k.cycle();
+        assert!(matches!(k, SortKey::Size));
+        let k = k.cycle();
+        assert!(matches!(k, SortKey::Modified));
+        let k = k.cycle();
+        assert!(matches!(k, SortKey::Ext));
+        let k = k.cycle();
+        assert!(matches!(k, SortKey::Name)); // wraps
+    }
 
     #[test]
     fn miller_three_columns_only_when_wide_and_parented() {
