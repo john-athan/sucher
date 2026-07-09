@@ -30,6 +30,8 @@ resvg = "0.47"
 toml = "0.8"
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
+# Jupyter notebook (.ipynb) parsing — a JSON document of cells.
+serde_json = "1"
 # Recursive search (ADR 0007): ripgrep's own walker + line searcher.
 ignore = "0.4"
 grep-searcher = "0.1"

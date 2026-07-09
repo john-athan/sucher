@@ -15,6 +15,7 @@ mod config;
 mod dir;
 mod docx;
 mod epub;
+mod ipynb;
 mod format;
 mod git;
 mod hex;
@@ -231,6 +232,21 @@ fn run() -> ExitCode {
             };
             return render_markdown(interactive, title, src, images);
         }
+        Format::Ipynb => {
+            let src = match ipynb::to_markdown(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("sucher: {path}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let images = if interactive {
+                ipynb::media(&path)
+            } else {
+                Vec::new()
+            };
+            return render_markdown(interactive, title, src, images);
+        }
         Format::Keynote => {
             if interactive {
                 if let Err(e) = keynote::run(title, path.clone()) {
@@ -402,6 +418,13 @@ pub fn open_interactive(path: &str) {
         },
         Format::Epub => match epub::to_markdown(path) {
             Ok(src) => tui::run(title, src, epub::media(path)),
+            Err(e) => {
+                eprintln!("sucher: {path}: {e}");
+                Ok(())
+            }
+        },
+        Format::Ipynb => match ipynb::to_markdown(path) {
+            Ok(src) => tui::run(title, src, ipynb::media(path)),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())

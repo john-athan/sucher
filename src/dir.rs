@@ -1727,6 +1727,13 @@ impl App {
                     Err(_) => self.preview.push(no_preview()),
                 }
             }
+            Format::Ipynb => {
+                // .ipynb → markdown (cells + outputs); on failure show no preview.
+                match crate::ipynb::to_markdown(&path.to_string_lossy()) {
+                    Ok(src) => self.preview_markdown(src),
+                    Err(_) => self.preview.push(no_preview()),
+                }
+            }
             Format::Sheet => self.preview_sheet(&path),
             Format::Archive => self.preview_archive(&path),
             Format::Binary => self.preview_hex(&path),

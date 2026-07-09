@@ -80,6 +80,7 @@ pub fn nerd_glyph(ext: &str, fmt: Format) -> &'static str {
         "xlsx" | "xls" | "csv" => "\u{f1c3}", // nf-fa-file_excel_o
         "pptx" | "ppt" | "key" => "\u{f1c4}", // nf-fa-file_powerpoint_o
         "epub" => "\u{f02d}",                 // nf-fa-book
+        "ipynb" => "\u{e678}",                // nf-seti-jupyter
         // Unlisted: fall back to the file's Format category.
         _ => fallback_glyph(fmt),
     }
@@ -101,6 +102,7 @@ fn fallback_glyph(fmt: Format) -> &'static str {
         Format::Docx | Format::Doc => "\u{f1c2}",     // word
         Format::Pptx | Format::Keynote => "\u{f1c4}", // powerpoint
         Format::Epub => "\u{f02d}",                   // book
+        Format::Ipynb => "\u{e678}",                  // nf-seti-jupyter
         Format::Archive => "\u{f1c6}",                // archive
         Format::Binary => "\u{f471}",                 // nf-oct-file_binary
     }

@@ -35,6 +35,7 @@ pub enum Format {
     Docx,
     Pptx,
     Epub,
+    Ipynb,
     Keynote,
     Doc,
     Audio,
@@ -66,6 +67,8 @@ pub fn classify(ext: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
         "pptx" => Format::Pptx,
         // EPUB is a zip of XHTML reduced to markdown, like docx/pptx (ADR 0009).
         "epub" => Format::Epub,
+        // A Jupyter notebook is a JSON document of cells reduced to markdown.
+        "ipynb" => Format::Ipynb,
         "key" => Format::Keynote,
         "doc" | "rtf" | "odt" | "ppt" => Format::Doc,
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => Format::Audio,
@@ -139,6 +142,7 @@ impl Format {
             Format::Docx => "Word Document",
             Format::Pptx => "Presentation",
             Format::Epub => "E-book",
+            Format::Ipynb => "Notebook",
             Format::Keynote => "Keynote",
             Format::Doc => "Document",
             Format::Audio => "Audio",
@@ -162,6 +166,7 @@ impl Format {
             | Format::Docx
             | Format::Pptx
             | Format::Epub
+            | Format::Ipynb
             | Format::Doc => "▢",
             Format::Text => "◇",
             Format::Archive => "▣",
@@ -182,6 +187,7 @@ impl Format {
             | Format::Docx
             | Format::Pptx
             | Format::Epub
+            | Format::Ipynb
             | Format::Doc => theme::palette().doc,
             Format::Text => theme::palette().code,
             Format::Archive => theme::palette().archive,
@@ -204,6 +210,7 @@ impl Format {
                 | Format::Docx
                 | Format::Pptx
                 | Format::Epub
+                | Format::Ipynb
                 | Format::Keynote
                 | Format::Archive
                 | Format::Binary
@@ -263,6 +270,13 @@ mod tests {
         // ADR 0009: .epub is a zip of XHTML reduced to markdown, like docx/pptx.
         assert_eq!(by_ext("epub"), Format::Epub);
         assert!(by_ext("epub").opens());
+    }
+
+    #[test]
+    fn ipynb_is_its_own_format() {
+        // A Jupyter notebook is a JSON document of cells reduced to markdown.
+        assert_eq!(by_ext("ipynb"), Format::Ipynb);
+        assert!(by_ext("ipynb").opens());
     }
 
     #[test]
@@ -350,6 +364,7 @@ mod tests {
             Format::Docx,
             Format::Pptx,
             Format::Epub,
+            Format::Ipynb,
             Format::Keynote,
             Format::Archive,
             Format::Binary,
