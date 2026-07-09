@@ -34,6 +34,9 @@ serde = { version = "1", features = ["derive"] }
 ignore = "0.4"
 grep-searcher = "0.1"
 grep-regex = "0.1"
+# HTML → markdown (ADR 0008): a real HTML5 parser, not the XML reader.
+html5ever = "0.39"
+markup5ever_rcdom = "0.39"
 
 [[bin]]
 name = "sucher"

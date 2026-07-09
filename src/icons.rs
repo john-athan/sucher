@@ -90,6 +90,7 @@ fn fallback_glyph(fmt: Format) -> &'static str {
     match fmt {
         Format::Directory => "\u{f07b}",              // folder
         Format::Markdown => "\u{e73e}",               // markdown
+        Format::Html => "\u{f13b}",                   // nf-fa-html5
         Format::Text => "\u{f1c9}",                   // nf-fa-file_code_o
         Format::Sheet => "\u{f1c3}",                  // excel
         Format::Image | Format::Svg => "\u{f1c5}",    // image

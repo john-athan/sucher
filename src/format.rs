@@ -25,6 +25,7 @@ const HEAD_BYTES: usize = 8 * 1024;
 pub enum Format {
     Directory,
     Markdown,
+    Html,
     Text,
     Sheet,
     Image,
@@ -53,6 +54,8 @@ pub fn classify(ext: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
     }
     match ext {
         "md" | "markdown" | "mdx" => Format::Markdown,
+        // HTML is reduced to markdown (ADR 0008), not shown as source.
+        "html" | "htm" | "xhtml" => Format::Html,
         // Tabular data — including csv/tsv — belongs in the grid viewer.
         "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" | "csv" | "tsv" => Format::Sheet,
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "ico" => Format::Image,
@@ -123,6 +126,7 @@ impl Format {
         match self {
             Format::Directory => "Directory",
             Format::Markdown => "Markdown",
+            Format::Html => "HTML",
             Format::Text => "Text",
             Format::Sheet => "Spreadsheet",
             Format::Image => "Image",
@@ -149,7 +153,7 @@ impl Format {
             Format::Pdf => "▤",
             Format::Sheet => "▤",
             Format::Keynote => "▦",
-            Format::Markdown | Format::Docx | Format::Pptx | Format::Doc => "▢",
+            Format::Markdown | Format::Html | Format::Docx | Format::Pptx | Format::Doc => "▢",
             Format::Text => "◇",
             Format::Archive => "▣",
             Format::Binary => "·",
@@ -164,7 +168,9 @@ impl Format {
             Format::Video | Format::Audio => theme::palette().video,
             Format::Pdf => theme::palette().pdf,
             Format::Sheet => theme::palette().sheet,
-            Format::Markdown | Format::Docx | Format::Pptx | Format::Doc => theme::palette().doc,
+            Format::Markdown | Format::Html | Format::Docx | Format::Pptx | Format::Doc => {
+                theme::palette().doc
+            }
             Format::Text => theme::palette().code,
             Format::Archive => theme::palette().archive,
             Format::Binary => theme::palette().other,
@@ -176,6 +182,7 @@ impl Format {
         matches!(
             self,
             Format::Markdown
+                | Format::Html
                 | Format::Text
                 | Format::Sheet
                 | Format::Image
@@ -247,6 +254,15 @@ mod tests {
     }
 
     #[test]
+    fn html_is_its_own_format() {
+        // ADR 0008: .html reduces to markdown, it no longer opens as Text source.
+        assert_eq!(by_ext("html"), Format::Html);
+        assert_eq!(by_ext("htm"), Format::Html);
+        assert_eq!(by_ext("xhtml"), Format::Html);
+        assert!(by_ext("html").opens());
+    }
+
+    #[test]
     fn known_media_and_doc_extensions() {
         assert_eq!(by_ext("md"), Format::Markdown);
         assert_eq!(by_ext("docx"), Format::Docx);
@@ -304,6 +320,7 @@ mod tests {
     fn opens_matches_the_viewable_set() {
         for f in [
             Format::Markdown,
+            Format::Html,
             Format::Text,
             Format::Sheet,
             Format::Image,

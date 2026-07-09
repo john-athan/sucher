@@ -1408,6 +1408,13 @@ impl App {
         match kind {
             Format::Directory => self.preview_dir(&path),
             Format::Markdown => self.preview_markdown(read_capped(&path)),
+            Format::Html => {
+                // .html → markdown (ADR 0008); on failure show no preview.
+                match crate::html::to_markdown(&path.to_string_lossy()) {
+                    Ok(src) => self.preview_markdown(src),
+                    Err(_) => self.preview.push(no_preview()),
+                }
+            }
             Format::Docx => {
                 // .docx → markdown; on failure show no preview.
                 match crate::docx::to_markdown(&path.to_string_lossy()) {

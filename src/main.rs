@@ -18,6 +18,7 @@ mod format;
 mod git;
 mod hex;
 mod highlight;
+mod html;
 mod icons;
 mod imgview;
 mod keynote;
@@ -264,6 +265,17 @@ fn run() -> ExitCode {
             };
             return render_markdown(interactive, title, src, Vec::new());
         }
+        // HTML is reduced to markdown (ADR 0008) and rendered like docx/pptx.
+        Format::Html => {
+            let src = match html::to_markdown(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("sucher: {path}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            return render_markdown(interactive, title, src, Vec::new());
+        }
         // Recognized but still unopenable (legacy office binaries, audio): show
         // a metadata line, never feed the bytes to a renderer.
         f @ (Format::Doc | Format::Audio) => {
@@ -376,6 +388,13 @@ pub fn open_interactive(path: &str) {
         Format::Archive => archive::run(title, path.to_string()),
         Format::Binary => hex::run(title, path.to_string()),
         Format::Markdown => match fs::read_to_string(path) {
+            Ok(src) => tui::run(title, src, Vec::new()),
+            Err(e) => {
+                eprintln!("sucher: {path}: {e}");
+                Ok(())
+            }
+        },
+        Format::Html => match html::to_markdown(path) {
             Ok(src) => tui::run(title, src, Vec::new()),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");

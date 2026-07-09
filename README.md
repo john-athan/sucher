@@ -71,6 +71,7 @@ real pixels where one is available.
 | Category | Extensions | Backend |
 |----------|-----------|---------|
 | Markdown | `.md` `.markdown` `.mdx` | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) |
+| HTML | `.html` `.htm` `.xhtml` | [`html5ever`](https://crates.io/crates/html5ever) DOM walk → markdown renderer |
 | Text / source | code, `.txt` `.log`, config files, extension-less UTF-8 text | syntax-highlighted text viewer (no soft-wrap; pan + search) |
 | Spreadsheet | `.xlsx`, `.xlsm` | streaming reader (zip + quick-xml) on a worker thread |
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
@@ -93,7 +94,7 @@ recognized but have no lister; extract them with a shell tool.
 
 When stdout is not a TTY (piped), sucher prints a sensible text dump instead of
 launching the TUI (`pdftotext` for PDF, TSV for sheets, metadata for video,
-styled text for markdown/docx/pptx, faithful bytes for text/source, raw XML for
+styled text for markdown/html/docx/pptx, faithful bytes for text/source, raw XML for
 SVG, a canonical hexdump for binary, a `size⇥path` table for archives, a plain
 listing for directories).
 
@@ -328,6 +329,7 @@ pdf.rs         poppler page raster + page cache, sized to the display
 imgview.rs     image viewer
 svg.rs         resvg rasteriser + split image/source viewer
 video.rs       streaming ffmpeg pipe + background decoder, paced w/ frame-drop
+html.rs        .html → markdown via html5ever DOM walk (reuses the renderer)
 docx.rs        .docx → markdown (reuses the markdown renderer)
 pptx.rs        .pptx slide text → markdown (reuses the markdown renderer)
 keynote.rs     .key → embedded QuickLook preview image
