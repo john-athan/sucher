@@ -47,6 +47,9 @@ pub struct Palette {
     pub dim: Color,
     /// Accent for the breadcrumb / active chrome.
     pub accent: Color,
+    /// Selection row background — a soft, low-luma accent-ish tint that reads as
+    /// "here" without the harshness of a reverse-video bar (per theme).
+    pub selection: Color,
     /// Highlighter keyword colour (the one token colour with no file-kind twin).
     pub keyword: Color,
 }
@@ -91,6 +94,9 @@ impl Palette {
             other: Color::Rgb(205, 205, 215),
             dim: Color::Rgb(120, 120, 132),
             accent: Color::Rgb(125, 211, 252),
+            // Dark desaturated blue-grey — a hair above the background so the
+            // selected row lifts without shouting.
+            selection: Color::Rgb(38, 44, 62),
             keyword: Color::Rgb(147, 197, 253),
         }
     }
@@ -111,6 +117,7 @@ impl Palette {
             other: hex(0x1f2937),
             dim: hex(0x6b7280),
             accent: hex(0x0284c7),
+            selection: hex(0xdbeafe), // pale blue tint, legible under dark text
             keyword: hex(0x4338ca),
         }
     }
@@ -119,18 +126,19 @@ impl Palette {
     /// canonical named colours: Blue dirs, Mauve images, Red PDFs, and so on.
     pub fn catppuccin_mocha() -> Self {
         Palette {
-            dir: hex(0x89b4fa),     // Blue
-            image: hex(0xcba6f7),   // Mauve
-            video: hex(0xf5c2e7),   // Pink
-            pdf: hex(0xf38ba8),     // Red
-            sheet: hex(0xa6e3a1),   // Green
-            doc: hex(0xf9e2af),     // Yellow
-            code: hex(0x94e2d5),    // Teal
-            archive: hex(0xfab387), // Peach
-            other: hex(0xcdd6f4),   // Text
-            dim: hex(0x7f849c),     // Overlay1
-            accent: hex(0x89dceb),  // Sky
-            keyword: hex(0xb4befe), // Lavender
+            dir: hex(0x89b4fa),       // Blue
+            image: hex(0xcba6f7),     // Mauve
+            video: hex(0xf5c2e7),     // Pink
+            pdf: hex(0xf38ba8),       // Red
+            sheet: hex(0xa6e3a1),     // Green
+            doc: hex(0xf9e2af),       // Yellow
+            code: hex(0x94e2d5),      // Teal
+            archive: hex(0xfab387),   // Peach
+            other: hex(0xcdd6f4),     // Text
+            dim: hex(0x7f849c),       // Overlay1
+            accent: hex(0x89dceb),    // Sky
+            selection: hex(0x2c3149), // Surface0 nudged toward the blue accent
+            keyword: hex(0xb4befe),   // Lavender
         }
     }
 
@@ -138,36 +146,38 @@ impl Palette {
     /// background, with the neutral greys for chrome.
     pub fn gruvbox_dark() -> Self {
         Palette {
-            dir: hex(0x83a598),     // bright blue
-            image: hex(0xd3869b),   // bright purple
-            video: hex(0xfb4934),   // bright red
-            pdf: hex(0xcc241d),     // neutral red
-            sheet: hex(0xb8bb26),   // bright green
-            doc: hex(0xfabd2f),     // bright yellow
-            code: hex(0x8ec07c),    // bright aqua
-            archive: hex(0xfe8019), // bright orange
-            other: hex(0xebdbb2),   // fg
-            dim: hex(0x928374),     // gray
-            accent: hex(0x689d6a),  // neutral aqua
-            keyword: hex(0x458588), // neutral blue
+            dir: hex(0x83a598),       // bright blue
+            image: hex(0xd3869b),     // bright purple
+            video: hex(0xfb4934),     // bright red
+            pdf: hex(0xcc241d),       // neutral red
+            sheet: hex(0xb8bb26),     // bright green
+            doc: hex(0xfabd2f),       // bright yellow
+            code: hex(0x8ec07c),      // bright aqua
+            archive: hex(0xfe8019),   // bright orange
+            other: hex(0xebdbb2),     // fg
+            dim: hex(0x928374),       // gray
+            accent: hex(0x689d6a),    // neutral aqua
+            selection: hex(0x3c3836), // bg1 — the native gruvbox selection warmth
+            keyword: hex(0x458588),   // neutral blue
         }
     }
 
     /// Tokyo Night (the "storm/night" dark theme).
     pub fn tokyo_night() -> Self {
         Palette {
-            dir: hex(0x7aa2f7),     // blue
-            image: hex(0xbb9af7),   // magenta
-            video: hex(0xf7768e),   // red
-            pdf: hex(0xdb4b4b),     // red1
-            sheet: hex(0x9ece6a),   // green
-            doc: hex(0xe0af68),     // yellow
-            code: hex(0x73daca),    // teal
-            archive: hex(0xff9e64), // orange
-            other: hex(0xc0caf5),   // fg
-            dim: hex(0x565f89),     // comment
-            accent: hex(0x7dcfff),  // cyan
-            keyword: hex(0x9d7cd8), // purple
+            dir: hex(0x7aa2f7),       // blue
+            image: hex(0xbb9af7),     // magenta
+            video: hex(0xf7768e),     // red
+            pdf: hex(0xdb4b4b),       // red1
+            sheet: hex(0x9ece6a),     // green
+            doc: hex(0xe0af68),       // yellow
+            code: hex(0x73daca),      // teal
+            archive: hex(0xff9e64),   // orange
+            other: hex(0xc0caf5),     // fg
+            dim: hex(0x565f89),       // comment
+            accent: hex(0x7dcfff),    // cyan
+            selection: hex(0x283457), // the theme's canonical selection blue
+            keyword: hex(0x9d7cd8),   // purple
         }
     }
 

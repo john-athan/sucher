@@ -134,6 +134,7 @@ fn apply_color_overrides(
             "other" => p.other = c,
             "dim" => p.dim = c,
             "accent" => p.accent = c,
+            "selection" => p.selection = c,
             "keyword" => p.keyword = c,
             _ => {}
         }

@@ -10,9 +10,9 @@ use crate::{highlight, icons, query, theme, typeahead};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use image::DynamicImage;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
 use std::fs;
 use std::io::{self, Read};
@@ -865,29 +865,42 @@ impl App {
 
     fn render_crumb(&self, f: &mut Frame, area: Rect) {
         let shown = pretty_path(&self.cwd);
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" ", Style::default()),
-                Span::styled(
-                    shown,
-                    Style::default()
-                        .fg(theme::palette().accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ])),
-            area,
-        );
+        // Two-tone breadcrumb: the parent portion recedes in `dim` while the
+        // final segment — the directory you're actually in — pops in accent +
+        // BOLD, so the current location reads at a glance. Split on the last
+        // '/', keeping the separator with the parent (`~/foo/` + `bar`); a
+        // path with no slash (e.g. `~`) is all accent.
+        let accent = theme::palette().accent;
+        let dim = theme::palette().dim;
+        let mut spans = vec![Span::raw(" ")];
+        match shown.rfind('/') {
+            Some(i) => {
+                let (parent, last) = shown.split_at(i + 1);
+                spans.push(Span::styled(parent.to_string(), Style::default().fg(dim)));
+                spans.push(Span::styled(
+                    last.to_string(),
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                ));
+            }
+            None => spans.push(Span::styled(
+                shown,
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            )),
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
     fn render_list(&mut self, f: &mut Frame, area: Rect) {
         self.viewport_h = area.height.saturating_sub(2);
-        // Width reserved before the name: 2 for the block borders, plus a 2-cell
-        // glyph column ("X ") in the glyphed modes. `IconMode::None` drops the
-        // glyph, so the name reclaims those two cells (D5). The size column and
-        // layout are untouched — a later phase owns borders/selection.
+        // Width reserved before the name: 2 for the block borders, 2 for the
+        // selection cursor gutter (the `highlight_symbol` List reserves on every
+        // row so names align whether selected or not), plus a 2-cell glyph
+        // column ("X ") in the glyphed modes. `IconMode::None` drops the glyph,
+        // so the name reclaims those two cells (D5). Accounting for the 2-cell
+        // gutter here keeps the size column from clipping at the right edge.
         let chrome_w = match self.icons {
-            IconMode::None => 2, // borders only
-            _ => 4,              // borders + glyph cell
+            IconMode::None => 4, // borders + gutter
+            _ => 6,              // borders + gutter + glyph cell
         };
         let inner_w = area.width.saturating_sub(chrome_w) as usize;
         let size_w = 8usize;
@@ -952,21 +965,49 @@ impl App {
             .collect();
 
         let count = self.view.len();
-        let title = format!(" {count} ");
+        let accent = theme::palette().accent;
+        // The list is the ONLY pane the browser ever focuses; the preview is a
+        // passive follower of the selection. So "active vs passive" is a static
+        // distinction, not a runtime focus toggle — the list always lights its
+        // border with the accent so focus reads as "on the left". In Filter mode
+        // the border shifts to the filter yellow (`doc`) to reinforce the mode,
+        // matching the status line's filter colour.
+        let border = if let Mode::Filter = self.mode {
+            theme::palette().doc
+        } else {
+            accent
+        };
+        let title = Line::from(Span::styled(
+            format!(" {count} "),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ));
         let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL).title(title))
-            .highlight_style(Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(border))
+                    .title(title),
+            )
+            // Soft background tint + accent cursor gutter, replacing the harsh
+            // reverse-video bar. The gutter bar ("▎") takes the selection bg too;
+            // the tint carries the accent read.
+            .highlight_style(
+                Style::default()
+                    .bg(theme::palette().selection)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▎ ");
         f.render_stateful_widget(list, area, &mut self.state);
     }
 
     fn render_preview(&mut self, f: &mut Frame, area: Rect) {
+        // The preview is the passive pane (see `render_list`): a dim, rounded
+        // border that sits quietly behind the accent-lit list. Captions keep
+        // their truncation but gain the accent+BOLD styling of the list title.
         match self.pv {
             Pv::Image => {
-                let title = format!(
-                    " {} ",
-                    truncate(&self.caption, area.width.saturating_sub(4) as usize)
-                );
-                let block = Block::default().borders(Borders::ALL).title(title);
+                let block = preview_block(caption_title(&self.caption, area));
                 let inner = block.inner(area);
                 f.render_widget(block, area);
                 if let Some(pane) = self.pane.as_mut() {
@@ -976,11 +1017,7 @@ impl App {
             Pv::Loading => {
                 // Placeholder while the background worker rasters. Never render
                 // the (possibly stale) pane here — only a caption + dim note.
-                let title = format!(
-                    " {} ",
-                    truncate(&self.caption, area.width.saturating_sub(4) as usize)
-                );
-                let block = Block::default().borders(Borders::ALL).title(title);
+                let block = preview_block(caption_title(&self.caption, area));
                 let inner = block.inner(area);
                 f.render_widget(block, area);
                 f.render_widget(
@@ -992,7 +1029,7 @@ impl App {
                 );
             }
             Pv::Text => {
-                let block = Block::default().borders(Borders::ALL).title(" Preview ");
+                let block = preview_block(preview_caption(" Preview "));
                 let inner_h = area.height.saturating_sub(2) as usize;
                 let text: Vec<Line> = self.preview.iter().take(inner_h).cloned().collect();
                 f.render_widget(Paragraph::new(Text::from(text)).block(block), area);
@@ -1018,8 +1055,10 @@ impl App {
                 " [j/k] move  [Enter/l] open  [h] up  [/] filter  [.] dotfiles ({hidden})  [q] quit"
             )
         };
+        // Filter mode borrows the palette's yellow (`doc`, which is exactly the
+        // old hardcoded 252,211,77 in sucher-dark) so the mode stays themeable.
         let color = if let Mode::Filter = self.mode {
-            Color::Rgb(252, 211, 77)
+            theme::palette().doc
         } else {
             theme::palette().dim
         };
@@ -1068,6 +1107,36 @@ fn read_capped(path: &Path) -> String {
     let n = f.read(&mut buf).unwrap_or(0);
     buf.truncate(n);
     String::from_utf8_lossy(&buf).into_owned()
+}
+
+/// The passive preview pane's frame: a rounded, `dim`-bordered block carrying
+/// an already-styled title. One builder so all three preview states (image,
+/// loading, text) share the exact same chrome.
+fn preview_block(title: Line<'static>) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::palette().dim))
+        .title(title)
+}
+
+/// Style a preview caption as the block title: accent + BOLD, matching the
+/// list's title so the two panes read as one system.
+fn preview_caption(s: &str) -> Line<'static> {
+    Line::from(Span::styled(
+        s.to_string(),
+        Style::default()
+            .fg(theme::palette().accent)
+            .add_modifier(Modifier::BOLD),
+    ))
+}
+
+/// A file caption (`name  ·  type · size`) as a styled block title, truncated to
+/// the pane width first (the `-4` reserves the two border cells and the two
+/// spaces the `" {…} "` padding adds), preserving the prior clipping behaviour.
+fn caption_title(caption: &str, area: Rect) -> Line<'static> {
+    let shown = truncate(caption, area.width.saturating_sub(4) as usize);
+    preview_caption(&format!(" {shown} "))
 }
 
 fn no_preview() -> Line<'static> {
