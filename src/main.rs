@@ -27,6 +27,7 @@ mod pdf;
 mod plain;
 mod pptx;
 mod query;
+mod search;
 mod sheet;
 mod svg;
 mod text;

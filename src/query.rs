@@ -59,6 +59,12 @@ pub struct Query {
     size: Option<(Cmp, u64)>,
     /// Age comparison: e.g. `<7d` means "younger than 7 days".
     age: Option<(Cmp, Duration)>,
+    /// A `content:` term: a literal substring to look for *inside* files. Unlike
+    /// every other predicate this needs the file's bytes, so it is **not** tested
+    /// by [`Query::matches`] (which stays pure, metadata-only — ADR 0007 D2). Only
+    /// recursive search reads it, via [`Query::content`], and scans the file after
+    /// the cheap metadata predicates already passed. Inert for the local filter.
+    content: Option<String>,
 }
 
 /// Parse a raw filter string. A `key:value` token with a recognized key becomes a
@@ -70,6 +76,7 @@ pub fn parse(raw: &str) -> Query {
     let mut exts = Vec::new();
     let mut size = None;
     let mut age = None;
+    let mut content = None;
 
     for token in raw.split_whitespace() {
         let Some((key, value)) = token.split_once(':') else {
@@ -98,6 +105,12 @@ pub fn parse(raw: &str) -> Query {
                 Some(p) => age = Some(p),
                 None => terms.push(token),
             },
+            // `content:`/`contains:` — a literal substring to grep for inside
+            // files (ADR 0007 D2/D4). The last one wins if repeated. The value is
+            // taken verbatim (case folding is the searcher's smart-case job, not
+            // the parser's), so `content:Foo` and `content:foo` differ here and
+            // the searcher decides case sensitivity.
+            "content" | "contains" | "grep" => content = Some(value.to_string()),
             _ => terms.push(token), // unknown key → treat as text (e.g. URLs)
         }
     }
@@ -108,13 +121,33 @@ pub fn parse(raw: &str) -> Query {
         exts,
         size,
         age,
+        content,
     }
 }
 
 impl Query {
     /// True when at least one structured predicate was given (no fuzzy text).
     pub fn has_predicates(&self) -> bool {
-        !self.kinds.is_empty() || !self.exts.is_empty() || self.size.is_some() || self.age.is_some()
+        !self.kinds.is_empty()
+            || !self.exts.is_empty()
+            || self.size.is_some()
+            || self.age.is_some()
+            || self.content.is_some()
+    }
+
+    /// The `content:` substring to grep for inside files, if any (ADR 0007 D2).
+    /// The recursive-search walker reads this *after* [`Query::matches`] has
+    /// passed on cheap metadata, and only then opens the file to scan its bytes.
+    pub fn content(&self) -> Option<&str> {
+        self.content.as_deref()
+    }
+
+    /// True when nothing at all was asked for — no free-text terms, no metadata
+    /// predicates, no `content:`. Recursive search uses this to avoid walking the
+    /// entire tree for a blank query: an empty query matches everything, which as
+    /// a *search* means "you haven't asked yet," not "list the whole disk."
+    pub fn is_empty(&self) -> bool {
+        self.terms.is_empty() && !self.has_predicates()
     }
 
     /// Does the entry pass every structured predicate AND the free-text terms?
@@ -304,5 +337,61 @@ mod tests {
         let q = parse("http://example.com");
         assert_eq!(q.terms, "http://example.com");
         assert!(!q.has_predicates());
+    }
+
+    #[test]
+    fn content_predicate_is_parsed_and_exposed() {
+        let q = parse("content:TODO");
+        assert_eq!(q.content(), Some("TODO"));
+        assert!(q.has_predicates());
+        // content: is not a free-text term (it doesn't fuzzy-match the name).
+        assert_eq!(q.terms, "");
+        // `contains:` and `grep:` are aliases.
+        assert_eq!(parse("contains:foo").content(), Some("foo"));
+        assert_eq!(parse("grep:bar").content(), Some("bar"));
+    }
+
+    #[test]
+    fn content_value_is_case_preserving() {
+        // The parser preserves case; smart-case is the searcher's job (ADR 0007 D4).
+        assert_eq!(parse("content:Foo").content(), Some("Foo"));
+        assert_eq!(parse("content:foo").content(), Some("foo"));
+    }
+
+    #[test]
+    fn content_is_metadata_only_in_matches() {
+        // `matches` stays pure metadata (ADR 0007 D2): a content-only query does
+        // not reject any entry on name/kind/size/age — the walker greps the file.
+        let q = parse("content:needle");
+        assert!(q.matches("anything.rs", Format::Text, 0, None));
+        assert!(q.matches("other.pdf", Format::Pdf, 999, None));
+    }
+
+    #[test]
+    fn content_combines_with_metadata_predicates() {
+        let q = parse("content:fn kind:code ext:rs");
+        assert_eq!(q.content(), Some("fn"));
+        // metadata predicates still gate `matches`; content is separate.
+        assert!(q.matches("main.rs", Format::Text, 0, None));
+        assert!(!q.matches("main.py", Format::Text, 0, None)); // wrong ext
+        assert!(!q.matches("a.pdf", Format::Pdf, 0, None)); // wrong kind
+    }
+
+    #[test]
+    fn empty_query_is_empty_but_any_predicate_is_not() {
+        assert!(parse("").is_empty());
+        assert!(parse("   ").is_empty());
+        assert!(!parse("report").is_empty()); // free text
+        assert!(!parse("kind:pdf").is_empty()); // metadata predicate
+        assert!(!parse("content:x").is_empty()); // content predicate
+    }
+
+    #[test]
+    fn empty_content_value_falls_back_to_text() {
+        // `content:` with no value is not a predicate (the shared empty-value
+        // guard in `parse`), so it degrades to a free-text token.
+        let q = parse("content:");
+        assert_eq!(q.content(), None);
+        assert_eq!(q.terms, "content:");
     }
 }
