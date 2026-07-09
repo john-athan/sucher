@@ -87,6 +87,11 @@ struct App {
     raster_rx: Receiver<(PathBuf, Option<DynamicImage>)>,
     raster_pending: Option<PathBuf>, // path in the ONE live worker
     raster_want: Option<(PathBuf, Format)>, // latest selection awaiting a raster
+    // Braille-spinner frame counter for the `Loading` preview (ADR 0004 D3). It
+    // advances ONLY while a raster is live (pending or wanted) — never on an idle
+    // redraw — so the spinner animates during real work without the fully-idle
+    // browser ever churning the CPU. See the tick in `main_loop`.
+    spin: usize,
 }
 
 enum Action {
@@ -167,6 +172,7 @@ pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) ->
         raster_rx,
         raster_pending: None,
         raster_want: None,
+        spin: 0,
     };
     app.load();
 
@@ -298,8 +304,11 @@ impl App {
                 dirty = false;
             }
             // Poll briefly while a raster is in flight or queued so a finished
-            // image installs promptly; otherwise idle at the normal cadence.
-            let timeout = if self.raster_pending.is_some() || self.raster_want.is_some() {
+            // image installs promptly AND the braille spinner ticks smoothly;
+            // otherwise idle at the normal cadence. A raster being "active" is the
+            // one condition under which a bare timeout advances the animation.
+            let raster_active = self.raster_pending.is_some() || self.raster_want.is_some();
+            let timeout = if raster_active {
                 Duration::from_millis(60)
             } else {
                 Duration::from_millis(1000)
@@ -315,6 +324,14 @@ impl App {
                     Event::Resize(..) => dirty = true,
                     _ => {}
                 }
+            } else if raster_active {
+                // Timeout with no input AND a raster live: advance the spinner one
+                // frame and force a redraw so it animates at ~60 ms. Gated on
+                // `raster_active` so a fully idle browser (which blocks the full
+                // 1 s above) neither ticks `spin` nor redraws — zero idle CPU,
+                // preserving the README's no-busy-loop promise (ADR 0004 D3).
+                self.spin = self.spin.wrapping_add(1);
+                dirty = true;
             }
         }
     }
@@ -989,13 +1006,16 @@ impl App {
             }
             Pv::Loading => {
                 // Placeholder while the background worker rasters. Never render
-                // the (possibly stale) pane here — only a caption + dim note.
+                // the (possibly stale) pane here — only a caption + dim note. The
+                // braille spinner frame is picked by `spin`, which `main_loop`
+                // advances every ~60 ms while the raster is live (ADR 0004 D3).
                 let block = preview_block(caption_title(&self.caption, area));
                 let inner = block.inner(area);
                 f.render_widget(block, area);
+                let frame = SPINNER[self.spin % SPINNER.len()];
                 f.render_widget(
                     Paragraph::new(Line::from(Span::styled(
-                        "rendering…",
+                        format!("{frame} rendering…"),
                         Style::default().fg(theme::palette().dim),
                     ))),
                     inner,
@@ -1046,6 +1066,12 @@ impl App {
 /// this the preview and current panes would be too cramped, so the layout
 /// collapses to the classic two-column split (ADR 0004, D1).
 const MILLER_MIN: u16 = 100;
+
+/// The classic 10-frame braille spinner cycled in the `Loading` preview while a
+/// poster rasters (ADR 0004 D3). Indexed as `SPINNER[spin % SPINNER.len()]`; the
+/// `App::spin` counter only advances during live raster work, so this animates
+/// exactly when there is real work to show and is otherwise still.
+const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// A single pane's worth of entries to draw, decoupled from `App` so the SAME
 /// renderer ([`render_entry_list`]) serves both the current and the parent pane
