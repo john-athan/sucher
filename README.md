@@ -147,6 +147,7 @@ theme  = "catppuccin-mocha"  # or "auto" | built-in name (default: sucher-dark)
 icons  = "nerd"              # "unicode" (default) | "nerd" | "none"
 layout = "auto"              # "auto" (default) | "miller" | "double"
 git    = true                # show the git status gutter (default: true)
+mouse  = true                # click breadcrumb segments / wheel-scroll (default: true)
 
 [colors]                     # optional per-key hex overrides, applied last
 accent = "#7dd3fc"
@@ -169,6 +170,10 @@ selection = "#26324a"
   marker (`●` modified · `+` added · `?` untracked · `✗` deleted · `»` renamed ·
   `!` conflict); directories aggregate their descendants' changes. Absent
   outside a repo or with `git = false`.
+- **Mouse** — click a breadcrumb segment to jump to that directory; scroll the
+  wheel to move the selection. Capturing the mouse disables the terminal's own
+  click-drag text selection inside sucher (Shift/Option-drag still bypasses it in
+  most terminals); set `mouse = false` to keep native selection.
 
 ## Usage & keys
 
@@ -181,10 +186,12 @@ s <file> | less     # piped: text dump
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l`/`→` open file or enter folder · `h`/`←`/`Backspace` parent ·
-`/` smart filter · `.` toggle dotfiles · `M` two/three-column layout · `q` quit.
-The right pane renders a live
-preview of the selection: **images, SVGs, PDFs (page 1), video posters, and
-Keynote previews as real pixels**, **markdown/docx/pptx with full typography**, a
+`/` smart filter · `.` toggle dotfiles · `M` two/three-column layout ·
+`t` size/modified column · `q` quit. Click a breadcrumb segment to jump there;
+the wheel scrolls the list. The right pane renders a live
+preview of the selection: **images (animated GIFs loop in place), SVGs, PDFs
+(page 1), video posters, and Keynote previews as real pixels**,
+**markdown/docx/pptx with full typography**, a
 **grid preview for spreadsheets** (including csv/tsv), a **table of contents for
 archives**, a **hexdump for binary**, a child listing for folders, and the head
 of the file for text/code. Previews are cached as you move.
