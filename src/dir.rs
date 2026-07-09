@@ -139,14 +139,39 @@ impl Sort {
     }
 }
 
-/// The lower-cased extension of a file name, or `""` when it has none. Pure —
-/// unit-tested. Used only by [`SortKey::Ext`]; kept a free fn so the comparator
-/// and its tests share one definition.
-fn name_ext(name: &str) -> String {
+/// The raw extension slice of a file name (the part after the last dot), or `""`
+/// when it has none. NOT lower-cased — the caller compares it through
+/// [`cmp_name_ci`], so folding here would just allocate. Pure — unit-tested. Used
+/// only by [`SortKey::Ext`]; kept a free fn so the comparator and its tests share
+/// one definition.
+fn name_ext(name: &str) -> &str {
     match name.rsplit_once('.') {
         // A leading-dot name (`.gitignore`) is all "stem", no extension.
-        Some((stem, ext)) if !stem.is_empty() => ext.to_lowercase(),
-        _ => String::new(),
+        Some((stem, ext)) if !stem.is_empty() => ext,
+        _ => "",
+    }
+}
+
+/// Case-insensitive comparison of two strings WITHOUT allocating. Folds each side
+/// to lowercase lazily, char by char, through `char::to_lowercase()` (which can
+/// expand one char to several — the flattened iterators handle full Unicode case
+/// folding), and compares the two streams lexicographically. When one side runs
+/// out of chars first it sorts first, exactly like `str::cmp`. Pure — unit-tested.
+/// This is the allocation-free replacement for `a.to_lowercase().cmp(&b.to_lowercase())`,
+/// which [`sort_cmp`] calls ~2·N·log N times per sort.
+fn cmp_name_ci(a: &str, b: &str) -> Ordering {
+    let mut ai = a.chars().flat_map(char::to_lowercase);
+    let mut bi = b.chars().flat_map(char::to_lowercase);
+    loop {
+        match (ai.next(), bi.next()) {
+            (Some(x), Some(y)) => match x.cmp(&y) {
+                Ordering::Equal => continue,
+                ord => return ord,
+            },
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (None, None) => return Ordering::Equal,
+        }
     }
 }
 
@@ -209,13 +234,12 @@ fn sort_cmp<T: Sortable>(a: &T, b: &T, sort: Sort) -> Ordering {
     if dirs_first != Ordering::Equal {
         return dirs_first; // group boundary — never affected by key or reverse
     }
-    let by_name = || a.sort_name().to_lowercase().cmp(&b.sort_name().to_lowercase());
+    let by_name = || cmp_name_ci(a.sort_name(), b.sort_name());
     let ord = match sort.key {
         SortKey::Name => by_name(),
         SortKey::Size => a.sort_size().cmp(&b.sort_size()).then_with(by_name),
         SortKey::Modified => a.sort_modified().cmp(&b.sort_modified()).then_with(by_name),
-        SortKey::Ext => name_ext(a.sort_name())
-            .cmp(&name_ext(b.sort_name()))
+        SortKey::Ext => cmp_name_ci(name_ext(a.sort_name()), name_ext(b.sort_name()))
             .then_with(by_name),
     };
     if sort.reverse {
@@ -916,7 +940,11 @@ impl App {
         }
         // Re-sort the whole (possibly grown) list each drain. Trivially cheap even
         // at the 5000-hit cap, and it lets a late-arriving hit slot into its correct
-        // position rather than tacking onto the end.
+        // position rather than tacking onto the end. Cheap for two reasons: after
+        // Fix 1 `sort_cmp` allocates nothing per comparison, and Rust's stable sort
+        // is adaptive — the vec is already sorted from the previous drain with only
+        // a short appended run, which it merges in near-linear time. So a full
+        // re-sort each drain is correct and performant; no hand-rolled merge needed.
         search.results.sort_by(|a, b| sort_cmp(a, b, sort));
         // Re-anchor the cursor to the same hit after the re-order; if nothing was
         // selected yet (the first hits just arrived), land on the first row so the
@@ -3212,10 +3240,46 @@ mod tests {
 
     #[test]
     fn name_ext_handles_dotfiles_and_missing() {
-        assert_eq!(name_ext("photo.JPG"), "jpg"); // lower-cased
+        // Returns the RAW slice (not lower-cased); case folding is `cmp_name_ci`'s job.
+        assert_eq!(name_ext("photo.JPG"), "JPG"); // raw slice, unfolded
         assert_eq!(name_ext("archive.tar.gz"), "gz"); // last component only
         assert_eq!(name_ext("README"), ""); // none
         assert_eq!(name_ext(".gitignore"), ""); // leading dot = stem, not ext
+    }
+
+    #[test]
+    fn cmp_name_ci_is_case_insensitive_and_ordered() {
+        use std::cmp::Ordering;
+        // Same letters, different case → equal.
+        assert_eq!(cmp_name_ci("Apple", "apple"), Ordering::Equal);
+        // Ordering ignores case ("Apple" before "banana" whatever the casing).
+        assert_eq!(cmp_name_ci("Apple", "banana"), Ordering::Less);
+        assert_eq!(cmp_name_ci("apple", "Banana"), Ordering::Less);
+        assert_eq!(cmp_name_ci("BANANA", "apple"), Ordering::Greater);
+        // A prefix sorts before the longer string (shorter runs out first).
+        assert_eq!(cmp_name_ci("app", "apple"), Ordering::Less);
+        assert_eq!(cmp_name_ci("apple", "app"), Ordering::Greater);
+    }
+
+    #[test]
+    fn ext_sort_order_is_case_insensitive() {
+        // The Ext key folds case via `cmp_name_ci`, so `.RS` and `.rs` group and
+        // order together — the raw slices differ in case but the order does not.
+        let v = vec![
+            entry("b.RS", Format::Text, 0, None),
+            entry("a.rs", Format::Text, 0, None),
+            entry("c.Md", Format::Text, 0, None),
+        ];
+        assert_eq!(
+            sorted_names(
+                v,
+                Sort {
+                    key: SortKey::Ext,
+                    reverse: false
+                }
+            ),
+            vec!["c.Md", "a.rs", "b.RS"] // md < rs, then a < b within .rs/.RS
+        );
     }
 
     #[test]

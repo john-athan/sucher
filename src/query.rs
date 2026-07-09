@@ -116,7 +116,9 @@ pub fn parse(raw: &str) -> Query {
     }
 
     Query {
-        terms: terms.join(" "),
+        // `terms` is stored canonically lower-cased so `matches` needn't re-fold it
+        // on every entry (it was the hottest per-entry allocation in filter mode).
+        terms: terms.join(" ").to_lowercase(),
         kinds,
         exts,
         size,
@@ -182,7 +184,9 @@ impl Query {
                 _ => return false,
             }
         }
-        self.terms.is_empty() || subsequence(&self.terms.to_lowercase(), &name.to_lowercase())
+        // `self.terms` is already lower-cased (see `parse`); only the entry name
+        // still needs folding here.
+        self.terms.is_empty() || subsequence(&self.terms, &name.to_lowercase())
     }
 }
 
@@ -253,6 +257,14 @@ mod tests {
         assert_eq!(q.terms, "report");
         assert!(q.has_predicates());
         assert!(matches!(q.size, Some((Cmp::Gt, _))));
+    }
+
+    #[test]
+    fn mixed_case_query_is_lowercased_at_parse() {
+        // `terms` is folded once in `parse`, so a mixed-case query still matches.
+        let q = parse("RePo");
+        assert_eq!(q.terms, "repo"); // canonically lower-cased
+        assert!(q.matches("myrepo123", Format::Text, 0, None));
     }
 
     #[test]
