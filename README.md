@@ -277,6 +277,40 @@ lets you browse folders, but never extracts.
 **Binary (hex)** — `j`/`k` `↑`/`↓` scroll · `d`/`u` page · `g`/`G` top/end ·
 `q` quit.
 
+## Remote filesystems (S3, GCS, …)
+
+sucher is a **local** viewfinder: it works on any path the operating system
+gives it. So the clean way to browse a cloud bucket is to make it *look* like a
+path — mount it, then point `s` at the mount. No sucher-specific setup, no
+credentials for sucher to hold, and everything works over it unchanged: the
+browser, every viewer, and the recursive `S` search.
+
+```sh
+# Amazon S3 — AWS's official FUSE mount (or `rclone`, below)
+mount-s3 my-bucket ~/mnt/s3          # https://github.com/awslabs/mountpoint-s3
+s ~/mnt/s3
+
+# Google Cloud Storage
+gcsfuse my-bucket ~/mnt/gcs          # https://github.com/GoogleCloudPlatform/gcsfuse
+s ~/mnt/gcs
+
+# Anything rclone supports (S3, GCS, Azure, Backblaze, SFTP, …)
+rclone mount remote:bucket ~/mnt/r --vfs-cache-mode full
+s ~/mnt/r
+```
+
+Because the bytes come over the network, expect the obvious: previews and
+graphics fetch on demand (a cache helps — e.g. rclone's `--vfs-cache-mode
+full`), and a `content:` search downloads each candidate object, so scope it
+with `ext:`/`size:` on large buckets. Name/`kind:`/`ext:`/`size:`/`modified:`
+search only reads directory metadata and stays cheap.
+
+Native cloud sourcing *inside* sucher (its own S3/GCS client, no mount) was
+considered and deliberately left out for now — it would trade the zero-config
+local-viewer identity for an SDK/auth/async surface, and mounts already cover
+the use case. See [ADR 0007](docs/adr/0007-recursive-search.md) for the search
+design that a native remote source would have to extend.
+
 ## How it works
 
 ```
