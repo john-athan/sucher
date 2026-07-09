@@ -4,8 +4,9 @@
 // (headings, bold/italic, code, links, lists, blockquotes, rules, tables) so the
 // existing markdown layout/TUI shows it — no new UI (mirrors docx.rs).
 //
-// The reducer is a PURE `fn parse(&str) -> String`, unit-tested with inline HTML
-// literals; `to_markdown` is the thin IO wrapper.
+// The reducer is a PURE `fn markdown_from_str(&str) -> String`, unit-tested with
+// inline HTML literals; `to_markdown` is the thin IO wrapper. The reducer is
+// `pub(crate)` so sibling XHTML-based formats (epub) reuse it directly.
 
 use html5ever::parse_document;
 use html5ever::tendril::TendrilSink;
@@ -18,10 +19,12 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
     // and interactive open instead of building an unbounded DOM.
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let html = crate::util::read_to_string_capped(file, crate::util::MAX_DECODE_BYTES)?;
-    Ok(parse(&html))
+    Ok(markdown_from_str(&html))
 }
 
-fn parse(html: &str) -> String {
+/// Reduce an HTML/XHTML document to markdown. PURE — no IO — so it is both
+/// unit-testable and reusable by other viewers whose payload is XHTML (epub).
+pub(crate) fn markdown_from_str(html: &str) -> String {
     let dom = parse_document(RcDom::default(), Default::default()).one(html);
     let mut w = Writer::default();
     w.block(&dom.document);
@@ -482,7 +485,7 @@ fn normalize(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, MAX_DEPTH};
+    use super::{markdown_from_str, MAX_DEPTH};
 
     const DOC: &str = r#"<!DOCTYPE html>
 <html><head><title>ignored</title><style>body{color:red}</style></head>
@@ -505,7 +508,7 @@ let y = 2;</code></pre>
 
     #[test]
     fn converts_structure() {
-        let md = parse(DOC);
+        let md = markdown_from_str(DOC);
         assert!(md.contains("# Title Here"), "heading: {md}");
         assert!(md.contains("**bold**"), "bold: {md}");
         assert!(md.contains("*italic*"), "italic: {md}");
@@ -524,7 +527,7 @@ let y = 2;</code></pre>
 
     #[test]
     fn drops_scripts_and_styles() {
-        let md = parse(DOC);
+        let md = markdown_from_str(DOC);
         assert!(!md.contains("dropped"), "script leaked: {md}");
         assert!(!md.contains("color:red"), "style leaked: {md}");
         assert!(!md.contains("ignored"), "title leaked: {md}");
@@ -534,7 +537,7 @@ let y = 2;</code></pre>
     fn recovers_from_malformed_markup() {
         // Unclosed tags, missing quotes, stray entity — an XML reader would choke;
         // the HTML5 parser recovers the way a browser does.
-        let md = parse("<p>one<p>two<br>three &amp; four <b>bold");
+        let md = markdown_from_str("<p>one<p>two<br>three &amp; four <b>bold");
         assert!(md.contains("one"), "{md}");
         assert!(md.contains("two"), "{md}");
         assert!(md.contains("three & four"), "entity/br: {md}");
@@ -544,13 +547,13 @@ let y = 2;</code></pre>
     #[test]
     fn emphasis_boundary_whitespace_is_valid() {
         // Space inside the <b> must move outside the ** markers.
-        let md = parse("<p>a<b> b </b>c</p>");
+        let md = markdown_from_str("<p>a<b> b </b>c</p>");
         assert!(md.contains("a **b** c"), "{md}");
     }
 
     #[test]
     fn plain_document_body_renders() {
-        let md = parse("<html><body>just text</body></html>");
+        let md = markdown_from_str("<html><body>just text</body></html>");
         assert_eq!(md.trim(), "just text");
     }
 
@@ -560,34 +563,34 @@ let y = 2;</code></pre>
         // stack overflow) and the walk truncates rather than recursing forever.
         let n = MAX_DEPTH * 4;
         let deep = format!("{}deep{}", "<div>".repeat(n), "</div>".repeat(n));
-        assert!(!parse(&deep).contains("deep"), "guard should truncate block nest");
+        assert!(!markdown_from_str(&deep).contains("deep"), "guard should truncate block nest");
         let inline = format!("<p>{}deep</p>", "<b>".repeat(n));
-        assert!(!parse(&inline).contains("deep"), "guard should truncate inline nest");
-        let _ = parse(&"<blockquote>".repeat(n)); // must return, not crash
+        assert!(!markdown_from_str(&inline).contains("deep"), "guard should truncate inline nest");
+        let _ = markdown_from_str(&"<blockquote>".repeat(n)); // must return, not crash
     }
 
     #[test]
     fn br_becomes_a_hard_break() {
         // The backslash break must survive the normalize pass.
-        let md = parse("<p>a<br>b</p>");
+        let md = markdown_from_str("<p>a<br>b</p>");
         assert!(md.contains("a\\\nb"), "{md:?}");
     }
 
     #[test]
     fn pre_preserves_blank_lines_and_trailing_space() {
-        let md = parse("<pre>a\n\n\nb  \nc</pre>");
+        let md = markdown_from_str("<pre>a\n\n\nb  \nc</pre>");
         assert!(md.contains("a\n\n\nb  \nc"), "pre corrupted: {md:?}");
     }
 
     #[test]
     fn link_with_spaces_or_parens_stays_valid() {
-        let md = parse(r#"<a href="a b(c)">x</a>"#);
+        let md = markdown_from_str(r#"<a href="a b(c)">x</a>"#);
         assert!(md.contains("[x](<a b(c)>)"), "{md}");
     }
 
     #[test]
     fn block_content_inside_list_item_is_kept() {
-        let md = parse("<ul><li>item<blockquote>note</blockquote></li></ul>");
+        let md = markdown_from_str("<ul><li>item<blockquote>note</blockquote></li></ul>");
         assert!(md.contains("- item"), "{md}");
         assert!(md.contains("> note"), "lost blockquote in li: {md}");
     }

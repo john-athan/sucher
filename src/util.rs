@@ -166,11 +166,27 @@ pub fn is_safe_url(url: &str) -> bool {
 
 /// Extract embedded raster images living under `dir_prefix` (e.g. `word/media/`
 /// for docx, `ppt/media/` for pptx) from an OOXML zip into a per-process temp
-/// directory, returning the written paths sorted by archive name. Best-effort:
-/// any error (not a zip, unreadable member, write failure) is skipped, and an
-/// archive with no media yields an empty vec. The temp files live for the
-/// viewer's lifetime; they are small and bounded by the document's own media.
+/// directory, returning the written paths sorted by archive name.
 pub fn extract_ooxml_media(archive: &str, dir_prefix: &str) -> Vec<PathBuf> {
+    extract_zip_images(archive, |n| n.starts_with(dir_prefix) && is_raster_name(n))
+}
+
+/// Extract embedded raster images from an epub zip. Unlike OOXML, epub images
+/// live under no single fixed prefix (a book may scatter them across `images/`,
+/// `OEBPS/img/`, …), so every raster member anywhere in the archive is kept.
+pub fn extract_epub_media(archive: &str) -> Vec<PathBuf> {
+    extract_zip_images(archive, is_raster_name)
+}
+
+/// Shared core for the format-specific media extractors: write every zip member
+/// whose name satisfies `keep` into a per-process temp directory, returning the
+/// written paths sorted by archive name. Best-effort: any error (not a zip,
+/// unreadable member, write failure) is skipped, and an archive with no matching
+/// media yields an empty vec. The temp files live for the viewer's lifetime; they
+/// are small and bounded by the document's own media. The archive-relative name
+/// is flattened (`/` → `_`) into the temp filename so members that share a
+/// basename across directories (common in epub) can't collide and overwrite.
+fn extract_zip_images(archive: &str, keep: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     let Ok(file) = std::fs::File::open(archive) else {
         return Vec::new();
     };
@@ -179,7 +195,7 @@ pub fn extract_ooxml_media(archive: &str, dir_prefix: &str) -> Vec<PathBuf> {
     };
     let mut names: Vec<String> = (0..zip.len())
         .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
-        .filter(|n| n.starts_with(dir_prefix) && is_raster_name(n))
+        .filter(|n| keep(n))
         .collect();
     names.sort();
     if names.is_empty() {
@@ -198,11 +214,7 @@ pub fn extract_ooxml_media(archive: &str, dir_prefix: &str) -> Vec<PathBuf> {
         if f.read_to_end(&mut bytes).is_err() {
             continue;
         }
-        let file_name = std::path::Path::new(&name)
-            .file_name()
-            .map(|s| s.to_owned())
-            .unwrap_or_default();
-        let dest = dir.join(file_name);
+        let dest = dir.join(name.replace('/', "_"));
         if std::fs::write(&dest, &bytes).is_ok() {
             out.push(dest);
         }

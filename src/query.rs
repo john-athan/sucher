@@ -44,6 +44,7 @@ fn parse_kind(s: &str) -> Vec<Format> {
         "markdown" | "md" => vec![Format::Markdown],
         "doc" | "document" | "word" => vec![Format::Docx, Format::Doc],
         "docx" => vec![Format::Docx],
+        "epub" | "ebook" | "book" => vec![Format::Epub],
         "archive" | "zip" => vec![Format::Archive],
         "binary" | "bin" => vec![Format::Binary],
         _ => Vec::new(),

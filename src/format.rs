@@ -34,6 +34,7 @@ pub enum Format {
     Video,
     Docx,
     Pptx,
+    Epub,
     Keynote,
     Doc,
     Audio,
@@ -63,6 +64,8 @@ pub fn classify(ext: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
         "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => Format::Video,
         "docx" => Format::Docx,
         "pptx" => Format::Pptx,
+        // EPUB is a zip of XHTML reduced to markdown, like docx/pptx (ADR 0009).
+        "epub" => Format::Epub,
         "key" => Format::Keynote,
         "doc" | "rtf" | "odt" | "ppt" => Format::Doc,
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => Format::Audio,
@@ -135,6 +138,7 @@ impl Format {
             Format::Video => "Video",
             Format::Docx => "Word Document",
             Format::Pptx => "Presentation",
+            Format::Epub => "E-book",
             Format::Keynote => "Keynote",
             Format::Doc => "Document",
             Format::Audio => "Audio",
@@ -153,7 +157,12 @@ impl Format {
             Format::Pdf => "▤",
             Format::Sheet => "▤",
             Format::Keynote => "▦",
-            Format::Markdown | Format::Html | Format::Docx | Format::Pptx | Format::Doc => "▢",
+            Format::Markdown
+            | Format::Html
+            | Format::Docx
+            | Format::Pptx
+            | Format::Epub
+            | Format::Doc => "▢",
             Format::Text => "◇",
             Format::Archive => "▣",
             Format::Binary => "·",
@@ -168,9 +177,12 @@ impl Format {
             Format::Video | Format::Audio => theme::palette().video,
             Format::Pdf => theme::palette().pdf,
             Format::Sheet => theme::palette().sheet,
-            Format::Markdown | Format::Html | Format::Docx | Format::Pptx | Format::Doc => {
-                theme::palette().doc
-            }
+            Format::Markdown
+            | Format::Html
+            | Format::Docx
+            | Format::Pptx
+            | Format::Epub
+            | Format::Doc => theme::palette().doc,
             Format::Text => theme::palette().code,
             Format::Archive => theme::palette().archive,
             Format::Binary => theme::palette().other,
@@ -191,6 +203,7 @@ impl Format {
                 | Format::Video
                 | Format::Docx
                 | Format::Pptx
+                | Format::Epub
                 | Format::Keynote
                 | Format::Archive
                 | Format::Binary
@@ -243,6 +256,13 @@ mod tests {
         assert_eq!(by_ext("key"), Format::Keynote);
         assert!(by_ext("pptx").opens());
         assert!(by_ext("key").opens());
+    }
+
+    #[test]
+    fn epub_is_its_own_format() {
+        // ADR 0009: .epub is a zip of XHTML reduced to markdown, like docx/pptx.
+        assert_eq!(by_ext("epub"), Format::Epub);
+        assert!(by_ext("epub").opens());
     }
 
     #[test]
@@ -329,6 +349,7 @@ mod tests {
             Format::Video,
             Format::Docx,
             Format::Pptx,
+            Format::Epub,
             Format::Keynote,
             Format::Archive,
             Format::Binary,
