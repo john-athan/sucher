@@ -48,6 +48,11 @@ real pixels where one is available.
 - **Directory browser** — point `s` at a folder (or run it bare) for a fast,
   two-pane navigator: live preview pane, fuzzy filter, and `Enter` opens the
   selection in its viewer, then drops you back where you were.
+- **Recursive search** (`S`) — find files anywhere below the current directory,
+  streamed live as they're found (ripgrep's own walker, `.gitignore`-aware). The
+  same smart query as the filter, plus `content:` to grep *inside* files — and
+  every hit renders in the preview pane as the **actual framed file** (the PDF
+  page, the image, the spreadsheet grid), not a grey line of text.
 - **Handles huge files** — a 240 MB / 800k-row spreadsheet opens in ~160 ms and
   stays scrollable, because sheets stream in on a background thread instead of
   being loaded whole.
@@ -196,8 +201,9 @@ s <file> | less     # piped: text dump
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l`/`→` open file or enter folder · `h`/`←`/`Backspace` parent ·
-`/` smart filter · `.` toggle dotfiles · `M` two/three-column layout ·
-`t` size/modified column · `q` quit. Click a breadcrumb segment to jump there;
+`/` smart filter · `S` recursive search · `.` toggle dotfiles ·
+`M` two/three-column layout · `t` size/modified column · `q` quit. Click a
+breadcrumb segment to jump there;
 the wheel scrolls the list. The right pane renders a live
 preview of the selection: **images (animated GIFs loop in place), SVGs, PDFs
 (page 1), video posters, and Keynote previews as real pixels**,
@@ -219,6 +225,25 @@ name; four `key:value` predicates narrow by metadata:
 Outside the filter, just **type a name** to jump to the first matching entry
 (type-to-select); a brief pause or `Esc` ends the jump, and the vim motion keys
 keep working whenever you're not mid-type.
+
+**Search** (`S`) is the filter's recursive sibling: instead of narrowing the
+current listing, it walks the whole tree from here downward and **streams matches
+in live** as they're found. Type to refine; `↑`/`↓` (and `PgUp`/`PgDn`) move
+through results, `Enter` opens the selected hit (or jumps into it if it's a
+folder), `Esc` returns to browsing. It takes the **same query language** as the
+filter — every `kind:` / `ext:` / `size:` / `modified:` predicate works — plus
+one more that only makes sense across files:
+
+- `content:` (aliases `contains:` / `grep:`) — a literal substring to find
+  *inside* files, e.g. `content:TODO ext:rs`. Matching is **smart-case**
+  (case-insensitive unless you type an uppercase letter) and each hit shows the
+  matching `line: text`. Powered by ripgrep's own line searcher, so binary files
+  are skipped and huge files stream rather than load.
+
+The walk uses ripgrep's parallel directory walker: it honours `.gitignore`, skips
+dotfiles unless `.` toggled them on, and caps at 5000 hits (surfaced in the
+status line). Because every result flows through the same preview pane, a hit is
+shown as the **real rendered file** — the differentiator over `fd`/`rg`/`fzf`.
 
 **Markdown** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
 `t` table of contents · `/` search (`n`/`N` next/prev) · `l` link picker ·
@@ -258,6 +283,7 @@ lets you browse folders, but never extracts.
 main.rs        dispatch by format; TTY → TUI, pipe → text dump
 format.rs      single classification registry (one source of truth)
 dir.rs         directory browser (list + live preview), opens files via main
+search.rs      recursive/streaming/content-aware search engine (ignore + grep)
 markdown.rs    parse → logical lines + TOC + links; width-aware wrap/layout
 tui.rs         markdown TUI (scroll / TOC / search / links)
 text.rs        source/plain-text TUI (highlight, no wrap, pan + search)

@@ -41,6 +41,10 @@ struct Entry {
 enum Mode {
     Browse,
     Filter,
+    /// Recursive, streaming, content-aware search (ADR 0007). A DISTINCT mode from
+    /// the local `/` filter (D1): its own key (`S`), its own text buffer, its own
+    /// background tree walk. Present only while `App.search` is `Some`.
+    Search,
 }
 
 /// Which trailing metadata column the entry list draws (ADR 0005, D2). The
@@ -119,6 +123,62 @@ struct Slide {
     dir: SlideDir,
     old: Buffer,
     frames: u32,
+}
+
+/// The live state of the recursive-search mode (ADR 0007). Present on `App.search`
+/// (as `Some`) only while `Mode::Search` is active — `None` in browse/filter, so
+/// the search paths are strictly additive and cost nothing off-mode. Distinct from
+/// the browse filter in every field (own text, own selection, own walk): search and
+/// the local `/` filter are two operations, not a hybrid (D1).
+struct SearchState {
+    /// The raw query text being typed (shown as `⌕ …`). Parsed fresh on every edit
+    /// by [`App::restart_search`] into a `query::Query`. Its OWN buffer, never the
+    /// browse `filter`, so the local filter path (D1) is byte-for-byte untouched.
+    query: String,
+    /// The running background tree walk, or `None` when the query is empty — a
+    /// blank query must not walk the whole tree (D3 / [`query::Query::is_empty`]).
+    /// Dropping it cancels the walk, so replacing it (a query edit) or clearing it
+    /// (leaving search) stops the superseded walk promptly (D3).
+    engine: Option<crate::search::Search>,
+    /// Hits received so far, in arrival order — the walk streams them live and this
+    /// grows as [`App::pump_search`] drains the channel.
+    results: Vec<crate::search::Hit>,
+    /// Selection + scroll state for the results list: the search analogue of the
+    /// browse `App.state`, so [`App::cur_sel`] can source the hit under the cursor
+    /// and render it through the shared preview pipeline (D5).
+    state: ListState,
+    /// Whether the walk has sent its terminal `Msg::Done` (streaming finished).
+    /// Drives the `searching…` vs `N results` status text and the fast-poll gate.
+    done: bool,
+    /// Whether the walk stopped at the result cap. Surfaced in the status line —
+    /// never a silent truncation (D3).
+    capped: bool,
+}
+
+impl SearchState {
+    /// A fresh search: empty query, no walk yet (started on the first keystroke).
+    fn new() -> Self {
+        SearchState {
+            query: String::new(),
+            engine: None,
+            results: Vec::new(),
+            state: ListState::default(),
+            done: false,
+            capped: false,
+        }
+    }
+
+    /// The hit under the cursor, if any.
+    fn selected(&self) -> Option<&crate::search::Hit> {
+        self.state.selected().and_then(|i| self.results.get(i))
+    }
+
+    /// Move the results selection by `delta`, clamped to the result set (the search
+    /// analogue of [`App::move_sel`]); a no-op when there are no results.
+    fn move_sel(&mut self, delta: isize) {
+        let next = search_sel(self.state.selected(), delta, self.results.len());
+        self.state.select(next);
+    }
 }
 
 struct App {
@@ -217,6 +277,15 @@ struct App {
     // so the next render is the settled state. Only the current pane slides — in
     // Miller the parent/preview panes stay static (D3).
     slide: Option<Slide>,
+    // The recursive-search mode's live state (ADR 0007), or `None` in browse/filter.
+    // `Some` exactly while `Mode::Search` is active; every search path is guarded on
+    // it, so browse/filter/typeahead are strictly unaffected (D1).
+    search: Option<SearchState>,
+    // The results-list pane rect, recorded every `render_search` (ADR 0007 §9). The
+    // click-hit-test surface for search rows — the search analogue of `list_area` —
+    // read on a left-click by `row_to_index` against the search results. Inert
+    // outside search mode (no search mouse events are routed there).
+    search_area: Rect,
 }
 
 enum Action {
@@ -237,6 +306,8 @@ enum CharAction {
     Open,
     Parent,
     Filter,
+    /// Enter recursive-search mode (ADR 0007). Bound to `S`.
+    Search,
     ToggleHidden,
     ToggleLayout,
     ToggleMeta,
@@ -257,6 +328,9 @@ fn browse_char(c: char) -> Option<CharAction> {
         'l' => CharAction::Open,
         'h' => CharAction::Parent,
         '/' => CharAction::Filter,
+        // Enter recursive search (ADR 0007). Capital `S`; binding it here also
+        // keeps typeahead correct — a bound char never starts a name search.
+        'S' => CharAction::Search,
         '.' => CharAction::ToggleHidden,
         // Cycle the pane layout (auto→miller→double→auto). Binding `M` here also
         // keeps typeahead correct: a bound char never starts a name search.
@@ -346,6 +420,8 @@ pub fn run(
         fade: None,
         fade_frames: 0,
         slide: None,
+        search: None,
+        search_area: Rect::default(),
     };
     app.load();
 
@@ -371,7 +447,54 @@ pub fn run(
     }
 }
 
+/// An owned snapshot of the entry currently under the cursor, from whichever
+/// surface is active: the browsed listing, or (in search mode) the selected hit.
+/// [`App::build_preview`] and the preview-change check source from here so a
+/// search hit renders through the exact same preview pipeline as a browsed file
+/// (ADR 0007 D5) — the whole point of the feature. Owned (not a borrow) so the
+/// caller is free to mutate `self` while building the preview.
+struct Sel {
+    name: String,
+    path: PathBuf,
+    kind: Format,
+    size: u64,
+    modified: Option<SystemTime>,
+}
+
 impl App {
+    /// The entry under the cursor as an owned [`Sel`], from the active surface: in
+    /// search mode the selected hit (its file name derived from the hit path, or
+    /// its `rel` when the path has no final component), otherwise the browsed entry
+    /// (ADR 0007 D5). `None` when nothing is selected (empty listing, or a search
+    /// with no results yet). Browse/filter behave exactly as `selected()` — this is
+    /// purely additive; `selected()` itself is unchanged.
+    fn cur_sel(&self) -> Option<Sel> {
+        if let Some(search) = self.search.as_ref() {
+            let hit = search.selected()?;
+            let name = hit
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| hit.rel.clone());
+            Some(Sel {
+                name,
+                path: hit.path.clone(),
+                kind: hit.kind,
+                size: hit.size,
+                modified: hit.modified,
+            })
+        } else {
+            let e = self.selected()?;
+            Some(Sel {
+                name: e.name.clone(),
+                path: e.path.clone(),
+                kind: e.kind,
+                size: e.size,
+                modified: e.modified,
+            })
+        }
+    }
+
     /// Read the current directory into `all`, then apply the filter.
     fn load(&mut self) {
         self.all = read_entries(&self.cwd);
@@ -532,11 +655,110 @@ impl App {
         }
     }
 
+    /// Leave search mode and return to the browse listing (ADR 0007 §3). Dropping
+    /// the `SearchState` cancels any in-flight walk (`Search`'s `Drop` → `cancel`).
+    /// `preview_for = None` forces the browse selection's preview to rebuild, since
+    /// `cur_sel` now sources the browsed entry again.
+    fn exit_search(&mut self) {
+        self.search = None;
+        self.mode = Mode::Browse;
+        self.status = None;
+        self.preview_for = None;
+    }
+
+    /// Restart the background walk after a query edit (ADR 0007 §4). Parses the raw
+    /// text: a blank query drops the engine and shows the empty prompt state (D3 —
+    /// never walk the whole tree for nothing); otherwise a fresh walk is started
+    /// from `cwd`. Assigning the new engine (or `None`) drops the OLD one first,
+    /// which cancels the superseded walk (D3) before the next begins. Either way the
+    /// accumulated results/selection/flags are cleared to the fresh-query state.
+    fn restart_search(&mut self) {
+        // Read the disjoint fields the walk needs before taking `&mut self.search`.
+        let cwd = self.cwd.clone();
+        let show_hidden = self.show_hidden;
+        let Some(search) = self.search.as_mut() else {
+            return;
+        };
+        let q = query::parse(&search.query);
+        search.results.clear();
+        search.state.select(None);
+        search.done = false;
+        search.capped = false;
+        search.engine = if q.is_empty() {
+            None
+        } else {
+            Some(crate::search::start(cwd, q, show_hidden))
+        };
+    }
+
+    /// Drain the search channel into `results`, mirroring [`App::pump_raster`] (ADR
+    /// 0007 §5). Appends every streamed `Hit`; on `Done` records completion + the
+    /// cap flag and drops the engine (the walk is over). Selects the first row the
+    /// moment the first hit arrives. Returns whether anything changed (→ redraw).
+    fn pump_search(&mut self) -> bool {
+        let Some(search) = self.search.as_mut() else {
+            return false;
+        };
+        let Some(engine) = search.engine.as_ref() else {
+            return false;
+        };
+        let msgs = engine.drain();
+        if msgs.is_empty() {
+            return false;
+        }
+        let was_empty = search.results.is_empty();
+        for msg in msgs {
+            match msg {
+                crate::search::Msg::Hit(h) => search.results.push(h),
+                crate::search::Msg::Done { capped } => {
+                    search.done = true;
+                    search.capped = capped;
+                    search.engine = None; // the walk finished; nothing left to drain
+                }
+            }
+        }
+        // Land the cursor on the first hit as soon as results appear, so the preview
+        // pipeline (D5) has something to render immediately.
+        if was_empty && !search.results.is_empty() {
+            search.state.select(Some(0));
+        }
+        true
+    }
+
+    /// Move the results-list selection by `delta` (ADR 0007 §7); a no-op outside
+    /// search mode or with no results.
+    fn search_move(&mut self, delta: isize) {
+        if let Some(search) = self.search.as_mut() {
+            search.move_sel(delta);
+        }
+    }
+
+    /// Activate the selected hit (ADR 0007 §8). A directory hit leaves search and
+    /// navigates into it (the new listing enters from the right, matching keyboard
+    /// `l`); an openable file returns `Action::Open` — `App` state (search included)
+    /// survives the open-and-return round trip (`run`'s outer loop), so quitting the
+    /// viewer lands back in the live results. An unopenable kind just reports it.
+    fn activate_search(&mut self) -> Option<Action> {
+        let sel = self.cur_sel()?;
+        if sel.kind == Format::Directory {
+            self.exit_search();
+            self.enter_dir(sel.path, SlideDir::FromRight);
+            None
+        } else if sel.kind.opens() {
+            Some(Action::Open(sel.path))
+        } else {
+            self.status = Some(format!("no viewer for {}", sel.kind.label()));
+            None
+        }
+    }
+
     fn main_loop(&mut self, term: &mut DefaultTerminal) -> io::Result<Action> {
         let mut dirty = true;
         loop {
-            // Recompute the preview when the selection changed.
-            let cur = self.selected().map(|e| e.path.clone());
+            // Recompute the preview when the selection changed. Sourced from the
+            // mode-aware accessor so a search hit drives the preview too (ADR 0007
+            // D5); in browse/filter `cur_sel` is the browsed entry, unchanged.
+            let cur = self.cur_sel().map(|s| s.path);
             if cur != self.preview_for {
                 self.build_preview();
                 self.preview_for = cur;
@@ -545,6 +767,12 @@ impl App {
             // Service the async rasteriser: install finished posters, retire the
             // in-flight job, and launch the next wanted one.
             if self.pump_raster() {
+                dirty = true;
+            }
+            // Drain the recursive-search stream (ADR 0007 §5): append newly-arrived
+            // hits and notice completion, right beside the raster pump. Inert (an
+            // early `false`) when not searching.
+            if self.pump_search() {
                 dirty = true;
             }
             // Drive the folder fade (ADR 0006 D3). While a fade is live, redraw
@@ -601,6 +829,10 @@ impl App {
             // text, or nothing selected) blocks the full second and does nothing.
             let raster_active = self.raster_pending.is_some() || self.raster_want.is_some();
             let animating = self.preview_animated && matches!(self.pv, Pv::Image);
+            // A search whose walk is still streaming polls fast so hits appear live
+            // (ADR 0007 §6); the same 60 ms tier as the raster. Once the walk sends
+            // `Done` the engine is dropped and this falls back to the idle cadence.
+            let searching = self.search.as_ref().is_some_and(|s| s.engine.is_some());
             // A live fade emits as fast as the per-frame budget allows (~4 ms ⇒
             // ≤250 fps) so the interpolation is smooth up to the display refresh
             // (ADR 0006 D2); the heavier raster/GIF paths keep their 60 ms cadence.
@@ -612,7 +844,7 @@ impl App {
             let fading = self.fade.is_some() || self.slide.is_some();
             let timeout = if fading {
                 Duration::from_millis(4)
-            } else if raster_active || animating {
+            } else if raster_active || animating || searching {
                 Duration::from_millis(60)
             } else {
                 Duration::from_millis(1000)
@@ -640,6 +872,40 @@ impl App {
                     // scrolls the selection. Any mouse event counts as activity →
                     // redraw. When capture is off no mouse events arrive, so this
                     // arm is simply dead.
+                    // Search-mode pointer handling (ADR 0007 §9): the wheel moves the
+                    // results selection; a left-click selects a row, a second click
+                    // on the already-selected row activates it (mirroring the browse
+                    // rule). Guarded to search mode so the browse arm below is
+                    // strictly unchanged.
+                    Event::Mouse(me) if matches!(self.mode, Mode::Search) => match me.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            let (offset, len, cur) = match self.search.as_ref() {
+                                Some(s) => (s.state.offset(), s.results.len(), s.state.selected()),
+                                None => (0, 0, None),
+                            };
+                            if let Some(idx) =
+                                row_to_index(self.search_area, offset, me.row, me.column, len)
+                            {
+                                if cur == Some(idx) {
+                                    if let Some(action) = self.activate_search() {
+                                        return Ok(action);
+                                    }
+                                } else if let Some(s) = self.search.as_mut() {
+                                    s.state.select(Some(idx));
+                                }
+                                dirty = true;
+                            }
+                        }
+                        MouseEventKind::ScrollDown => {
+                            self.search_move(1);
+                            dirty = true;
+                        }
+                        MouseEventKind::ScrollUp => {
+                            self.search_move(-1);
+                            dirty = true;
+                        }
+                        _ => {}
+                    },
                     Event::Mouse(me) => match me.kind {
                         MouseEventKind::Down(MouseButton::Left) => {
                             if me.row == 0 {
@@ -743,6 +1009,36 @@ impl App {
                 KeyCode::Char(c) => {
                     self.filter.push(c);
                     self.refilter();
+                }
+                _ => {}
+            }
+            return None;
+        }
+
+        if let Mode::Search = self.mode {
+            // Recursive search is a text-input surface like the filter; typeahead
+            // never applies (ADR 0007 D1 — its own mode, own key buffer). Input
+            // handling MIRRORS the filter's, but the semantics differ: a keystroke
+            // restarts a background tree walk rather than narrowing the listing.
+            let half = (self.viewport_h / 2).max(1) as isize;
+            match code {
+                KeyCode::Esc => self.exit_search(),
+                KeyCode::Enter | KeyCode::Right => return self.activate_search(),
+                KeyCode::Backspace => {
+                    if let Some(s) = self.search.as_mut() {
+                        s.query.pop();
+                    }
+                    self.restart_search();
+                }
+                KeyCode::Down => self.search_move(1),
+                KeyCode::Up => self.search_move(-1),
+                KeyCode::PageDown => self.search_move(half),
+                KeyCode::PageUp => self.search_move(-half),
+                KeyCode::Char(c) => {
+                    if let Some(s) = self.search.as_mut() {
+                        s.query.push(c);
+                    }
+                    self.restart_search();
                 }
                 _ => {}
             }
@@ -864,6 +1160,13 @@ impl App {
                 self.status = None; // drop any stale "type: …" hint
                 self.refilter();
             }
+            CharAction::Search => {
+                // Enter search with a blank prompt and no walk yet — the first
+                // keystroke starts one (a blank query must not walk; ADR 0007 D3).
+                self.mode = Mode::Search;
+                self.search = Some(SearchState::new());
+                self.status = None; // drop any stale "type: …" hint
+            }
             CharAction::ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
                 self.refilter();
@@ -936,7 +1239,12 @@ impl App {
     /// cache). Returns true if the preview changed and a redraw is due.
     fn pump_raster(&mut self) -> bool {
         let mut dirty = false;
-        let cur = self.selected().map(|e| e.path.clone());
+        // Match finished/queued rasters against the mode-aware selection so image /
+        // PDF / video HITS render in search mode too (ADR 0007 D5): with the browse
+        // `selected()` here a hit's poster would be judged "stale" (its path never
+        // equals the browse cursor) and never install. `cur_sel` equals `selected()`
+        // in browse/filter, so that path is byte-for-byte unchanged.
+        let cur = self.cur_sel().map(|s| s.path);
 
         // 1. Drain completed rasters. Cache every finished STILL (animations are
         //    never cached — see `show_animation`); only touch the pane when the
@@ -1028,13 +1336,15 @@ impl App {
         // A new selection redefines what wants rastering; drop any stale want so
         // fast-scrolling onto a cached/text entry cancels the previous request.
         self.raster_want = None;
-        let Some(e) = self.selected() else { return };
-        // Snapshot what we need so `self` is free to mutate below.
-        let name = e.name.clone();
-        let kind = e.kind;
-        let size = e.size;
-        let modified = e.modified;
-        let path = e.path.clone();
+        // Source the selection from the mode-aware accessor so a search hit renders
+        // through this exact pipeline (ADR 0007 D5); in browse/filter this is the
+        // browsed entry, unchanged. Owned, so `self` is free to mutate below.
+        let Some(sel) = self.cur_sel() else { return };
+        let name = sel.name;
+        let kind = sel.kind;
+        let size = sel.size;
+        let modified = sel.modified;
+        let path = sel.path;
 
         // Caption / header: name, type · size · modified.
         let mut meta = kind.label().to_string();
@@ -1285,6 +1595,13 @@ impl App {
     }
 
     fn render(&mut self, f: &mut Frame) {
+        // Search mode draws its own frame (input line + results | preview + status),
+        // reusing the preview pane verbatim (ADR 0007 D5/§10); the browse layout is
+        // skipped entirely.
+        if matches!(self.mode, Mode::Search) {
+            self.render_search(f);
+            return;
+        }
         let area = f.area();
         let rows = RtLayout::default()
             .constraints([
@@ -1543,7 +1860,7 @@ impl App {
         } else {
             let hidden = if self.show_hidden { "shown" } else { "hidden" };
             format!(
-                " [j/k] move  [Enter] open  [h] up  [/] filter  [.] dot ({hidden})  [t] time/size  [M] layout  [q] quit"
+                " [j/k] move  [Enter] open  [h] up  [/] filter  [S] search  [.] dot ({hidden})  [t] time/size  [M] layout  [q] quit"
             )
         };
         // Filter mode borrows the palette's yellow (`doc`, which is exactly the
@@ -1555,6 +1872,185 @@ impl App {
         };
         f.render_widget(
             Paragraph::new(Line::from(txt)).style(Style::default().fg(color)),
+            area,
+        );
+    }
+
+    /// Render the recursive-search frame (ADR 0007 §10): row 0 an input line, the
+    /// middle a horizontal [results | preview] split, row 2 the status. The frame
+    /// shape mirrors the browse layout for consistency, and the RIGHT pane is the
+    /// browse preview reused verbatim (D5) — it reads `self.preview`/`self.pv`/
+    /// `self.pane`, already populated by `build_preview` via `cur_sel`.
+    fn render_search(&mut self, f: &mut Frame) {
+        let area = f.area();
+        let rows = RtLayout::default()
+            .constraints([
+                Constraint::Length(1), // ⌕ input line
+                Constraint::Min(0),    // results | preview
+                Constraint::Length(1), // status
+            ])
+            .split(area);
+        self.render_search_input(f, rows[0]);
+        // Same 42/58 split as the browse two-column layout, so search reads as the
+        // same system: the results list where the listing is, the preview at right.
+        let cols = RtLayout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+            .split(rows[1]);
+        self.render_results(f, cols[0]);
+        self.render_preview(f, cols[1]);
+        self.render_search_status(f, rows[2]);
+    }
+
+    /// The search input line: `⌕ {query}` in the accent colour with a trailing
+    /// cursor block, themeable via the palette (ADR 0007 §10). Mirrors the filter's
+    /// `/{filter}` line but with search's own glyph and buffer.
+    fn render_search_input(&self, f: &mut Frame, area: Rect) {
+        let accent = theme::palette().accent;
+        let query = self
+            .search
+            .as_ref()
+            .map(|s| s.query.as_str())
+            .unwrap_or("");
+        let line = Line::from(vec![
+            Span::styled(
+                format!(" ⌕ {query}"),
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
+            // Trailing cursor block, accent-tinted (palette only — themeable).
+            Span::styled("█", Style::default().fg(accent)),
+        ]);
+        f.render_widget(Paragraph::new(line), area);
+    }
+
+    /// The results list: a bordered `List` (accent border, the active surface) whose
+    /// rows are drawn SPECIALISED by [`App::search_items`] — relative path + optional
+    /// snippet (ADR 0007 D5). Rendered through the search `ListState` so the scroll
+    /// offset and selection persist across frames. Records `search_area` +
+    /// `viewport_h` for mouse hit-testing and half-page paging (§9/§7).
+    fn render_results(&mut self, f: &mut Frame, area: Rect) {
+        self.search_area = area;
+        self.viewport_h = area.height.saturating_sub(2);
+        let accent = theme::palette().accent;
+        let n = self.search.as_ref().map(|s| s.results.len()).unwrap_or(0);
+        let title = Line::from(Span::styled(
+            format!(" {n} "),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ));
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(accent))
+            .title(title);
+        f.render_widget(block, area);
+        let inner = entry_inner(area);
+        // Build items first (borrows `&self`), then render through the state (borrows
+        // `&mut self.search`) — sequential, so no aliasing.
+        let items = self.search_items(area.width);
+        // The same soft selection tint + accent cursor gutter the browse list uses
+        // (see `entry_list`), so the two surfaces read as one system.
+        let list = List::new(items)
+            .highlight_style(
+                Style::default()
+                    .bg(theme::palette().selection)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▎ ");
+        if let Some(search) = self.search.as_mut() {
+            render_items_into(f.buffer_mut(), inner, list, &mut search.state);
+        }
+    }
+
+    /// Build the result rows as `ListItem`s (ADR 0007 D5). Each row is drawn
+    /// SPECIALISED — the kind glyph (same icon/colour convention as `entry_items`),
+    /// the hit's path RELATIVE to cwd (coloured by `hit.kind.color()`), and for a
+    /// content match a dimmed ` N: text` snippet. The whole line is length-budgeted
+    /// to the inner width so a row never wraps (reusing `truncate`/`snippet_suffix`).
+    fn search_items(&self, width: u16) -> Vec<ListItem<'static>> {
+        let Some(search) = self.search.as_ref() else {
+            return Vec::new();
+        };
+        let dim = theme::palette().dim;
+        // Width reserved before the path: 2 border + 2 selection-cursor gutter, plus
+        // a 2-cell glyph column in the glyphed modes (dropped by `IconMode::None`) —
+        // the same chrome arithmetic as `entry_items`.
+        let chrome_w = match self.icons {
+            IconMode::None => 4,
+            _ => 6,
+        };
+        let inner_w = width.saturating_sub(chrome_w) as usize;
+        search
+            .results
+            .iter()
+            .map(|hit| {
+                let mut spans: Vec<Span> = Vec::with_capacity(3);
+                // Glyph column + name colour, chosen exactly like `entry_items`.
+                let rel_color = match self.icons {
+                    IconMode::Unicode => {
+                        let c = hit.kind.color();
+                        spans.push(Span::styled(
+                            format!("{} ", hit.kind.glyph()),
+                            Style::default().fg(c),
+                        ));
+                        c
+                    }
+                    IconMode::Nerd => {
+                        let ext = hit
+                            .path
+                            .extension()
+                            .map(|x| x.to_string_lossy().to_lowercase())
+                            .unwrap_or_default();
+                        let c = icons::nerd_color(&ext, hit.kind);
+                        spans.push(Span::styled(
+                            format!("{} ", icons::nerd_glyph(&ext, hit.kind)),
+                            Style::default().fg(c),
+                        ));
+                        c
+                    }
+                    IconMode::None => hit.kind.color(),
+                };
+                // The relative path, then the dimmed snippet, each truncated against a
+                // shared width budget so the combined row never exceeds `inner_w`.
+                let rel_shown = truncate(&hit.rel, inner_w);
+                let budget = inner_w.saturating_sub(rel_shown.chars().count());
+                spans.push(Span::styled(rel_shown, Style::default().fg(rel_color)));
+                let suffix = snippet_suffix(hit.snippet.as_ref());
+                if !suffix.is_empty() && budget > 0 {
+                    let suffix_shown = truncate(&suffix, budget);
+                    spans.push(Span::styled(suffix_shown, Style::default().fg(dim)));
+                }
+                ListItem::new(Line::from(spans))
+            })
+            .collect()
+    }
+
+    /// The search status line (ADR 0007 §10), reusing `render_status`'s dim look. An
+    /// empty query shows a syntax prompt; a live walk shows `searching… N found`; a
+    /// finished walk shows `N results` (with ` (capped at 5000)` when capped, or
+    /// `no matches` at zero). Always carries the `[Enter] open  [Esc] back` hint.
+    fn render_search_status(&self, f: &mut Frame, area: Rect) {
+        let dim = theme::palette().dim;
+        let txt = match self.search.as_ref() {
+            None => String::new(),
+            Some(s) if query::parse(&s.query).is_empty() => {
+                " type to search  ·  kind: ext: size: content: …    [Esc] back".to_string()
+            }
+            Some(s) => {
+                let n = s.results.len();
+                let state = if !s.done {
+                    format!("searching… {n} found")
+                } else if n == 0 {
+                    "no matches".to_string()
+                } else if s.capped {
+                    format!("{n} results (capped at 5000)")
+                } else {
+                    format!("{n} results")
+                };
+                format!(" {state}    [Enter] open  [Esc] back")
+            }
+        };
+        f.render_widget(
+            Paragraph::new(Line::from(txt)).style(Style::default().fg(dim)),
             area,
         );
     }
@@ -2209,6 +2705,29 @@ fn row_to_index(
     (idx < view_len).then_some(idx)
 }
 
+/// Clamp a search-results selection move (ADR 0007 §7): from the current selection,
+/// a signed `delta`, and the result count `len`, return the new selection. `None`
+/// when there are no results; otherwise the moved index clamped into `0..len`
+/// (mirrors [`App::move_sel`]). Pure — unit-tested without a walk.
+fn search_sel(cur: Option<usize>, delta: isize, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    let cur = cur.unwrap_or(0) as isize;
+    Some((cur + delta).clamp(0, len as isize - 1) as usize)
+}
+
+/// The dimmed trailing snippet segment for a content hit's result row (ADR 0007 D5):
+/// ` N: text` (a leading gap separating it from the path), or empty when the hit
+/// carries no snippet (a pure name/metadata match). Pure — unit-tested without a
+/// render.
+fn snippet_suffix(snippet: Option<&(u64, String)>) -> String {
+    match snippet {
+        Some((lnum, text)) => format!("  {lnum}: {text}"),
+        None => String::new(),
+    }
+}
+
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
@@ -2375,6 +2894,36 @@ mod tests {
         assert_eq!(slide_offsets(SlideDir::FromLeft, 1.0, 40), (40, 0));
         // Midpoint mirrored.
         assert_eq!(slide_offsets(SlideDir::FromLeft, 0.5, 40), (20, -20));
+    }
+
+    #[test]
+    fn search_sel_clamps_and_handles_empty() {
+        // No results → always None, whatever the delta.
+        assert_eq!(search_sel(None, 1, 0), None);
+        assert_eq!(search_sel(Some(0), -1, 0), None);
+        // Fresh (no selection yet) → treated as 0, then moved.
+        assert_eq!(search_sel(None, 0, 5), Some(0));
+        assert_eq!(search_sel(None, 1, 5), Some(1));
+        // Normal moves.
+        assert_eq!(search_sel(Some(2), 1, 5), Some(3));
+        assert_eq!(search_sel(Some(2), -1, 5), Some(1));
+        // Clamped at both ends (no wrap).
+        assert_eq!(search_sel(Some(0), -1, 5), Some(0));
+        assert_eq!(search_sel(Some(4), 1, 5), Some(4));
+        // Half-page jumps clamp too.
+        assert_eq!(search_sel(Some(4), 10, 5), Some(4));
+        assert_eq!(search_sel(Some(1), -10, 5), Some(0));
+    }
+
+    #[test]
+    fn snippet_suffix_formats_or_empties() {
+        // A content hit → " N: text" with the leading gap.
+        assert_eq!(
+            snippet_suffix(Some(&(42, "let x = 1;".to_string()))),
+            "  42: let x = 1;"
+        );
+        // A pure name/metadata hit → empty (no snippet segment drawn).
+        assert_eq!(snippet_suffix(None), "");
     }
 
     #[test]
