@@ -6,7 +6,7 @@
 use crate::config::IconMode;
 use crate::format::Format;
 use crate::media::ImagePane;
-use crate::{highlight, query, theme, typeahead};
+use crate::{highlight, icons, query, theme, typeahead};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use image::DynamicImage;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -43,10 +43,8 @@ enum Pv {
 
 struct App {
     cwd: PathBuf,
-    // The resolved icon mode (ADR 0003, D5). Stored now so the browser can key
-    // its glyph column off it; wired but not yet consumed — glyph rendering
-    // changes land in a later phase.
-    #[allow(dead_code)]
+    // The resolved icon mode (ADR 0003, D5). The browser keys its glyph column
+    // and per-entry tint off it in `render_list`.
     icons: IconMode,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
@@ -883,10 +881,19 @@ impl App {
 
     fn render_list(&mut self, f: &mut Frame, area: Rect) {
         self.viewport_h = area.height.saturating_sub(2);
-        let inner_w = area.width.saturating_sub(4) as usize; // borders + glyph
+        // Width reserved before the name: 2 for the block borders, plus a 2-cell
+        // glyph column ("X ") in the glyphed modes. `IconMode::None` drops the
+        // glyph, so the name reclaims those two cells (D5). The size column and
+        // layout are untouched — a later phase owns borders/selection.
+        let chrome_w = match self.icons {
+            IconMode::None => 2, // borders only
+            _ => 4,              // borders + glyph cell
+        };
+        let inner_w = area.width.saturating_sub(chrome_w) as usize;
         let size_w = 8usize;
         let name_w = inner_w.saturating_sub(size_w + 1).max(4);
 
+        let icons = self.icons;
         let items: Vec<ListItem> = self
             .view
             .iter()
@@ -898,20 +905,49 @@ impl App {
                 } else {
                     crate::util::human_size(e.size)
                 };
-                ListItem::new(Line::from(vec![
-                    Span::styled(
-                        format!("{} ", e.kind.glyph()),
-                        Style::default().fg(e.kind.color()),
-                    ),
-                    Span::styled(
-                        format!("{name:<name_w$}"),
-                        Style::default().fg(e.kind.color()),
-                    ),
-                    Span::styled(
-                        format!(" {size:>size_w$}"),
-                        Style::default().fg(theme::palette().dim),
-                    ),
-                ]))
+
+                // Icons layer above `Format` and are selected by the mode (D5):
+                //   Unicode → the built-in geometric glyph + Format colour (the
+                //             default; byte-for-byte the pre-icons rendering).
+                //   Nerd    → per-extension Nerd glyph + per-extension tint, with
+                //             the SAME tint on the filename so the whole row keys
+                //             to language identity.
+                //   None    → no glyph column at all; name uses the Format colour.
+                let mut spans: Vec<Span> = Vec::with_capacity(3);
+                let name_color = match icons {
+                    IconMode::Unicode => {
+                        let c = e.kind.color();
+                        spans.push(Span::styled(
+                            format!("{} ", e.kind.glyph()),
+                            Style::default().fg(c),
+                        ));
+                        c
+                    }
+                    IconMode::Nerd => {
+                        // Same lowercased-extension convention as `classify_path`.
+                        let ext = e
+                            .path
+                            .extension()
+                            .map(|x| x.to_string_lossy().to_lowercase())
+                            .unwrap_or_default();
+                        let c = icons::nerd_color(&ext, e.kind);
+                        spans.push(Span::styled(
+                            format!("{} ", icons::nerd_glyph(&ext, e.kind)),
+                            Style::default().fg(c),
+                        ));
+                        c
+                    }
+                    IconMode::None => e.kind.color(),
+                };
+                spans.push(Span::styled(
+                    format!("{name:<name_w$}"),
+                    Style::default().fg(name_color),
+                ));
+                spans.push(Span::styled(
+                    format!(" {size:>size_w$}"),
+                    Style::default().fg(theme::palette().dim),
+                ));
+                ListItem::new(Line::from(spans))
             })
             .collect();
 

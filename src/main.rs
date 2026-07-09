@@ -16,6 +16,7 @@ mod docx;
 mod format;
 mod hex;
 mod highlight;
+mod icons;
 mod imgview;
 mod keynote;
 mod markdown;
