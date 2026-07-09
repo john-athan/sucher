@@ -8,6 +8,7 @@
 // single frame (fast input-seek). There is NO audio.
 
 use crate::media::ImagePane;
+use crate::util;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use image::{DynamicImage, RgbImage};
 use ratatui::layout::{Constraint, Layout};
@@ -31,21 +32,21 @@ struct Probe {
 }
 
 fn ffprobe(path: &str) -> Probe {
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(path)
-        .output();
+    let mut cmd = Command::new("ffprobe");
+    cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,r_frame_rate",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+    ])
+    .arg(util::cmd_path_arg(path));
+    let out = util::run_with_timeout(cmd, util::SUBPROCESS_TIMEOUT);
     let mut p = Probe {
         w: 1280,
         h: 720,
@@ -81,16 +82,15 @@ fn ffprobe(path: &str) -> Probe {
 
 /// Single-frame extract for paused scrubbing (fast input seek).
 fn frame_at(path: &str, t: f64, w: u32, h: u32) -> Result<DynamicImage, String> {
-    let out = Command::new("ffmpeg")
-        .args(["-nostdin", "-ss"])
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args(["-nostdin", "-ss"])
         .arg(format!("{t:.3}"))
         .arg("-i")
-        .arg(path)
+        .arg(util::cmd_path_arg(path))
         .args(["-frames:v", "1", "-vf"])
         .arg(format!("scale={w}:{h}"))
-        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])
-        .stderr(Stdio::null())
-        .output()
+        .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+    let out = util::run_with_timeout(cmd, util::SUBPROCESS_TIMEOUT)
         .map_err(|e| format!("ffmpeg: {e}"))?;
     if !out.status.success() || out.stdout.len() < (w * h * 3) as usize {
         return Err("ffmpeg frame extract failed".into());
@@ -190,18 +190,17 @@ pub fn run(title: String, path: String) -> std::io::Result<()> {
 
 /// Non-interactive: print metadata via ffprobe.
 pub fn dump(path: &str) -> String {
-    match Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration,size:stream=codec_type,codec_name,width,height,r_frame_rate",
-            "-of",
-            "default=noprint_wrappers=1",
-        ])
-        .arg(path)
-        .output()
-    {
+    let mut cmd = Command::new("ffprobe");
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration,size:stream=codec_type,codec_name,width,height,r_frame_rate",
+        "-of",
+        "default=noprint_wrappers=1",
+    ])
+    .arg(util::cmd_path_arg(path));
+    match util::run_with_timeout(cmd, util::SUBPROCESS_TIMEOUT) {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         Ok(o) => format!("sucher: ffprobe: {}", String::from_utf8_lossy(&o.stderr)),
         Err(e) => format!("sucher: ffprobe: {e}"),
@@ -230,7 +229,7 @@ impl VideoApp {
             .args(["-nostdin", "-ss"])
             .arg(format!("{:.3}", self.pos))
             .arg("-i")
-            .arg(&self.path)
+            .arg(util::cmd_path_arg(&self.path))
             .args(["-an", "-vf"])
             .arg(format!("scale={}:{},fps={fps}", self.w, self.h))
             .args(["-f", "rawvideo", "-pix_fmt", "rgb24", "-"])

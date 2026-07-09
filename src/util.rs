@@ -3,9 +3,10 @@
 // implementation rather than per-module copies that could drift.
 
 use quick_xml::events::{BytesRef, BytesText};
-use std::io::Read;
+use std::io::{self, ErrorKind, Read};
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Hard cap on the bytes any decoder reads from a single untrusted source
 /// (ADR 0009). 32 MiB is generous for a real document — far larger than any
@@ -64,6 +65,103 @@ pub fn image_limits() -> image::Limits {
     limits.max_image_width = Some(MAX_IMAGE_DIM);
     limits.max_image_height = Some(MAX_IMAGE_DIM);
     limits
+}
+
+/// Wall-clock ceiling for a *one-shot* poppler/ffmpeg subprocess (ADR 0009 item
+/// 4). Generous for a big PDF page render or a media probe, yet bounds a hang: a
+/// malicious file that wedges the tool would otherwise occupy the poster
+/// worker's single in-flight raster slot forever, starving every later preview
+/// (permanent spinner) and leaking the child. Not applied to the video player's
+/// long-lived streaming ffmpeg, which is meant to run for the whole playback.
+pub const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Run `cmd` to completion but no longer than `timeout`, capturing stdout and
+/// stderr into an [`Output`] (ADR 0009 item 4). On timeout the child is killed
+/// and reaped and an [`ErrorKind::TimedOut`] error is returned; callers map that
+/// to the same graceful "no preview"/degraded path as any other spawn failure.
+///
+/// Deadlock avoidance: stdout and stderr are each drained on their own thread
+/// *while* the child runs, so a tool that emits more than a pipe buffer (~64 KiB)
+/// — `pdftotext -` dumping a large document, or ffmpeg writing a full rawvideo
+/// frame to stdout — cannot wedge itself by blocking on a full pipe that we only
+/// read after `wait`. We poll `try_wait` on a short sleep instead of blocking in
+/// `wait`, so the deadline is enforced even for a child that never exits; after a
+/// kill the pipes reach EOF and the reader threads join cleanly.
+pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> io::Result<Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn()?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let out_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stdout {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut s) = stderr {
+            let _ = s.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    // The kill EOFs the pipes; join so the reader threads finish
+                    // rather than leak before we report the timeout.
+                    let _ = out_h.join();
+                    let _ = err_h.join();
+                    return Err(io::Error::new(ErrorKind::TimedOut, "subprocess timed out"));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+
+    let stdout = out_h.join().unwrap_or_default();
+    let stderr = err_h.join().unwrap_or_default();
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+/// Make `path` safe to pass as a positional argument to a subprocess tool
+/// (poppler/ffmpeg) that would parse a leading `-` as an option (ADR 0009 / S4).
+/// An absolute path (starting `/`) is returned unchanged; anything else is
+/// prefixed with `./` so it can never begin with `-` and be misread as an option
+/// — e.g. `sucher -x.pdf` yields `./-x.pdf`. A path already starting with `./` is
+/// left as-is to avoid a redundant `././` (still correct, just tidier). Not shell
+/// injection (no shell is used) — this guards direct invocation and globs.
+pub fn cmd_path_arg(path: &str) -> String {
+    if path.starts_with('/') || path.starts_with("./") {
+        path.to_string()
+    } else {
+        format!("./{path}")
+    }
+}
+
+/// Whether `url` (a link target from an *untrusted* document) is one we are
+/// willing to hand to the OS opener (ADR 0009 / S5). Accepts only `http://`,
+/// `https://`, and `mailto:` (scheme matched case-insensitively) and rejects any
+/// `-`-leading target; a `file://`, `javascript:`, or custom-scheme link is
+/// refused so `open`/`xdg-open` never acts on it.
+pub fn is_safe_url(url: &str) -> bool {
+    if url.starts_with('-') {
+        return false;
+    }
+    let lower = url.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
 }
 
 /// Extract embedded raster images living under `dir_prefix` (e.g. `word/media/`
@@ -283,6 +381,52 @@ mod tests {
             read_to_string_capped(bomb, max).is_err(),
             "a source larger than the cap must be rejected, not truncated"
         );
+    }
+
+    #[test]
+    fn cmd_path_arg_guards_leading_dash() {
+        // Absolute paths pass through untouched.
+        assert_eq!(cmd_path_arg("/abs/x.pdf"), "/abs/x.pdf");
+        // A relative path that would parse as an option gets a `./` prefix.
+        assert_eq!(cmd_path_arg("-x.pdf"), "./-x.pdf");
+        // An ordinary relative path is anchored too.
+        assert_eq!(cmd_path_arg("sub/f.pdf"), "./sub/f.pdf");
+        // An already-anchored path is left as-is (no redundant `././`).
+        assert_eq!(cmd_path_arg("./already"), "./already");
+        // A bare `-` cannot slip through as an option.
+        assert_eq!(cmd_path_arg("-"), "./-");
+    }
+
+    #[test]
+    fn is_safe_url_allow_list() {
+        assert!(is_safe_url("http://example.com"));
+        assert!(is_safe_url("https://example.com/a?b=c"));
+        assert!(is_safe_url("mailto:a@b.com"));
+        // Scheme match is case-insensitive.
+        assert!(is_safe_url("HTTPS://Example.com"));
+        // Everything else is refused.
+        assert!(!is_safe_url("file:///etc/passwd"));
+        assert!(!is_safe_url("javascript:alert(1)"));
+        assert!(!is_safe_url("custom:whatever"));
+        assert!(!is_safe_url("-x"));
+        assert!(!is_safe_url(""));
+    }
+
+    #[test]
+    fn run_with_timeout_captures_output_of_fast_command() {
+        let mut cmd = Command::new("printf");
+        cmd.arg("hello");
+        let out = run_with_timeout(cmd, Duration::from_secs(5)).unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"hello");
+    }
+
+    #[test]
+    fn run_with_timeout_kills_a_hang() {
+        let mut cmd = Command::new("sleep");
+        cmd.arg("30");
+        let err = run_with_timeout(cmd, Duration::from_millis(100)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::TimedOut);
     }
 
     #[test]

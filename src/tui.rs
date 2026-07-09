@@ -579,6 +579,12 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn open_url(url: &str) {
+    // The link target comes from an untrusted document; only hand web/mail URLs
+    // to the OS opener (ADR 0009 / S5). A `file://`, custom-scheme, or `-`-leading
+    // target is silently ignored rather than spawned.
+    if !crate::util::is_safe_url(url) {
+        return;
+    }
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(target_os = "linux")]

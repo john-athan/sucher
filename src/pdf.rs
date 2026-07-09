@@ -3,6 +3,7 @@
 // keyboard. Falls back to `pdftotext` for the non-interactive dump.
 
 use crate::media::ImagePane;
+use crate::util;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Style};
@@ -28,7 +29,9 @@ fn target_px_width() -> u32 {
 }
 
 fn page_count(path: &str) -> usize {
-    let out = Command::new("pdfinfo").arg(path).output();
+    let mut cmd = Command::new("pdfinfo");
+    cmd.arg("--").arg(util::cmd_path_arg(path));
+    let out = util::run_with_timeout(cmd, util::SUBPROCESS_TIMEOUT);
     if let Ok(o) = out {
         let txt = String::from_utf8_lossy(&o.stdout);
         for line in txt.lines() {
@@ -48,19 +51,20 @@ fn render_page(path: &str, page: usize, target_w: u32) -> Result<image::DynamicI
     // pdftocairo (cairo backend) over pdftoppm (splash) — splash renders some
     // PDFs (e.g. certain reportlab output) as blank pages; cairo is robust.
     // Render straight to the display width instead of 150dpi + downscale.
-    let status = Command::new("pdftocairo")
-        .args(["-png", "-scale-to-x"])
+    let mut cmd = Command::new("pdftocairo");
+    cmd.args(["-png", "-scale-to-x"])
         .arg(target_w.to_string())
         .args(["-scale-to-y", "-1", "-f"])
         .arg((page + 1).to_string())
         .arg("-l")
         .arg((page + 1).to_string())
         .arg("-singlefile")
-        .arg(path)
-        .arg(&prefix)
-        .status()
+        .arg("--")
+        .arg(util::cmd_path_arg(path))
+        .arg(&prefix);
+    let output = util::run_with_timeout(cmd, util::SUBPROCESS_TIMEOUT)
         .map_err(|e| format!("pdftocairo: {e}"))?;
-    if !status.success() {
+    if !output.status.success() {
         return Err("pdftocairo failed".into());
     }
     let png = prefix.with_extension("png");
@@ -112,7 +116,9 @@ pub fn run(title: String, path: String) -> io::Result<()> {
 
 /// Non-interactive: extract text.
 pub fn dump(path: &str) -> String {
-    match Command::new("pdftotext").arg(path).arg("-").output() {
+    let mut cmd = Command::new("pdftotext");
+    cmd.arg("--").arg(util::cmd_path_arg(path)).arg("-");
+    match util::run_with_timeout(cmd, util::SUBPROCESS_TIMEOUT) {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         Ok(o) => format!("sucher: pdftotext: {}", String::from_utf8_lossy(&o.stderr)),
         Err(e) => format!("sucher: pdftotext: {e}"),
