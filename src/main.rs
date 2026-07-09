@@ -14,6 +14,7 @@ mod config;
 mod dir;
 mod docx;
 mod format;
+mod git;
 mod hex;
 mod highlight;
 mod icons;
@@ -48,15 +49,17 @@ fn main() -> ExitCode {
     // `config::load`). Both flags take the following argument.
     let mut cli_theme: Option<String> = None;
     let mut cli_icons: Option<String> = None;
+    let mut cli_layout: Option<String> = None;
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--plain" | "-p" => plain_flag = true,
             "--theme" => cli_theme = args.next(),
             "--icons" => cli_icons = args.next(),
+            "--layout" => cli_layout = args.next(),
             "-h" | "--help" => {
                 eprintln!(
-                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [file|dir]"
+                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [file|dir]"
                 );
                 return ExitCode::SUCCESS;
             }
@@ -67,7 +70,7 @@ fn main() -> ExitCode {
     // Resolve the palette (flag > env > file > default) and install it before
     // any viewer draws. Auto light/dark detection runs here, before the
     // alternate screen. `icons` threads through to the browser for a later phase.
-    let config = config::load(cli_theme, cli_icons);
+    let config = config::load(cli_theme, cli_icons, cli_layout);
     theme::init(config.palette);
 
     // No argument browses the current directory.
@@ -80,7 +83,7 @@ fn main() -> ExitCode {
         // Directories open the file browser (or a plain listing when piped).
         Format::Directory => {
             if interactive {
-                if let Err(e) = dir::run(path, config.icons) {
+                if let Err(e) = dir::run(path, config.icons, config.layout) {
                     eprintln!("sucher: {e}");
                     return ExitCode::FAILURE;
                 }

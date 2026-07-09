@@ -3,13 +3,16 @@
 // listing for folders, head of the file for text, dimensions for images,
 // metadata otherwise). Enter opens a file in its viewer and returns here.
 
-use crate::config::IconMode;
+use crate::config::{IconMode, Layout};
 use crate::format::Format;
+use crate::git::GitStatus;
 use crate::media::ImagePane;
 use crate::{highlight, icons, query, theme, typeahead};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use image::DynamicImage;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+// The ratatui layout builder is aliased to `RtLayout` so `Layout` can name the
+// browser's own pane-layout mode (auto/miller/double) from `config`.
+use ratatui::layout::{Constraint, Direction, Layout as RtLayout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph};
@@ -44,8 +47,13 @@ enum Pv {
 struct App {
     cwd: PathBuf,
     // The resolved icon mode (ADR 0003, D5). The browser keys its glyph column
-    // and per-entry tint off it in `render_list`.
+    // and per-entry tint off it in `render_entry_list`.
     icons: IconMode,
+    // The effective pane layout (ADR 0004, D1). Starts at the config value; the
+    // `M` key cycles it at runtime. `render` reduces it to 2 or 3 columns via
+    // `effective_columns`, collapsing Miller to double when the frame is too
+    // narrow or there is no parent.
+    layout: Layout,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
     state: ListState,
@@ -93,6 +101,7 @@ enum CharAction {
     Parent,
     Filter,
     ToggleHidden,
+    ToggleLayout,
     Quit,
 }
 
@@ -111,12 +120,15 @@ fn browse_char(c: char) -> Option<CharAction> {
         'h' => CharAction::Parent,
         '/' => CharAction::Filter,
         '.' => CharAction::ToggleHidden,
+        // Cycle the pane layout (auto→miller→double→auto). Binding `M` here also
+        // keeps typeahead correct: a bound char never starts a name search.
+        'M' => CharAction::ToggleLayout,
         'q' => CharAction::Quit,
         _ => return None,
     })
 }
 
-pub fn run(start: String, icons: IconMode) -> io::Result<()> {
+pub fn run(start: String, icons: IconMode, layout: Layout) -> io::Result<()> {
     let cwd = fs::canonicalize(&start).unwrap_or_else(|_| PathBuf::from(&start));
     // Probe the graphics protocol once, before any alternate screen. If the
     // terminal can't do pixels, previews fall back to text/metadata.
@@ -125,6 +137,7 @@ pub fn run(start: String, icons: IconMode) -> io::Result<()> {
     let mut app = App {
         cwd,
         icons,
+        layout,
         all: Vec::new(),
         view: Vec::new(),
         state: ListState::default(),
@@ -166,36 +179,7 @@ pub fn run(start: String, icons: IconMode) -> io::Result<()> {
 impl App {
     /// Read the current directory into `all`, then apply the filter.
     fn load(&mut self) {
-        self.all.clear();
-        if let Ok(rd) = fs::read_dir(&self.cwd) {
-            for ent in rd.flatten() {
-                let name = ent.file_name().to_string_lossy().into_owned();
-                let path = ent.path();
-                let meta = ent.metadata().ok();
-                let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                // Classify by extension only — no per-entry file read, keeping
-                // directory loading content-free and fast.
-                let ext = path
-                    .extension()
-                    .map(|e| e.to_string_lossy().to_lowercase())
-                    .unwrap_or_default();
-                let kind = crate::format::classify(&ext, is_dir, None);
-                self.all.push(Entry {
-                    name,
-                    path,
-                    kind,
-                    size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
-                    modified: meta.and_then(|m| m.modified().ok()),
-                });
-            }
-        }
-        // Directories first, then case-insensitive by name.
-        self.all.sort_by(|a, b| {
-            let ad = a.kind == Format::Directory;
-            let bd = b.kind == Format::Directory;
-            bd.cmp(&ad)
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        self.all = read_entries(&self.cwd);
         self.refilter();
     }
 
@@ -464,6 +448,7 @@ impl App {
                 self.show_hidden = !self.show_hidden;
                 self.refilter();
             }
+            CharAction::ToggleLayout => self.layout = self.layout.cycle(),
             CharAction::Quit => return Some(Action::Quit),
         }
         None
@@ -843,7 +828,7 @@ impl App {
 
     fn render(&mut self, f: &mut Frame) {
         let area = f.area();
-        let rows = Layout::default()
+        let rows = RtLayout::default()
             .constraints([
                 Constraint::Length(1), // breadcrumb
                 Constraint::Min(0),    // body
@@ -853,14 +838,96 @@ impl App {
 
         self.render_crumb(f, rows[0]);
 
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-            .split(rows[1]);
-        self.render_list(f, cols[0]);
-        self.render_preview(f, cols[1]);
+        // Reduce the layout mode to a concrete column count for this frame, then
+        // compose. In Filter mode the current pane's border shifts to the filter
+        // yellow (as before); the parent pane is always inactive.
+        let has_parent = self.cwd.parent().is_some();
+        let filter = matches!(self.mode, Mode::Filter);
+        if effective_columns(self.layout, area.width, has_parent) == 3 {
+            // Miller: parent | current | preview  (~[20%, 34%, 46%]).
+            let cols = RtLayout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(20),
+                    Constraint::Percentage(34),
+                    Constraint::Percentage(46),
+                ])
+                .split(rows[1]);
+            self.render_parent(f, cols[0]);
+            // `viewport_h` drives half-page paging and must track the CURRENT
+            // pane — the middle column here.
+            self.viewport_h = cols[1].height.saturating_sub(2);
+            // Build the view from direct fields (not a `&self` helper) so the
+            // shared borrows of `all`/`view` stay disjoint from `&mut state`.
+            let view = EntryListView {
+                entries: &self.all,
+                order: &self.view,
+                selected: self.state.selected(),
+                title: format!(" {} ", self.view.len()),
+                git: None, // dormant until the git phase (D1/D2).
+                show_size: true,
+            };
+            render_entry_list(f, cols[1], &view, &mut self.state, true, filter, self.icons);
+            self.render_preview(f, cols[2]);
+        } else {
+            // Double: current | preview — the classic, byte-for-byte split.
+            let cols = RtLayout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+                .split(rows[1]);
+            self.viewport_h = cols[0].height.saturating_sub(2);
+            let view = EntryListView {
+                entries: &self.all,
+                order: &self.view,
+                selected: self.state.selected(),
+                title: format!(" {} ", self.view.len()),
+                git: None, // dormant until the git phase (D1/D2).
+                show_size: true,
+            };
+            render_entry_list(f, cols[0], &view, &mut self.state, true, filter, self.icons);
+            self.render_preview(f, cols[1]);
+        }
 
         self.render_status(f, rows[2]);
+    }
+
+    /// Render the parent-directory pane (Miller's left column): the siblings of
+    /// `cwd` with the current directory highlighted. Navigation context only —
+    /// always inactive (dim border), no size column, no git, no preview. A no-op
+    /// when there is no parent (the caller only reaches three columns when one
+    /// exists, but stay honest).
+    fn render_parent(&self, f: &mut Frame, area: Rect) {
+        let Some(parent) = self.cwd.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let entries = read_entries(&parent);
+        // Same hidden-file policy as the current pane, but no smart-query filter:
+        // the parent is context, so every visible sibling shows in sorted order.
+        let order: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.show_hidden || !e.name.starts_with('.'))
+            .map(|(i, _)| i)
+            .collect();
+        // Land the highlight on the directory we're currently inside.
+        let here = self
+            .cwd
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned());
+        let selected = here
+            .as_deref()
+            .and_then(|name| order.iter().position(|&i| entries[i].name == name));
+        let mut state = ListState::default();
+        state.select(selected);
+        let view = EntryListView {
+            entries: &entries,
+            order: &order,
+            selected,
+            title: format!(" {} ", pretty_dir_name(&parent)),
+            git: None,
+            show_size: false, // drop the size column — cleaner for a context pane.
+        };
+        render_entry_list(f, area, &view, &mut state, false, false, self.icons);
     }
 
     fn render_crumb(&self, f: &mut Frame, area: Rect) {
@@ -890,119 +957,8 @@ impl App {
         f.render_widget(Paragraph::new(Line::from(spans)), area);
     }
 
-    fn render_list(&mut self, f: &mut Frame, area: Rect) {
-        self.viewport_h = area.height.saturating_sub(2);
-        // Width reserved before the name: 2 for the block borders, 2 for the
-        // selection cursor gutter (the `highlight_symbol` List reserves on every
-        // row so names align whether selected or not), plus a 2-cell glyph
-        // column ("X ") in the glyphed modes. `IconMode::None` drops the glyph,
-        // so the name reclaims those two cells (D5). Accounting for the 2-cell
-        // gutter here keeps the size column from clipping at the right edge.
-        let chrome_w = match self.icons {
-            IconMode::None => 4, // borders + gutter
-            _ => 6,              // borders + gutter + glyph cell
-        };
-        let inner_w = area.width.saturating_sub(chrome_w) as usize;
-        let size_w = 8usize;
-        let name_w = inner_w.saturating_sub(size_w + 1).max(4);
-
-        let icons = self.icons;
-        let items: Vec<ListItem> = self
-            .view
-            .iter()
-            .map(|&i| {
-                let e = &self.all[i];
-                let name = truncate(&e.name, name_w);
-                let size = if e.kind == Format::Directory {
-                    String::new()
-                } else {
-                    crate::util::human_size(e.size)
-                };
-
-                // Icons layer above `Format` and are selected by the mode (D5):
-                //   Unicode → the built-in geometric glyph + Format colour (the
-                //             default; byte-for-byte the pre-icons rendering).
-                //   Nerd    → per-extension Nerd glyph + per-extension tint, with
-                //             the SAME tint on the filename so the whole row keys
-                //             to language identity.
-                //   None    → no glyph column at all; name uses the Format colour.
-                let mut spans: Vec<Span> = Vec::with_capacity(3);
-                let name_color = match icons {
-                    IconMode::Unicode => {
-                        let c = e.kind.color();
-                        spans.push(Span::styled(
-                            format!("{} ", e.kind.glyph()),
-                            Style::default().fg(c),
-                        ));
-                        c
-                    }
-                    IconMode::Nerd => {
-                        // Same lowercased-extension convention as `classify_path`.
-                        let ext = e
-                            .path
-                            .extension()
-                            .map(|x| x.to_string_lossy().to_lowercase())
-                            .unwrap_or_default();
-                        let c = icons::nerd_color(&ext, e.kind);
-                        spans.push(Span::styled(
-                            format!("{} ", icons::nerd_glyph(&ext, e.kind)),
-                            Style::default().fg(c),
-                        ));
-                        c
-                    }
-                    IconMode::None => e.kind.color(),
-                };
-                spans.push(Span::styled(
-                    format!("{name:<name_w$}"),
-                    Style::default().fg(name_color),
-                ));
-                spans.push(Span::styled(
-                    format!(" {size:>size_w$}"),
-                    Style::default().fg(theme::palette().dim),
-                ));
-                ListItem::new(Line::from(spans))
-            })
-            .collect();
-
-        let count = self.view.len();
-        let accent = theme::palette().accent;
-        // The list is the ONLY pane the browser ever focuses; the preview is a
-        // passive follower of the selection. So "active vs passive" is a static
-        // distinction, not a runtime focus toggle — the list always lights its
-        // border with the accent so focus reads as "on the left". In Filter mode
-        // the border shifts to the filter yellow (`doc`) to reinforce the mode,
-        // matching the status line's filter colour.
-        let border = if let Mode::Filter = self.mode {
-            theme::palette().doc
-        } else {
-            accent
-        };
-        let title = Line::from(Span::styled(
-            format!(" {count} "),
-            Style::default().fg(accent).add_modifier(Modifier::BOLD),
-        ));
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(border))
-                    .title(title),
-            )
-            // Soft background tint + accent cursor gutter, replacing the harsh
-            // reverse-video bar. The gutter bar ("▎") takes the selection bg too;
-            // the tint carries the accent read.
-            .highlight_style(
-                Style::default()
-                    .bg(theme::palette().selection)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .highlight_symbol("▎ ");
-        f.render_stateful_widget(list, area, &mut self.state);
-    }
-
     fn render_preview(&mut self, f: &mut Frame, area: Rect) {
-        // The preview is the passive pane (see `render_list`): a dim, rounded
+        // The preview is the passive pane (see `render_entry_list`): a dim, rounded
         // border that sits quietly behind the accent-lit list. Captions keep
         // their truncation but gain the accent+BOLD styling of the list title.
         match self.pv {
@@ -1052,7 +1008,7 @@ impl App {
         } else {
             let hidden = if self.show_hidden { "shown" } else { "hidden" };
             format!(
-                " [j/k] move  [Enter/l] open  [h] up  [/] filter  [.] dotfiles ({hidden})  [q] quit"
+                " [j/k] move  [Enter/l] open  [h] up  [/] filter  [.] dotfiles ({hidden})  [M] layout  [q] quit"
             )
         };
         // Filter mode borrows the palette's yellow (`doc`, which is exactly the
@@ -1067,6 +1023,255 @@ impl App {
             area,
         );
     }
+}
+
+/// The smallest frame width (columns) at which Miller opens a third pane. Below
+/// this the preview and current panes would be too cramped, so the layout
+/// collapses to the classic two-column split (ADR 0004, D1).
+const MILLER_MIN: u16 = 100;
+
+/// A single pane's worth of entries to draw, decoupled from `App` so the SAME
+/// renderer ([`render_entry_list`]) serves both the current and the parent pane
+/// (ADR 0004, D1). Selection is an index into `order`, not `entries`.
+struct EntryListView<'a> {
+    /// The backing entries (the current pane's `all`, or the parent's listing).
+    entries: &'a [Entry],
+    /// Indices into `entries`, in display order: the filtered `view` for the
+    /// current pane, every visible sibling for the parent.
+    order: &'a [usize],
+    /// The highlighted row, as an index into `order` (not `entries`).
+    selected: Option<usize>,
+    /// The already-formatted block title (` {count} ` for the current pane, the
+    /// folder name for the parent).
+    title: String,
+    /// Optional per-entry git state, keyed by file name. ALWAYS `None` this phase
+    /// — the gutter branch is dormant until the git phase populates it (D1/D2).
+    git: Option<&'a std::collections::HashMap<String, GitStatus>>,
+    /// Whether to draw the right-aligned size column. The current pane keeps it;
+    /// the parent context pane drops it for a cleaner, narrower list.
+    show_size: bool,
+}
+
+/// Decide the effective column count for a frame: three (Miller) only when the
+/// layout asks for it, the frame is wide enough, AND a parent exists; otherwise
+/// two. A pure function so the collapse policy is unit-tested without a terminal.
+/// `Auto` behaves as Miller here — the width gate is what makes it collapse when
+/// narrow, so no separate branch is needed.
+fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
+    let wants_miller = match layout {
+        Layout::Miller | Layout::Auto => true,
+        Layout::Double => false,
+    };
+    if wants_miller && width >= MILLER_MIN && has_parent {
+        3
+    } else {
+        2
+    }
+}
+
+/// The single place browser entries are drawn (ADR 0004, D1): one rounded,
+/// bordered list of icon + optional git gutter + name + optional size. Both the
+/// current pane (`active`, size column, filter-aware border) and the parent
+/// context pane (inactive, no size) route through here, so a future column (the
+/// git gutter, phase-git) is a localized change.
+///
+/// A free function, not a method, because the current pane must render through
+/// the persistent `App.state` (preserving its scroll offset byte-for-byte) while
+/// the parent renders through a throwaway state — passing `state` in lets both
+/// share the body without aliasing `self`.
+///
+/// - `active` lights the border with the accent (and the title accent+BOLD);
+///   inactive dims both. `filter` (only ever true for the active current pane)
+///   shifts the border to the filter yellow (`doc`), matching the status line.
+/// - `view.git` is dormant this phase (always `None`), so no gutter is drawn and
+///   its width is reclaimed by the name — keeping two-column output unchanged.
+fn render_entry_list(
+    f: &mut Frame,
+    area: Rect,
+    view: &EntryListView,
+    state: &mut ListState,
+    active: bool,
+    filter: bool,
+    icons: IconMode,
+) {
+    // Width reserved before the name: 2 for the block borders, 2 for the
+    // selection cursor gutter (the `highlight_symbol` List reserves on every row
+    // so names align whether selected or not), plus a 2-cell glyph column ("X ")
+    // in the glyphed modes. `IconMode::None` drops the glyph, so the name
+    // reclaims those two cells (D5).
+    let chrome_w = match icons {
+        IconMode::None => 4, // borders + gutter
+        _ => 6,              // borders + gutter + glyph cell
+    };
+    // The git gutter is a 2-cell slot drawn only when a git map is present; when
+    // absent (always, this phase) it costs nothing and the name reclaims it.
+    let git_w: u16 = if view.git.is_some() { 2 } else { 0 };
+    let inner_w = area.width.saturating_sub(chrome_w + git_w) as usize;
+    let size_w = 8usize;
+    // The current pane reserves the size column (` {size:>8}`); the parent drops
+    // it entirely so the name fills the narrow context column.
+    let size_reserve = if view.show_size { size_w + 1 } else { 0 };
+    let name_w = inner_w.saturating_sub(size_reserve).max(4);
+
+    let items: Vec<ListItem> = view
+        .order
+        .iter()
+        .map(|&i| {
+            let e = &view.entries[i];
+            let name = truncate(&e.name, name_w);
+            let size = if e.kind == Format::Directory {
+                String::new()
+            } else {
+                crate::util::human_size(e.size)
+            };
+
+            // Icons layer above `Format` and are selected by the mode (D5):
+            //   Unicode → the built-in geometric glyph + Format colour (the
+            //             default; byte-for-byte the pre-icons rendering).
+            //   Nerd    → per-extension Nerd glyph + per-extension tint, with
+            //             the SAME tint on the filename so the whole row keys
+            //             to language identity.
+            //   None    → no glyph column at all; name uses the Format colour.
+            let mut spans: Vec<Span> = Vec::with_capacity(4);
+            let name_color = match icons {
+                IconMode::Unicode => {
+                    let c = e.kind.color();
+                    spans.push(Span::styled(
+                        format!("{} ", e.kind.glyph()),
+                        Style::default().fg(c),
+                    ));
+                    c
+                }
+                IconMode::Nerd => {
+                    // Same lowercased-extension convention as `classify_path`.
+                    let ext = e
+                        .path
+                        .extension()
+                        .map(|x| x.to_string_lossy().to_lowercase())
+                        .unwrap_or_default();
+                    let c = icons::nerd_color(&ext, e.kind);
+                    spans.push(Span::styled(
+                        format!("{} ", icons::nerd_glyph(&ext, e.kind)),
+                        Style::default().fg(c),
+                    ));
+                    c
+                }
+                IconMode::None => e.kind.color(),
+            };
+            // Git gutter, between the icon and the name (dormant until the git
+            // phase supplies `view.git`). A tracked-but-clean entry keeps the
+            // slot blank so names stay column-aligned.
+            if let Some(git) = view.git {
+                match git.get(&e.name) {
+                    Some(st) => spans.push(Span::styled(
+                        format!("{} ", st.glyph()),
+                        Style::default().fg(st.color()),
+                    )),
+                    None => spans.push(Span::raw("  ")),
+                }
+            }
+            spans.push(Span::styled(
+                format!("{name:<name_w$}"),
+                Style::default().fg(name_color),
+            ));
+            if view.show_size {
+                spans.push(Span::styled(
+                    format!(" {size:>size_w$}"),
+                    Style::default().fg(theme::palette().dim),
+                ));
+            }
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    let accent = theme::palette().accent;
+    // The active pane lights its border with the accent (and its title
+    // accent+BOLD); the passive parent pane dims both so it recedes. In Filter
+    // mode the active border shifts to the filter yellow (`doc`), matching the
+    // status line's filter colour.
+    let border = if active {
+        if filter {
+            theme::palette().doc
+        } else {
+            accent
+        }
+    } else {
+        theme::palette().dim
+    };
+    let title_style = if active {
+        Style::default().fg(accent).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme::palette().dim)
+    };
+    let title = Line::from(Span::styled(view.title.clone(), title_style));
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(border))
+                .title(title),
+        )
+        // Soft background tint + accent cursor gutter, replacing the harsh
+        // reverse-video bar. The gutter bar ("▎") takes the selection bg too;
+        // the tint carries the accent read.
+        .highlight_style(
+            Style::default()
+                .bg(theme::palette().selection)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▎ ");
+    // Sync the passed state to the view's selection (a no-op for the current
+    // pane, whose state already holds it — so its scroll offset is untouched).
+    state.select(view.selected);
+    f.render_stateful_widget(list, area, state);
+}
+
+/// Read a directory's entries, classified by extension and sorted
+/// directories-first then case-insensitive by name — the one lister shared by
+/// the current pane, the parent pane, and `App::load` (ADR 0004, D1). Pure of
+/// app state; the only IO is the `read_dir`. An unreadable directory yields an
+/// empty list rather than erroring, matching the browser's forgiving load.
+fn read_entries(dir: &Path) -> Vec<Entry> {
+    let mut entries = Vec::new();
+    if let Ok(rd) = fs::read_dir(dir) {
+        for ent in rd.flatten() {
+            let name = ent.file_name().to_string_lossy().into_owned();
+            let path = ent.path();
+            let meta = ent.metadata().ok();
+            let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+            // Classify by extension only — no per-entry file read, keeping
+            // directory loading content-free and fast.
+            let ext = path
+                .extension()
+                .map(|e| e.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let kind = crate::format::classify(&ext, is_dir, None);
+            entries.push(Entry {
+                name,
+                path,
+                kind,
+                size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+                modified: meta.and_then(|m| m.modified().ok()),
+            });
+        }
+    }
+    // Directories first, then case-insensitive by name.
+    entries.sort_by(|a, b| {
+        let ad = a.kind == Format::Directory;
+        let bd = b.kind == Format::Directory;
+        bd.cmp(&ad)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    entries
+}
+
+/// The bare folder name for a pane title (`~/src/foo` → `foo`), or `/` for the
+/// filesystem root, which has no final component.
+fn pretty_dir_name(p: &Path) -> String {
+    p.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "/".to_string())
 }
 
 /// Plain newline-separated listing for non-interactive use (piped output).
@@ -1186,4 +1391,36 @@ fn pad_cell(s: &str, w: usize) -> String {
     let t = truncate(s, w);
     let len = t.chars().count();
     format!("{t}{}", " ".repeat(w.saturating_sub(len)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn miller_three_columns_only_when_wide_and_parented() {
+        // Miller + wide + parent → three panes.
+        assert_eq!(effective_columns(Layout::Miller, MILLER_MIN, true), 3);
+        assert_eq!(effective_columns(Layout::Miller, 200, true), 3);
+        // Too narrow → collapse to two.
+        assert_eq!(effective_columns(Layout::Miller, MILLER_MIN - 1, true), 2);
+        // No parent (filesystem root) → two, however wide.
+        assert_eq!(effective_columns(Layout::Miller, 200, false), 2);
+    }
+
+    #[test]
+    fn double_is_always_two_columns() {
+        assert_eq!(effective_columns(Layout::Double, 200, true), 2);
+        assert_eq!(effective_columns(Layout::Double, 40, true), 2);
+    }
+
+    #[test]
+    fn auto_behaves_as_miller_gated_on_width() {
+        // Wide + parent → Miller's three panes.
+        assert_eq!(effective_columns(Layout::Auto, 200, true), 3);
+        // Narrow → the friendly two-column collapse.
+        assert_eq!(effective_columns(Layout::Auto, 80, true), 2);
+        // Wide but no parent → two.
+        assert_eq!(effective_columns(Layout::Auto, 200, false), 2);
+    }
 }

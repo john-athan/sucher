@@ -24,6 +24,7 @@ use std::time::Duration;
 pub struct Config {
     pub palette: Palette,
     pub icons: IconMode,
+    pub layout: Layout,
 }
 
 /// How the browser draws the per-entry glyph column (ADR 0003, D5). Nerd Font
@@ -53,12 +54,52 @@ impl FromStr for IconMode {
     }
 }
 
+/// Which pane layout the browser composes (ADR 0004, D1). `Auto` is Miller when
+/// the frame is wide (and a parent exists), double-pane when narrow; `Miller`
+/// and `Double` force the choice. The runtime `M` key cycles between them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Layout {
+    /// Miller when wide enough, double-pane when narrow — the friendly default.
+    #[default]
+    Auto,
+    /// Always attempt `parent | current | preview` (still collapses to two when
+    /// the frame is too narrow or there is no parent).
+    Miller,
+    /// Always the classic `current | preview` two-pane layout.
+    Double,
+}
+
+impl FromStr for Layout {
+    type Err = ();
+    /// Parse the config/env/flag spelling. Case-insensitive; unknown → `Err`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_lowercase().as_str() {
+            "auto" => Ok(Layout::Auto),
+            "miller" => Ok(Layout::Miller),
+            "double" => Ok(Layout::Double),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Layout {
+    /// The next layout for the runtime `M` toggle: `auto → miller → double → auto`.
+    pub fn cycle(self) -> Self {
+        match self {
+            Layout::Auto => Layout::Miller,
+            Layout::Miller => Layout::Double,
+            Layout::Double => Layout::Auto,
+        }
+    }
+}
+
 /// The TOML file's shape. Everything is optional so a partial (or empty) file is
 /// valid; unknown top-level keys are ignored by `serde` (no `deny_unknown`).
 #[derive(Deserialize, Default)]
 struct FileConfig {
     theme: Option<String>,
     icons: Option<String>,
+    layout: Option<String>,
     /// Optional per-key hex overrides, applied last over the resolved palette.
     colors: Option<std::collections::HashMap<String, String>>,
 }
@@ -67,18 +108,28 @@ struct FileConfig {
 /// CLI flag → env (`SUCHER_THEME` / `SUCHER_ICONS`) → TOML file → built-in
 /// default (`sucher-dark`, `unicode`). `[colors]` hex overrides from the file
 /// are applied last, on top of whichever base palette won.
-pub fn load(cli_theme: Option<String>, cli_icons: Option<String>) -> Config {
+pub fn load(
+    cli_theme: Option<String>,
+    cli_icons: Option<String>,
+    cli_layout: Option<String>,
+) -> Config {
     let file = read_file_config().unwrap_or_default();
     let env_theme = std::env::var("SUCHER_THEME").ok();
     let env_icons = std::env::var("SUCHER_ICONS").ok();
+    let env_layout = std::env::var("SUCHER_LAYOUT").ok();
 
     let theme_name = resolve_theme_name(cli_theme, env_theme, file.theme.clone());
     let icons = resolve_icons(cli_icons, env_icons, file.icons.clone());
+    let layout = resolve_layout(cli_layout, env_layout, file.layout.clone());
 
     let mut palette = resolve_palette(&theme_name);
     apply_color_overrides(&mut palette, file.colors.as_ref());
 
-    Config { palette, icons }
+    Config {
+        palette,
+        icons,
+        layout,
+    }
 }
 
 /// Pure theme-name precedence: `cli` → `env` → `file` → `sucher-dark`. Kept free
@@ -96,6 +147,16 @@ fn resolve_icons(cli: Option<String>, env: Option<String>, file: Option<String>)
     cli.or(env)
         .or(file)
         .and_then(|s| IconMode::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Pure layout precedence: `cli` → `env` → `file` → `Auto`. Like icons, an
+/// unparseable value at the winning level falls through to the default rather
+/// than erroring, so a typo never wedges the layout.
+fn resolve_layout(cli: Option<String>, env: Option<String>, file: Option<String>) -> Layout {
+    cli.or(env)
+        .or(file)
+        .and_then(|s| Layout::from_str(&s).ok())
         .unwrap_or_default()
 }
 
@@ -404,6 +465,52 @@ mod tests {
         );
         // Nothing set → default.
         assert_eq!(resolve_icons(None, None, None), IconMode::Unicode);
+    }
+
+    #[test]
+    fn layout_parses_case_insensitively() {
+        assert_eq!(Layout::from_str("auto"), Ok(Layout::Auto));
+        assert_eq!(Layout::from_str("Miller"), Ok(Layout::Miller));
+        assert_eq!(Layout::from_str(" DOUBLE "), Ok(Layout::Double));
+        assert_eq!(Layout::from_str("triple"), Err(()));
+        assert_eq!(Layout::default(), Layout::Auto);
+    }
+
+    #[test]
+    fn layout_cycle_wraps_auto_miller_double() {
+        assert_eq!(Layout::Auto.cycle(), Layout::Miller);
+        assert_eq!(Layout::Miller.cycle(), Layout::Double);
+        assert_eq!(Layout::Double.cycle(), Layout::Auto);
+    }
+
+    #[test]
+    fn layout_precedence_and_default() {
+        // CLI wins outright.
+        assert_eq!(
+            resolve_layout(
+                Some("miller".into()),
+                Some("double".into()),
+                Some("auto".into())
+            ),
+            Layout::Miller
+        );
+        // env over file.
+        assert_eq!(
+            resolve_layout(None, Some("double".into()), Some("auto".into())),
+            Layout::Double
+        );
+        // No CLI/env → the file value.
+        assert_eq!(
+            resolve_layout(None, None, Some("miller".into())),
+            Layout::Miller
+        );
+        // Unparseable at the winning level → default (does not fall through to file).
+        assert_eq!(
+            resolve_layout(None, Some("bogus".into()), Some("miller".into())),
+            Layout::Auto
+        );
+        // Nothing set → default.
+        assert_eq!(resolve_layout(None, None, None), Layout::Auto);
     }
 
     #[test]
