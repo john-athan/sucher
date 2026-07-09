@@ -7,6 +7,58 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Hard cap on the bytes any decoder reads from a single untrusted source
+/// (ADR 0009). 32 MiB is generous for a real document — far larger than any
+/// hand-written HTML page, Word body, or slide part — yet small enough that a
+/// bounded parse stays sub-second and a decompression bomb inflates at most this
+/// much before we stop and report honestly instead of OOM-ing.
+pub const MAX_DECODE_BYTES: usize = 32 * 1024 * 1024;
+
+/// Hard cap on bytes inflated while *listing* an archive (ADR 0009). Larger than
+/// [`MAX_DECODE_BYTES`] because a legitimate `.tar`/`.tar.gz` of source or media
+/// easily exceeds 32 MiB and listing must stream through every member's bytes to
+/// reach the next header (a gzip stream can't be seeked). 256 MiB lists the vast
+/// majority of real archives in full while still bounding a gzip bomb's CPU to a
+/// one-shot, cached ~second; past it the listing is truncated *with an explicit
+/// marker row* — never silently (see `tar_entries`).
+pub const MAX_ARCHIVE_INFLATE: usize = 256 * 1024 * 1024;
+
+/// Maximum image dimension (px, per axis) any decoder will accept (ADR 0009).
+/// Far above any real display need (a 4K screen is ~4000 px wide) yet small
+/// enough that a tiny file *claiming* enormous dimensions cannot force a huge
+/// allocation on decode; `image`'s default 512 MiB `max_alloc` is left in place.
+pub const MAX_IMAGE_DIM: u32 = 20_000;
+
+/// Read up to `max` bytes from `reader` into a `String`, returning `Err` when the
+/// source exceeds `max` (we read `max + 1` and check the length) or is not valid
+/// UTF-8. Bounds both memory and parse time for untrusted/compressed input: a
+/// decompression bomb inflates at most `max + 1` bytes here before we stop, and a
+/// parser is never handed a silently truncated half-document (ADR 0009).
+pub fn read_to_string_capped<R: Read>(reader: R, max: usize) -> Result<String, String> {
+    let mut buf = Vec::new();
+    reader
+        .take(max as u64 + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| e.to_string())?;
+    if buf.len() > max {
+        return Err(format!(
+            "input exceeds {} preview/parse limit",
+            human_size(max as u64)
+        ));
+    }
+    String::from_utf8(buf).map_err(|_| "input is not valid UTF-8".to_string())
+}
+
+/// `image::Limits` bounding decode to [`MAX_IMAGE_DIM`] on each axis, keeping the
+/// crate's default allocation ceiling. Applied to every `ImageReader`/decoder so
+/// the browser preview and an interactive open share the same guard (ADR 0009).
+pub fn image_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIM);
+    limits.max_image_height = Some(MAX_IMAGE_DIM);
+    limits
+}
+
 /// Extract embedded raster images living under `dir_prefix` (e.g. `word/media/`
 /// for docx, `ppt/media/` for pptx) from an OOXML zip into a per-process temp
 /// directory, returning the written paths sorted by archive name. Best-effort:
@@ -189,6 +241,41 @@ mod tests {
         );
         // A timestamp in the future clamps to "now" rather than underflowing.
         assert_eq!(human_age(now + Duration::from_secs(60), now), "now");
+    }
+
+    #[test]
+    fn capped_reads_under_and_at_the_limit() {
+        let data = [b'a'; 10];
+        // Exactly at the cap is accepted (we read max+1 and only reject on >max).
+        assert_eq!(read_to_string_capped(&data[..], 10).unwrap().len(), 10);
+        // Comfortably under the cap is accepted.
+        assert_eq!(read_to_string_capped(&data[..], 20).unwrap().len(), 10);
+    }
+
+    #[test]
+    fn capped_rejects_one_byte_over_the_limit() {
+        let data = [b'a'; 11];
+        assert!(read_to_string_capped(&data[..], 10).is_err());
+    }
+
+    #[test]
+    fn capped_rejects_invalid_utf8() {
+        let data = [0xff, 0xfe, 0x00];
+        assert!(read_to_string_capped(&data[..], 100).is_err());
+    }
+
+    #[test]
+    fn capped_stops_a_bomb_without_unbounded_allocation() {
+        // A reader that would yield ~1 TiB if drained. `read_to_string_capped`
+        // must `take` it to max+1 first, so at most max+1 bytes are ever
+        // allocated before it detects the overflow and returns Err — never a
+        // truncated string and never an OOM.
+        let bomb = std::io::repeat(b'a').take(1 << 40);
+        let max = 1024;
+        assert!(
+            read_to_string_capped(bomb, max).is_err(),
+            "a source larger than the cap must be rejected, not truncated"
+        );
     }
 
     #[test]

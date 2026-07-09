@@ -5,7 +5,6 @@
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;
-use std::io::Read;
 
 /// Embedded raster images from a .docx (`word/media/`), extracted to temp files
 /// for the viewer's image gallery. Empty when the document has none.
@@ -16,11 +15,13 @@ pub fn media(path: &str) -> Vec<std::path::PathBuf> {
 pub fn to_markdown(path: &str) -> Result<String, String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-    let mut xml = String::new();
-    zip.by_name("word/document.xml")
-        .map_err(|_| "not a docx (no word/document.xml)".to_string())?
-        .read_to_string(&mut xml)
-        .map_err(|e| e.to_string())?;
+    let member = zip
+        .by_name("word/document.xml")
+        .map_err(|_| "not a docx (no word/document.xml)".to_string())?;
+    // Byte-cap the *decompressed* member (ADR 0009): a zip bomb would inflate
+    // unbounded through `read_to_string`. The helper's `take` bounds the inflate
+    // to the cap, then reports honestly past it.
+    let xml = crate::util::read_to_string_capped(member, crate::util::MAX_DECODE_BYTES)?;
     Ok(parse(&xml))
 }
 

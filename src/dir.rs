@@ -1589,9 +1589,16 @@ impl App {
                             Format::Image => media::decode_frames(&p)
                                 .map(Rastered::Animated)
                                 .or_else(|| {
+                                    // Pixel limits before decode (ADR 0009): the
+                                    // browser rasters this merely on scroll-past,
+                                    // so a file claiming enormous dimensions must
+                                    // not force a huge allocation here.
                                     image::ImageReader::open(&p)
                                         .ok()
-                                        .and_then(|r| r.decode().ok())
+                                        .and_then(|mut r| {
+                                            r.limits(crate::util::image_limits());
+                                            r.decode().ok()
+                                        })
                                         .map(Rastered::Still)
                                 }),
                             Format::Pdf => crate::pdf::poster(&p.to_string_lossy())

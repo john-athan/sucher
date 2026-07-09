@@ -142,14 +142,19 @@ pub fn entries(path: &str) -> Result<Vec<Entry>, String> {
     let mut list = if lower.ends_with(".zip") {
         zip_entries(path)?
     } else if lower.ends_with(".tar") {
-        tar_entries(fs::File::open(path).map_err(|e| e.to_string())?)?
+        // A plain .tar is bounded by file size, but listing streams the whole
+        // file to read names — unbounded over an S3/GCS mount. Cap the read too
+        // (ADR 0009); a huge tar then lists partially (with a marker) rather than
+        // reading forever.
+        let f = fs::File::open(path).map_err(|e| e.to_string())?;
+        tar_entries(f.take(crate::util::MAX_ARCHIVE_INFLATE as u64))?
     } else if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
         let f = fs::File::open(path).map_err(|e| e.to_string())?;
-        tar_entries(flate2::read::GzDecoder::new(f))?
+        tar_entries(gz_capped(f))?
     } else if lower.ends_with(".gz") {
         // A bare .gz wraps a single file; it may or may not be a tar inside.
         let f = fs::File::open(path).map_err(|e| e.to_string())?;
-        match tar_entries(flate2::read::GzDecoder::new(f)) {
+        match tar_entries(gz_capped(f)) {
             Ok(list) if !list.is_empty() => list,
             _ => vec![gz_single_entry(path)],
         }
@@ -180,11 +185,17 @@ fn zip_entries(path: &str) -> Result<Vec<Entry>, String> {
     Ok(out)
 }
 
-fn tar_entries<R: Read>(reader: R) -> Result<Vec<Entry>, String> {
+fn tar_entries<R: Read>(reader: io::Take<R>) -> Result<Vec<Entry>, String> {
     let mut ar = tar::Archive::new(reader);
     let mut out = Vec::new();
+    // A failing `entries()` means we could not start reading a tar at all (not a
+    // tar / corrupt) — propagate it so the bare-.gz path can fall back to a
+    // single synthesised entry. A *mid-stream* per-entry error means the input
+    // ended early, which is exactly what our inflation/read cap (ADR 0009) does
+    // to a huge or bomb archive: stop and return what we listed, degrading to a
+    // partial listing rather than discarding it or hanging.
     for entry in ar.entries().map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let Ok(entry) = entry else { break };
         let name = entry
             .path()
             .map(|p| p.to_string_lossy().into_owned())
@@ -193,7 +204,30 @@ fn tar_entries<R: Read>(reader: R) -> Result<Vec<Entry>, String> {
         let size = entry.header().size().unwrap_or(0);
         out.push(Entry { name, size, is_dir });
     }
+    // If the inflation cap was fully consumed the listing may be incomplete. Say
+    // so with an explicit marker row rather than silently truncating (ADR 0009) —
+    // `into_inner` is reachable now the borrowing `entries()` iterator is dropped.
+    if ar.into_inner().limit() == 0 && !out.is_empty() {
+        out.push(Entry {
+            name: format!(
+                "… listing truncated (archive exceeds {})",
+                crate::util::human_size(crate::util::MAX_ARCHIVE_INFLATE as u64)
+            ),
+            size: 0,
+            is_dir: false,
+        });
+    }
     Ok(out)
+}
+
+/// A gzip decoder whose *inflated* output is capped at
+/// [`crate::util::MAX_DECODE_BYTES`] (ADR 0009). Listing a `.tar.gz` inflates the
+/// entire stream just to read member names, so a gzip bomb would otherwise
+/// inflate unbounded here; `take` stops the inflate at the cap and the tar reader
+/// then hits EOF, yielding a partial listing (see [`tar_entries`]) rather than
+/// OOM-ing. A bare `.gz` that is not a tar simply falls back to a single entry.
+fn gz_capped(f: fs::File) -> io::Take<flate2::read::GzDecoder<fs::File>> {
+    flate2::read::GzDecoder::new(f).take(crate::util::MAX_ARCHIVE_INFLATE as u64)
 }
 
 /// The single logical member of a bare `.gz`: `foo.txt.gz` → `foo.txt`. Size is

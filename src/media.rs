@@ -12,7 +12,7 @@
 // actual frame change and only while such a pane is on screen.
 
 use image::codecs::gif::GifDecoder;
-use image::{AnimationDecoder, DynamicImage};
+use image::{AnimationDecoder, DynamicImage, ImageDecoder};
 use ratatui::layout::Rect;
 use ratatui::Frame as RtFrame;
 use ratatui_image::picker::Picker;
@@ -167,7 +167,11 @@ fn frame_delay(numer_ms: u32, denom_ms: u32) -> Duration {
 /// branch here, unchanged everywhere else.
 pub fn decode_frames(path: &Path) -> Option<Vec<Frame>> {
     let file = File::open(path).ok()?;
-    let decoder = GifDecoder::new(BufReader::new(file)).ok()?;
+    let mut decoder = GifDecoder::new(BufReader::new(file)).ok()?;
+    // Pixel limits before decode (ADR 0009): a GIF claiming enormous dimensions
+    // must not force a huge per-frame allocation. `MAX_FRAMES` already bounds the
+    // frame count; this bounds each frame's canvas. Keep the default alloc ceiling.
+    decoder.set_limits(crate::util::image_limits()).ok()?;
     let raw = decoder.into_frames().collect_frames().ok()?;
     // Guard: over the cap → None, so the caller shows a static first frame
     // instead of holding a huge frame set in memory.

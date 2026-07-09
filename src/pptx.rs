@@ -10,7 +10,6 @@
 
 use quick_xml::events::Event;
 use quick_xml::reader::Reader;
-use std::io::Read;
 
 /// Embedded raster images from a .pptx (`ppt/media/`), extracted to temp files
 /// for the viewer's image gallery. Empty when the deck has none.
@@ -35,11 +34,11 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
 
     let mut out = String::new();
     for (idx, (_, name)) in slides.iter().enumerate() {
-        let mut xml = String::new();
-        zip.by_name(name)
-            .map_err(|e| e.to_string())?
-            .read_to_string(&mut xml)
-            .map_err(|e| e.to_string())?;
+        let member = zip.by_name(name).map_err(|e| e.to_string())?;
+        // Byte-cap each decompressed slide part (ADR 0009): a zip bomb hidden in
+        // any one slide would otherwise inflate unbounded here. The helper's
+        // `take` bounds each member's inflate to the cap and reports past it.
+        let xml = crate::util::read_to_string_capped(member, crate::util::MAX_DECODE_BYTES)?;
         out.push_str(&format!("## Slide {}\n\n", idx + 1));
         let paras = slide_paragraphs(&xml);
         if paras.is_empty() {

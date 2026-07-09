@@ -12,7 +12,12 @@ use html5ever::tendril::TendrilSink;
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
 pub fn to_markdown(path: &str) -> Result<String, String> {
-    let html = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    // Byte-capped read (ADR 0009): a multi-GB HTML file is parsed merely by
+    // scrolling onto it in the browser, so bound the input rather than reading it
+    // whole. Past the cap we surface the honest "too large" Err to both preview
+    // and interactive open instead of building an unbounded DOM.
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let html = crate::util::read_to_string_capped(file, crate::util::MAX_DECODE_BYTES)?;
     Ok(parse(&html))
 }
 
