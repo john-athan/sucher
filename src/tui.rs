@@ -209,7 +209,7 @@ impl App {
         let Some(path) = self.images.get(self.gallery_idx) else {
             return;
         };
-        if let Ok(Ok(img)) = image::ImageReader::open(path).map(|r| r.decode()) {
+        if let Ok(Ok(img)) = crate::util::open_image_reader(path).map(|r| r.decode()) {
             if let Some(pane) = self.pane.as_mut() {
                 pane.set(img);
             }

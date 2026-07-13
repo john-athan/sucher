@@ -137,7 +137,7 @@ fn run() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             } else {
-                match image::image_dimensions(&path) {
+                match crate::util::image_dimensions(std::path::Path::new(&path)) {
                     Ok((w, h)) => return emit(&format!("{path}: image {w}×{h}px\n")),
                     Err(e) => {
                         eprintln!("sucher: {path}: {e}");

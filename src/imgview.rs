@@ -30,13 +30,11 @@ pub fn run(title: String, path: String) -> io::Result<()> {
             return show_frames(title, frames);
         }
     }
-    // Explicit pixel limits (ADR 0009): a tiny file claiming enormous dimensions
-    // would otherwise force a huge allocation on decode. Set the per-axis bound
-    // before decoding, keeping `image`'s default allocation ceiling.
-    let img = match image::ImageReader::open(&path).map(|mut r| {
-        r.limits(crate::util::image_limits());
-        r.decode()
-    }) {
+    // Decode by content, not extension, with explicit pixel limits (ADR 0009):
+    // `open_image_reader` sniffs the magic bytes (so a misnamed JPEG-as-.png still
+    // opens) and applies the per-axis bound before decoding, keeping `image`'s
+    // default allocation ceiling.
+    let img = match crate::util::open_image_reader(Path::new(&path)).map(|r| r.decode()) {
         Ok(Ok(img)) => img,
         Ok(Err(e)) => {
             eprintln!("sucher: {path}: {e}");

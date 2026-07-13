@@ -4,7 +4,7 @@
 
 use quick_xml::events::{BytesRef, BytesText};
 use std::io::{self, ErrorKind, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -65,6 +65,32 @@ pub fn image_limits() -> image::Limits {
     limits.max_image_width = Some(MAX_IMAGE_DIM);
     limits.max_image_height = Some(MAX_IMAGE_DIM);
     limits
+}
+
+/// Open an image reader that decodes by *content*, not by file extension.
+///
+/// `image::ImageReader::open` picks its decoder from the path's extension, so a
+/// real JPEG saved as `foo.png` (common with AI image tools that stamp C2PA
+/// metadata) fails to decode. `with_guessed_format` sniffs the magic bytes and
+/// overrides the extension, so misnamed-but-valid images preview correctly.
+/// Pixel limits (ADR 0009) are applied before the caller decodes. Sucher still
+/// *classifies* by extension (ADR 0001 D1) — this only governs decoding once a
+/// file is already routed as a raster image.
+pub fn open_image_reader(
+    path: &Path,
+) -> io::Result<image::ImageReader<io::BufReader<std::fs::File>>> {
+    let mut reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    reader.limits(image_limits());
+    Ok(reader)
+}
+
+/// Content-sniffed image dimensions, mirroring [`open_image_reader`]: reads the
+/// header only, so it is cheap and works for a misnamed image where the
+/// extension-based `image::image_dimensions` would error.
+pub fn image_dimensions(path: &Path) -> io::Result<(u32, u32)> {
+    open_image_reader(path)?
+        .into_dimensions()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 /// Wall-clock ceiling for a *one-shot* poppler/ffmpeg subprocess (ADR 0009 item

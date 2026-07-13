@@ -1589,16 +1589,15 @@ impl App {
                             Format::Image => media::decode_frames(&p)
                                 .map(Rastered::Animated)
                                 .or_else(|| {
-                                    // Pixel limits before decode (ADR 0009): the
-                                    // browser rasters this merely on scroll-past,
-                                    // so a file claiming enormous dimensions must
-                                    // not force a huge allocation here.
-                                    image::ImageReader::open(&p)
+                                    // Decode by content with pixel limits (ADR
+                                    // 0009): sniffs magic bytes so a misnamed
+                                    // JPEG-as-.png still previews, and the browser
+                                    // rasters this merely on scroll-past, so a file
+                                    // claiming enormous dimensions must not force a
+                                    // huge allocation here.
+                                    crate::util::open_image_reader(&p)
                                         .ok()
-                                        .and_then(|mut r| {
-                                            r.limits(crate::util::image_limits());
-                                            r.decode().ok()
-                                        })
+                                        .and_then(|r| r.decode().ok())
                                         .map(Rastered::Still)
                                 }),
                             Format::Pdf => crate::pdf::poster(&p.to_string_lossy())
@@ -1676,7 +1675,7 @@ impl App {
         ) && self.pane.is_some()
         {
             let extra = match kind {
-                Format::Image => image::image_dimensions(&path)
+                Format::Image => crate::util::image_dimensions(&path)
                     .map(|(w, h)| format!("  ·  {w}×{h}"))
                     .unwrap_or_default(),
                 Format::Video => "  ·  Enter to play".into(),
