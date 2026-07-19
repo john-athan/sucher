@@ -1,0 +1,40 @@
+# cargo-deny configuration. See https://embarkstudios.github.io/cargo-deny/
+# Checked in CI (`cargo deny check`) as a supply-chain gate.
+
+[advisories]
+# Fail on any dependency with a known RustSec advisory or that has been yanked.
+yanked = "deny"
+# Only fail on "unmaintained" advisories for our own crates; deep transitive
+# deps (e.g. ttf-parser via resvg/usvg) often have no upgrade path we control.
+unmaintained = "workspace"
+
+[licenses]
+# Permissive/weak-copyleft licenses present in the dependency tree. cargo-deny
+# evaluates SPDX expressions, so an "A OR B" dep passes if either is allowed.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "CC0-1.0",
+    "BSL-1.0",
+    "MPL-2.0",
+    "WTFPL",
+    "NCSA",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "bzip2-1.0.6",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Duplicate versions are noisy in the Rust ecosystem; warn, don't fail.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

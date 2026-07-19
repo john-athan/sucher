@@ -19,7 +19,7 @@ lto = "thin"
 pulldown-cmark = "0.13"
 ratatui = "0.30"
 crossterm = "0.29"
-calamine = "0.35"
+calamine = "0.36"
 ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
 image = "0.25"
 zip = "8"
