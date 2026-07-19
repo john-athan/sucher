@@ -239,8 +239,9 @@ fn sort_cmp<T: Sortable>(a: &T, b: &T, sort: Sort) -> Ordering {
         SortKey::Name => by_name(),
         SortKey::Size => a.sort_size().cmp(&b.sort_size()).then_with(by_name),
         SortKey::Modified => a.sort_modified().cmp(&b.sort_modified()).then_with(by_name),
-        SortKey::Ext => cmp_name_ci(name_ext(a.sort_name()), name_ext(b.sort_name()))
-            .then_with(by_name),
+        SortKey::Ext => {
+            cmp_name_ci(name_ext(a.sort_name()), name_ext(b.sort_name())).then_with(by_name)
+        }
     };
     if sort.reverse {
         ord.reverse()
@@ -2238,11 +2239,7 @@ impl App {
     /// `/{filter}` line but with search's own glyph and buffer.
     fn render_search_input(&self, f: &mut Frame, area: Rect) {
         let accent = theme::palette().accent;
-        let query = self
-            .search
-            .as_ref()
-            .map(|s| s.query.as_str())
-            .unwrap_or("");
+        let query = self.search.as_ref().map(|s| s.query.as_str()).unwrap_or("");
         let line = Line::from(vec![
             Span::styled(
                 format!(" ⌕ {query}"),
@@ -2519,8 +2516,12 @@ fn render_entry_list(
     // Materialise only the visible window (perf: list virtualisation). We compute
     // the scroll offset ourselves from the state's PREVIOUS offset, so the window
     // is byte-for-byte what ratatui would have shown the full list.
-    let (offset, window) =
-        visible_window(state.offset(), view.selected, view.order.len(), inner.height as usize);
+    let (offset, window) = visible_window(
+        state.offset(),
+        view.selected,
+        view.order.len(),
+        inner.height as usize,
+    );
     let items = entry_items(area, view, icons, window.clone());
     let list = entry_list(items, view.fade_t);
     // Render through a LOCAL state at offset 0 with the selection rebased into the
@@ -2540,7 +2541,9 @@ fn render_entry_list(
 /// keep it visible — else `None`. The local index is what the windowed `ListState`
 /// highlights, since that state renders only the window at offset 0.
 fn window_selection(selected: Option<usize>, window: &std::ops::Range<usize>) -> Option<usize> {
-    selected.filter(|s| window.contains(s)).map(|s| s - window.start)
+    selected
+        .filter(|s| window.contains(s))
+        .map(|s| s - window.start)
 }
 
 /// Compose one frame of the current pane's folder slide (ADR 0006 D3). The border
@@ -2579,8 +2582,12 @@ fn render_entry_slide(
     // is a straight column shift.
     // Same virtualised window as the settled render (perf), computed from the same
     // state offset — so the sliding-in content is byte-for-byte the settle frame.
-    let (_, window) =
-        visible_window(state.offset(), view.selected, view.order.len(), inner.height as usize);
+    let (_, window) = visible_window(
+        state.offset(),
+        view.selected,
+        view.order.len(),
+        inner.height as usize,
+    );
     let items = entry_items(area, view, icons, window.clone());
     let list = entry_list(items, view.fade_t);
     let mut new_buf = Buffer::empty(inner);
@@ -3438,7 +3445,12 @@ mod tests {
             modified: None,
             snippet: None,
         };
-        let mut v = vec![hit("zzz.txt"), hit("src/b.rs"), hit("src/a.rs"), hit("readme.md")];
+        let mut v = vec![
+            hit("zzz.txt"),
+            hit("src/b.rs"),
+            hit("src/a.rs"),
+            hit("readme.md"),
+        ];
         v.sort_by(|a, b| sort_cmp(a, b, Sort::default()));
         let rels: Vec<&str> = v.iter().map(|h| h.rel.as_str()).collect();
         assert_eq!(rels, vec!["readme.md", "src/a.rs", "src/b.rs", "zzz.txt"]);
@@ -3578,7 +3590,7 @@ mod tests {
         assert_eq!(visible_window(0, Some(50), 100, 10), (41, 41..51));
         assert_eq!(visible_window(0, Some(9), 100, 10), (0, 0..10)); // last row still fits
         assert_eq!(visible_window(0, Some(10), 100, 10), (1, 1..11)); // one past → scroll 1
-        // Scroll UP: selection above the window → offset drops to the selection.
+                                                                      // Scroll UP: selection above the window → offset drops to the selection.
         assert_eq!(visible_window(40, Some(12), 100, 10), (12, 12..22));
         // Clamp at the end: a big offset with no lower selection can't scroll past
         // `len - height`, so the last page is fully filled.

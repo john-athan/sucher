@@ -79,8 +79,8 @@ pub fn nerd_glyph(ext: &str, fmt: Format) -> &'static str {
         "docx" | "doc" => "\u{f1c2}", // nf-fa-file_word_o
         "xlsx" | "xls" | "csv" => "\u{f1c3}", // nf-fa-file_excel_o
         "pptx" | "ppt" | "key" => "\u{f1c4}", // nf-fa-file_powerpoint_o
-        "epub" => "\u{f02d}",                 // nf-fa-book
-        "ipynb" => "\u{e678}",                // nf-seti-jupyter
+        "epub" => "\u{f02d}", // nf-fa-book
+        "ipynb" => "\u{e678}", // nf-seti-jupyter
         // Unlisted: fall back to the file's Format category.
         _ => fallback_glyph(fmt),
     }

@@ -222,7 +222,10 @@ mod tests {
               <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
             </rootfiles>
           </container>"#;
-        assert_eq!(opf_path_from_container(xml).as_deref(), Some("OEBPS/content.opf"));
+        assert_eq!(
+            opf_path_from_container(xml).as_deref(),
+            Some("OEBPS/content.opf")
+        );
     }
 
     #[test]
@@ -277,8 +280,14 @@ mod tests {
 
     #[test]
     fn href_resolution_collapses_dot_segments() {
-        assert_eq!(resolve_href("OEBPS", "chapter1.xhtml"), "OEBPS/chapter1.xhtml");
-        assert_eq!(resolve_href("OEBPS", "text/ch.xhtml"), "OEBPS/text/ch.xhtml");
+        assert_eq!(
+            resolve_href("OEBPS", "chapter1.xhtml"),
+            "OEBPS/chapter1.xhtml"
+        );
+        assert_eq!(
+            resolve_href("OEBPS", "text/ch.xhtml"),
+            "OEBPS/text/ch.xhtml"
+        );
         assert_eq!(resolve_href("OEBPS/text", "../ch.xhtml"), "OEBPS/ch.xhtml");
         assert_eq!(resolve_href("OEBPS", "./ch.xhtml"), "OEBPS/ch.xhtml");
         assert_eq!(resolve_href("", "ch.xhtml"), "ch.xhtml");

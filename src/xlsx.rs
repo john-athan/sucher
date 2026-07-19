@@ -294,7 +294,11 @@ fn read_entry(zip: &mut zip::ZipArchive<File>, name: &str) -> Option<String> {
 /// zip bomb cannot inflate unbounded even if it presents few `<row>` elements.
 /// Each row is truncated to `max_cols`. Shares the row/cell decoding with the
 /// streaming loader via [`parse_sheet_xml`], so the two never drift (ADR 0009).
-pub fn preview_rows(file: &str, max_rows: usize, max_cols: usize) -> Result<Vec<Vec<String>>, String> {
+pub fn preview_rows(
+    file: &str,
+    max_rows: usize,
+    max_cols: usize,
+) -> Result<Vec<Vec<String>>, String> {
     let f = File::open(file).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(f).map_err(|e| e.to_string())?;
     let sheets = read_workbook_sheets(&mut zip)?;
@@ -307,11 +311,16 @@ pub fn preview_rows(file: &str, max_rows: usize, max_cols: usize) -> Result<Vec<
     let bounded = entry.take(crate::util::MAX_DECODE_BYTES as u64);
 
     let mut rows: Vec<Vec<String>> = Vec::new();
-    parse_sheet_xml(bounded, &sst, || false, |mut row| {
-        row.truncate(max_cols);
-        rows.push(row);
-        rows.len() >= max_rows
-    });
+    parse_sheet_xml(
+        bounded,
+        &sst,
+        || false,
+        |mut row| {
+            row.truncate(max_cols);
+            rows.push(row);
+            rows.len() >= max_rows
+        },
+    );
     Ok(rows)
 }
 
@@ -542,10 +551,15 @@ mod tests {
     // Collect every row the shared parser yields from an inline sheet-XML blob.
     fn parse_all(xml: &str, sst: &[String]) -> Vec<Vec<String>> {
         let mut rows = Vec::new();
-        parse_sheet_xml(xml.as_bytes(), sst, || false, |row| {
-            rows.push(row);
-            false
-        });
+        parse_sheet_xml(
+            xml.as_bytes(),
+            sst,
+            || false,
+            |row| {
+                rows.push(row);
+                false
+            },
+        );
         rows
     }
 
@@ -580,10 +594,15 @@ mod tests {
             <row r=\"3\"><c r=\"A3\" t=\"n\"><v>3</v></c></row>\
             </sheetData></worksheet>";
         let mut rows = Vec::new();
-        parse_sheet_xml(xml.as_bytes(), &[], || false, |row| {
-            rows.push(row);
-            rows.len() >= 2 // stop after two rows
-        });
+        parse_sheet_xml(
+            xml.as_bytes(),
+            &[],
+            || false,
+            |row| {
+                rows.push(row);
+                rows.len() >= 2 // stop after two rows
+            },
+        );
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[1], vec!["2".to_string()]);
     }

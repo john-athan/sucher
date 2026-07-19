@@ -82,7 +82,9 @@ pub enum Msg {
     Hit(Hit),
     /// The walk ended. `capped` is true when [`CAP`] was reached and some matches
     /// went unreported (surface it in the UI, never truncate silently — D3).
-    Done { capped: bool },
+    Done {
+        capped: bool,
+    },
 }
 
 /// A running search. Owns the receiver plus the cancel handle; dropping it (or
@@ -485,7 +487,10 @@ mod tests {
         // `ext:rs` finds both .rs files at different depths, and nothing else.
         let fx = standard_tree();
         let (hits, _) = collect(&fx, "ext:rs", false);
-        assert_eq!(rels(&hits), vec!["a.rs".to_string(), "sub/b.rs".to_string()]);
+        assert_eq!(
+            rels(&hits),
+            vec!["a.rs".to_string(), "sub/b.rs".to_string()]
+        );
     }
 
     #[test]

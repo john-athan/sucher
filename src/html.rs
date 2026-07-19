@@ -345,12 +345,8 @@ impl Writer {
                     let mut cells = Vec::new();
                     for c in child.children.borrow().iter() {
                         if matches!(tag_of(c).as_deref(), Some("td") | Some("th")) {
-                            cells.push(
-                                self.inline(c)
-                                    .trim()
-                                    .replace('|', "\\|")
-                                    .replace('\n', " "),
-                            );
+                            cells
+                                .push(self.inline(c).trim().replace('|', "\\|").replace('\n', " "));
                         }
                     }
                     if !cells.is_empty() {
@@ -563,9 +559,15 @@ let y = 2;</code></pre>
         // stack overflow) and the walk truncates rather than recursing forever.
         let n = MAX_DEPTH * 4;
         let deep = format!("{}deep{}", "<div>".repeat(n), "</div>".repeat(n));
-        assert!(!markdown_from_str(&deep).contains("deep"), "guard should truncate block nest");
+        assert!(
+            !markdown_from_str(&deep).contains("deep"),
+            "guard should truncate block nest"
+        );
         let inline = format!("<p>{}deep</p>", "<b>".repeat(n));
-        assert!(!markdown_from_str(&inline).contains("deep"), "guard should truncate inline nest");
+        assert!(
+            !markdown_from_str(&inline).contains("deep"),
+            "guard should truncate inline nest"
+        );
         let _ = markdown_from_str(&"<blockquote>".repeat(n)); // must return, not crash
     }
 

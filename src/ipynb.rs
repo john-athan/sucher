@@ -367,7 +367,10 @@ mod tests {
     #[test]
     fn language_defaults_to_python() {
         let nb = json!({"cells": [{"cell_type": "code", "source": "print(1)", "outputs": []}]});
-        assert!(notebook_to_markdown(&nb).contains("```python\n"), "default lang");
+        assert!(
+            notebook_to_markdown(&nb).contains("```python\n"),
+            "default lang"
+        );
     }
 
     #[test]
@@ -391,7 +394,10 @@ mod tests {
                 "data": {"text/plain": "2"}
             }]
         }]});
-        assert!(notebook_to_markdown(&nb).contains("```text\n2\n```"), "result text");
+        assert!(
+            notebook_to_markdown(&nb).contains("```text\n2\n```"),
+            "result text"
+        );
     }
 
     #[test]
