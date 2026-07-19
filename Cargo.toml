@@ -27,7 +27,7 @@ quick-xml = "0.41"
 flate2 = "1"
 tar = "0.4"
 resvg = "0.47"
-toml = "0.8"
+toml = "1.1"
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
 # Jupyter notebook (.ipynb) parsing — a JSON document of cells.
