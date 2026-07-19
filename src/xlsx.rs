@@ -471,10 +471,8 @@ where
                     row[col] = resolved;
                     col += 1;
                 }
-                b"row" => {
-                    if on_row(std::mem::take(&mut row)) {
-                        return;
-                    }
+                b"row" if on_row(std::mem::take(&mut row)) => {
+                    return;
                 }
                 _ => {}
             },

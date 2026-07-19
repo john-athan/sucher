@@ -102,7 +102,7 @@ fn children(entries: &[Entry], cwd: &str) -> Vec<Node> {
             }),
         }
     }
-    files.sort_by(|a, b| a.label.to_lowercase().cmp(&b.label.to_lowercase()));
+    files.sort_by_key(|a| a.label.to_lowercase());
     let mut out: Vec<Node> = dirs
         .into_iter()
         .map(|d| Node {

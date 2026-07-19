@@ -435,10 +435,8 @@ fn raw_text(node: &Handle, depth: usize) -> String {
     for child in node.children.borrow().iter() {
         match &child.data {
             NodeData::Text { contents } => s.push_str(&contents.borrow()),
-            NodeData::Element { .. } => {
-                if !skip(&tag_of(child).unwrap()) {
-                    s.push_str(&raw_text(child, depth + 1));
-                }
+            NodeData::Element { .. } if !skip(&tag_of(child).unwrap()) => {
+                s.push_str(&raw_text(child, depth + 1));
             }
             _ => {}
         }
