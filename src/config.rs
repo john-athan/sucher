@@ -611,58 +611,47 @@ mod tests {
     #[test]
     fn git_precedence_and_default() {
         // CLI (the --no-git flag) wins outright.
-        assert_eq!(
-            resolve_git(Some(false), Some("true".into()), Some(true)),
-            false
-        );
+        assert!(!resolve_git(Some(false), Some("true".into()), Some(true)));
         // No CLI → a recognised env spelling wins over the file.
-        assert_eq!(resolve_git(None, Some("no".into()), Some(true)), false);
+        assert!(!resolve_git(None, Some("no".into()), Some(true)));
         // Unparseable env → falls through to the file value (forgiving).
-        assert_eq!(resolve_git(None, Some("bogus".into()), Some(false)), false);
+        assert!(!resolve_git(None, Some("bogus".into()), Some(false)));
         // No CLI/env → the file value.
-        assert_eq!(resolve_git(None, None, Some(false)), false);
+        assert!(!resolve_git(None, None, Some(false)));
         // Nothing set → the built-in default (on).
-        assert_eq!(resolve_git(None, None, None), true);
+        assert!(resolve_git(None, None, None));
     }
 
     #[test]
     fn mouse_precedence_and_default() {
         // CLI (the --no-mouse flag) wins outright.
-        assert_eq!(
-            resolve_mouse(Some(false), Some("true".into()), Some(true)),
-            false
-        );
+        assert!(!resolve_mouse(Some(false), Some("true".into()), Some(true)));
         // No CLI → a recognised env spelling wins over the file.
-        assert_eq!(resolve_mouse(None, Some("off".into()), Some(true)), false);
+        assert!(!resolve_mouse(None, Some("off".into()), Some(true)));
         // Unparseable env → falls through to the file value (forgiving).
-        assert_eq!(
-            resolve_mouse(None, Some("bogus".into()), Some(false)),
-            false
-        );
+        assert!(!resolve_mouse(None, Some("bogus".into()), Some(false)));
         // No CLI/env → the file value.
-        assert_eq!(resolve_mouse(None, None, Some(false)), false);
+        assert!(!resolve_mouse(None, None, Some(false)));
         // Nothing set → the built-in default (on).
-        assert_eq!(resolve_mouse(None, None, None), true);
+        assert!(resolve_mouse(None, None, None));
     }
 
     #[test]
     fn animate_precedence_and_default() {
         // CLI (the --no-animate flag) wins outright.
-        assert_eq!(
-            resolve_animate(Some(false), Some("true".into()), Some(true)),
-            false
-        );
+        assert!(!resolve_animate(
+            Some(false),
+            Some("true".into()),
+            Some(true)
+        ));
         // No CLI → a recognised env spelling wins over the file.
-        assert_eq!(resolve_animate(None, Some("off".into()), Some(true)), false);
+        assert!(!resolve_animate(None, Some("off".into()), Some(true)));
         // Unparseable env → falls through to the file value (forgiving).
-        assert_eq!(
-            resolve_animate(None, Some("bogus".into()), Some(false)),
-            false
-        );
+        assert!(!resolve_animate(None, Some("bogus".into()), Some(false)));
         // No CLI/env → the file value.
-        assert_eq!(resolve_animate(None, None, Some(false)), false);
+        assert!(!resolve_animate(None, None, Some(false)));
         // Nothing set → the built-in default (on).
-        assert_eq!(resolve_animate(None, None, None), true);
+        assert!(resolve_animate(None, None, None));
     }
 
     #[test]

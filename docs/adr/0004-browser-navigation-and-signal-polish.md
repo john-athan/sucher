@@ -58,6 +58,16 @@ column between the icon and the name. Clean files get no marker. Recomputed on
 every `load()` (cheap, correct after directory changes); a stale gutter after an
 in-place edit is acceptable and refreshes on the next navigation.
 
+*Amendment (2026-07): repo HEAD on the breadcrumb row.* When the viewed dir is
+in a repo, a third subprocess — `git status --porcelain=v2 --branch
+--untracked-files=no -z` — reads the `# branch.*` headers (branch name or
+detached oid, ahead/behind vs upstream), parsed by a pure `parse_head`. The
+readout renders right-aligned on the breadcrumb row as `⎇ branch ↑a ↓b ●`
+(dirty dot = non-empty status map; glyphs go powerline under `icons = nerd`,
+pure ASCII under `icons = none`), dropped whole when it would collide with the
+path (the crumbs always win). Same `git` toggle; only fetched when `status_map`
+already found a repo, so non-repo dirs pay nothing extra.
+
 *Rejected — `git2`/libgit2 dependency:* heavy native build for what two piped
 git commands do; the subprocess path also inherits the user's exact git
 semantics (ignores, submodules) for free. *Config:* `git = true|false`

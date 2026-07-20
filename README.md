@@ -179,6 +179,10 @@ selection = "#26324a"
   marker (`●` modified · `+` added · `?` untracked · `✗` deleted · `»` renamed ·
   `!` conflict); directories aggregate their descendants' changes. Absent
   outside a repo or with `git = false`.
+- **Repo HEAD readout** — inside a repo, the breadcrumb row shows the current
+  branch (or detached commit) right-aligned, with ahead/behind arrows vs the
+  upstream and a `●` dot when the tree is dirty: `⎇ main ↑2 ↓1 ●`. Follows the
+  same `git` toggle as the gutter.
 - **Mouse** — click a file row to select it, click the highlighted row to open
   it (or enter a folder); click a breadcrumb segment to jump there; in the
   three-column layout click the left pane to go up; scroll the wheel to move the

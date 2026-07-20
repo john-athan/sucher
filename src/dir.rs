@@ -374,6 +374,10 @@ struct App {
     // `load`. `None` when git is disabled, git is absent, or `cwd` isn't a repo —
     // in which case the gutter is not drawn and the layout is the pre-git render.
     git: Option<std::collections::HashMap<String, GitStatus>>,
+    // The repo HEAD (branch / detached oid / ahead-behind) shown right-aligned on
+    // the breadcrumb row. Refreshed with `git` on every `load`; `None` outside a
+    // repo (or git disabled/absent), which keeps the crumb row pre-git identical.
+    head: Option<git::RepoHead>,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
     // The parent directory's entries, already ordered by `sort` — the cache
@@ -592,6 +596,7 @@ pub fn run(
         layout,
         git_enabled,
         git: None,
+        head: None,
         all: Vec::new(),
         view: Vec::new(),
         parent: Vec::new(),
@@ -720,6 +725,14 @@ impl App {
         // which the pane renderer treats as "no gutter" (byte-for-byte pre-git).
         self.git = if self.git_enabled {
             git::status_map(&self.cwd)
+        } else {
+            None
+        };
+        // HEAD identity for the breadcrumb row. Only fetched when `status_map`
+        // found a repo (`git` is `Some`), so non-repo dirs pay zero extra
+        // subprocess cost; `--untracked-files=no` keeps the call ms-cheap.
+        self.head = if self.git.is_some() {
+            git::head_info(&self.cwd)
         } else {
             None
         };
@@ -2133,6 +2146,25 @@ impl App {
             prev_ends_slash = label.ends_with('/');
         }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
+
+        // Repo HEAD readout, right-aligned on the same row (ADR 0004, D2
+        // amendment): `⎇ branch ↑a ↓b ●` — branch (or detached short oid),
+        // ahead/behind vs upstream when set, and a dirty dot when the status map
+        // is non-empty. Dropped whole when it would collide with the crumbs (the
+        // path always wins) — `x` is the column right after the last crumb.
+        if let Some(head) = &self.head {
+            let dirty = self.git.as_ref().is_some_and(|m| !m.is_empty());
+            let git_spans = head_spans(head, dirty, self.icons);
+            let w: u16 = git_spans
+                .iter()
+                .map(|s| s.content.chars().count() as u16)
+                .sum();
+            let right = area.x + area.width;
+            if w > 0 && x + 2 + w <= right {
+                let rect = Rect::new(right - w, area.y, w, 1);
+                f.render_widget(Paragraph::new(Line::from(git_spans)), rect);
+            }
+        }
     }
 
     fn render_preview(&mut self, f: &mut Frame, area: Rect) {
@@ -3128,6 +3160,61 @@ fn head_text(path: &Path, max_bytes: usize, max_lines: usize) -> Option<String> 
 /// outside home is root-anchored: the first segment is `/` (target = `/`) and
 /// each component follows, so `/usr/bin` yields `[("/", /), ("usr", /usr),
 /// ("bin", /usr/bin)]`. The filesystem root itself is the single segment `/`.
+/// PURE: compose the right-aligned repo-HEAD readout for the breadcrumb row
+/// (ADR 0004, D2 amendment): `⎇ branch ↑a ↓b ●` plus a trailing pad space.
+///
+/// - The branch glyph tracks the icon mode: powerline `` under Nerd, `⎇`
+///   under Unicode, and the ASCII label `git:` under None (which also swaps
+///   `↑/↓/●` for `+n/-n/*` so the row stays pure ASCII).
+/// - Identity is the branch name, or `@<short-oid>` when HEAD is detached; an
+///   unborn repo (no branch, no commit — not reachable via porcelain, but
+///   defensive) yields an empty vec, which the caller draws as nothing.
+/// - Ahead/behind arrows appear only when the upstream exists AND the count is
+///   non-zero; `dirty` appends the dot when the status map has entries.
+fn head_spans(head: &git::RepoHead, dirty: bool, icons: IconMode) -> Vec<Span<'static>> {
+    let name = match (&head.branch, &head.oid_short) {
+        (Some(branch), _) => branch.clone(),
+        (None, Some(oid)) => format!("@{oid}"),
+        (None, None) => return Vec::new(),
+    };
+    let p = theme::palette();
+    let ascii = icons == IconMode::None;
+    let glyph = match icons {
+        IconMode::Nerd => "\u{e0a0}",
+        IconMode::Unicode => "⎇",
+        IconMode::None => "git:",
+    };
+    let mut spans = vec![
+        Span::styled(glyph.to_string(), Style::default().fg(p.dim)),
+        Span::raw(" "),
+        Span::styled(name, Style::default().fg(p.accent)),
+    ];
+    if let Some((ahead, behind)) = head.ahead_behind {
+        if ahead > 0 {
+            let txt = if ascii {
+                format!(" +{ahead}")
+            } else {
+                format!(" ↑{ahead}")
+            };
+            spans.push(Span::styled(txt, Style::default().fg(p.sheet)));
+        }
+        if behind > 0 {
+            let txt = if ascii {
+                format!(" -{behind}")
+            } else {
+                format!(" ↓{behind}")
+            };
+            spans.push(Span::styled(txt, Style::default().fg(p.pdf)));
+        }
+    }
+    if dirty {
+        let dot = if ascii { " *" } else { " ●" };
+        spans.push(Span::styled(dot.to_string(), Style::default().fg(p.doc)));
+    }
+    spans.push(Span::raw(" "));
+    spans
+}
+
 fn crumb_segments(cwd: &Path, home: Option<&Path>) -> Vec<(String, PathBuf)> {
     // Under home: anchor on `~`, then append each remaining component.
     if let Some(home) = home {
@@ -3445,7 +3532,7 @@ mod tests {
             modified: None,
             snippet: None,
         };
-        let mut v = vec![
+        let mut v = [
             hit("zzz.txt"),
             hit("src/b.rs"),
             hit("src/a.rs"),
@@ -3531,6 +3618,70 @@ mod tests {
                 ("etc".to_string(), PathBuf::from("/etc")),
             ]
         );
+    }
+
+    /// Flatten spans to the plain text the row would show.
+    fn spans_text(spans: &[Span<'_>]) -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn head_spans_branch_ahead_behind_dirty() {
+        let head = git::RepoHead {
+            branch: Some("main".to_string()),
+            oid_short: Some("0123456".to_string()),
+            ahead_behind: Some((2, 1)),
+        };
+        let s = head_spans(&head, true, IconMode::Unicode);
+        assert_eq!(spans_text(&s), "⎇ main ↑2 ↓1 ● ");
+    }
+
+    #[test]
+    fn head_spans_in_sync_clean_is_just_the_branch() {
+        let head = git::RepoHead {
+            branch: Some("main".to_string()),
+            oid_short: Some("0123456".to_string()),
+            ahead_behind: Some((0, 0)),
+        };
+        assert_eq!(
+            spans_text(&head_spans(&head, false, IconMode::Unicode)),
+            "⎇ main "
+        );
+    }
+
+    #[test]
+    fn head_spans_detached_shows_short_oid() {
+        let head = git::RepoHead {
+            branch: None,
+            oid_short: Some("abc1234".to_string()),
+            ahead_behind: None,
+        };
+        assert_eq!(
+            spans_text(&head_spans(&head, false, IconMode::Nerd)),
+            "\u{e0a0} @abc1234 "
+        );
+    }
+
+    #[test]
+    fn head_spans_ascii_mode_is_pure_ascii() {
+        let head = git::RepoHead {
+            branch: Some("feat/x".to_string()),
+            oid_short: Some("abc1234".to_string()),
+            ahead_behind: Some((3, 0)),
+        };
+        let text = spans_text(&head_spans(&head, true, IconMode::None));
+        assert_eq!(text, "git: feat/x +3 * ");
+        assert!(text.is_ascii());
+    }
+
+    #[test]
+    fn head_spans_unborn_repo_renders_nothing() {
+        let head = git::RepoHead {
+            branch: None,
+            oid_short: None,
+            ahead_behind: None,
+        };
+        assert!(head_spans(&head, true, IconMode::Unicode).is_empty());
     }
 
     #[test]

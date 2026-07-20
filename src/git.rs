@@ -93,6 +93,88 @@ impl GitStatus {
 ///    --ignored=no` — NUL-separated, repo-root-relative `XY path` records.
 ///
 /// The records are parsed (handling the `-z` rename quirk) and handed to
+/// The repo's HEAD identity for the breadcrumb line (ADR 0004, D2 amendment):
+/// which branch (or detached commit) the viewed directory is on, and how far it
+/// sits from its upstream. Fetched once per `load()` alongside [`status_map`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RepoHead {
+    /// Current branch name; `None` when HEAD is detached.
+    pub branch: Option<String>,
+    /// Abbreviated (7-char) HEAD commit id; `None` on an unborn branch
+    /// (porcelain reports `branch.oid (initial)` before the first commit).
+    pub oid_short: Option<String>,
+    /// `(ahead, behind)` relative to the configured upstream; `None` when no
+    /// upstream is set (porcelain omits the `branch.ab` header then).
+    pub ahead_behind: Option<(u32, u32)>,
+}
+
+/// Read the repo HEAD for `dir`, or `None` when it isn't a repo (or `git` is
+/// absent). Thin IO: ONE subprocess — `git status --porcelain=v2 --branch
+/// --untracked-files=no -z` — whose `# branch.*` headers carry everything
+/// ([`parse_head`] is the pure part). `--untracked-files=no` skips the
+/// untracked-file walk, so this stays cheap even in huge dirty trees; the entry
+/// records after the headers are simply ignored.
+pub fn head_info(dir: &Path) -> Option<RepoHead> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "--untracked-files=no",
+            "-z",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    Some(parse_head(text.split('\0')))
+}
+
+/// PURE: extract [`RepoHead`] from porcelain-v2 NUL-separated fields. Only the
+/// `# branch.*` headers matter:
+/// - `# branch.oid <oid|(initial)>` — full commit id, shortened to 7 chars;
+///   `(initial)` (unborn branch) maps to `None`.
+/// - `# branch.head <name|(detached)>` — branch name; `(detached)` maps to `None`.
+/// - `# branch.ab +<ahead> -<behind>` — present only with an upstream.
+///
+/// Non-header fields (the status entries) are skipped, so the same stream that
+/// feeds the gutter could feed this too.
+pub fn parse_head<'a>(fields: impl Iterator<Item = &'a str>) -> RepoHead {
+    let mut head = RepoHead {
+        branch: None,
+        oid_short: None,
+        ahead_behind: None,
+    };
+    for field in fields {
+        let Some(rest) = field.strip_prefix("# branch.") else {
+            continue;
+        };
+        if let Some(oid) = rest.strip_prefix("oid ") {
+            if oid != "(initial)" {
+                let short: String = oid.chars().take(7).collect();
+                head.oid_short = Some(short);
+            }
+        } else if let Some(name) = rest.strip_prefix("head ") {
+            if name != "(detached)" {
+                head.branch = Some(name.to_string());
+            }
+        } else if let Some(ab) = rest.strip_prefix("ab ") {
+            // `+<ahead> -<behind>`; malformed input just leaves `None`.
+            let mut parts = ab.split(' ');
+            let ahead = parts.next().and_then(|s| s.strip_prefix('+')?.parse().ok());
+            let behind = parts.next().and_then(|s| s.strip_prefix('-')?.parse().ok());
+            if let (Some(a), Some(b)) = (ahead, behind) {
+                head.ahead_behind = Some((a, b));
+            }
+        }
+    }
+    head
+}
+
 /// [`resolve`] with the prefix. Recomputed on every `load()` per D2.
 pub fn status_map(dir: &Path) -> Option<HashMap<String, GitStatus>> {
     // 1. Locate the repo and this dir's prefix. Any failure ⇒ not a repo.
@@ -376,6 +458,52 @@ mod tests {
                 (" M".to_string(), "other.rs".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn parse_head_reads_branch_oid_and_ab() {
+        let fields = [
+            "# branch.oid 0123456789abcdef0123456789abcdef01234567",
+            "# branch.head main",
+            "# branch.upstream origin/main",
+            "# branch.ab +2 -1",
+            "1 .M N... 100644 100644 100644 aaa bbb src/lib.rs", // entry: ignored
+        ];
+        let head = parse_head(fields.into_iter());
+        assert_eq!(head.branch.as_deref(), Some("main"));
+        assert_eq!(head.oid_short.as_deref(), Some("0123456"));
+        assert_eq!(head.ahead_behind, Some((2, 1)));
+    }
+
+    #[test]
+    fn parse_head_detached_has_no_branch() {
+        let fields = [
+            "# branch.oid 0123456789abcdef0123456789abcdef01234567",
+            "# branch.head (detached)",
+        ];
+        let head = parse_head(fields.into_iter());
+        assert_eq!(head.branch, None);
+        assert_eq!(head.oid_short.as_deref(), Some("0123456"));
+        assert_eq!(head.ahead_behind, None);
+    }
+
+    #[test]
+    fn parse_head_unborn_branch_has_no_oid() {
+        // Fresh `git init`: a named branch with no commit yet.
+        let fields = ["# branch.oid (initial)", "# branch.head main"];
+        let head = parse_head(fields.into_iter());
+        assert_eq!(head.branch.as_deref(), Some("main"));
+        assert_eq!(head.oid_short, None);
+        assert_eq!(head.ahead_behind, None);
+    }
+
+    #[test]
+    fn parse_head_no_upstream_leaves_ab_none() {
+        let fields = [
+            "# branch.oid 0123456789abcdef0123456789abcdef01234567",
+            "# branch.head feat/x",
+        ];
+        assert_eq!(parse_head(fields.into_iter()).ahead_behind, None);
     }
 
     #[test]

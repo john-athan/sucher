@@ -231,8 +231,11 @@ pub fn token_color(kind: TokenKind) -> Color {
 mod tests {
     use super::*;
 
+    /// A named built-in palette constructor, for table-driven tests.
+    type NamedPalette = (&'static str, fn() -> Palette);
+
     /// Every built-in palette, for table-driven tests.
-    const BUILTINS: &[(&str, fn() -> Palette)] = &[
+    const BUILTINS: &[NamedPalette] = &[
         ("sucher-dark", Palette::sucher_dark),
         ("sucher-light", Palette::sucher_light),
         ("catppuccin-mocha", Palette::catppuccin_mocha),
