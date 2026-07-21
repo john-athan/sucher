@@ -17,7 +17,7 @@ exclude = ["assets/", ".github/", "docs/", "Makefile"]
 # so `cargo install --no-default-features` yields the lean ~26 MB viewer without
 # it. `cargo install sucher` gets it.
 default = ["data"]
-data = ["dep:duckdb"]
+data = ["dep:duckdb", "dep:rusqlite"]
 
 [profile.release]
 opt-level = 3
@@ -54,13 +54,16 @@ markup5ever_rcdom = "0.39"
 # cache dir on first use), so `cargo install sucher` is self-contained; poppler
 # remains the fallback when embedding is skipped.
 pdfium-render = "0.8.37"
-# Data files (ADR 0016): Parquet, JSONL, SQLite, DuckDB behind one embedded SQL
-# engine. `bundled` compiles DuckDB from vendored source (no build-time download,
-# no runtime network), so `cargo install sucher` is self-contained. Optional and
-# default-on via the `data` feature; every connection runs with
-# `autoinstall_known_extensions=false` so reading a data file never touches the
-# network — the offline guarantee is enforced, not assumed.
-duckdb = { version = "1", features = ["bundled"], optional = true }
+# Data files (ADR 0016). DuckDB reads Parquet, JSONL and native DuckDB databases;
+# its Parquet/JSON readers are statically linked via the `parquet`/`json` features
+# (NOT loadable extensions), so they work with zero network. `bundled` compiles
+# DuckDB from vendored source — no build-time download, no runtime install.
+duckdb = { version = "1", features = ["bundled", "parquet", "json"], optional = true }
+# SQLite is read with rusqlite's statically-bundled libsqlite, NOT DuckDB: DuckDB's
+# sqlite_scanner is a loadable extension only (no static feature exists) and would
+# auto-install over the network on first use, breaking sucher's offline guarantee.
+# rusqlite is the SQLite-native engine, fully static and offline (ADR 0016).
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.

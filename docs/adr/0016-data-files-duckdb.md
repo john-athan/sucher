@@ -31,12 +31,30 @@ Viewer ≠ format: just as `.docx`/`.pptx`/`.html` reduce to the markdown viewer
 (ADR 0010), `Format::Data` reduces to the grid viewer. The streaming `.xlsx` and
 CSV backends are **not touched** — they remain the fast path for spreadsheets.
 
+> **Correction (post-CI, 2026-07-21).** The original decision below assumed
+> DuckDB read *all four* formats offline, including SQLite via its scanner. That
+> was wrong: the initial spike ran on a machine whose `~/.duckdb/extensions`
+> cache had been populated by an earlier network auto-install, so the SQLite (and
+> even Parquet) reads only *appeared* statically bundled. On a clean machine (CI,
+> or an empty `extension_directory`) the truth is:
+> - **Parquet and JSON are static** — but only when the `duckdb` crate's
+>   `parquet` and `json` **features** are enabled (they compile those readers
+>   into libduckdb). They are not in the default `bundled` set.
+> - **The SQLite scanner has no static feature at all** (`libduckdb-sys` exposes
+>   `parquet`/`json` but no `sqlite`); it is loadable-only and auto-installs over
+>   the network on first use.
+>
+> So DuckDB is kept for Parquet / JSONL / native DuckDB (all static + offline via
+> the `parquet`+`json` features), and **SQLite is read with `rusqlite`** — its own
+> statically-bundled engine — rather than compromising the offline guarantee. See
+> the updated "Offline" and "SQLite" sections and "Spike evidence".
+
 ### Why DuckDB, and why bundled
 
-DuckDB is the reference SQL-on-files engine. One dependency reads **all four**
-target formats and gives real SQL over them — `read_parquet`, `read_json_auto`,
-the SQLite scanner (`ATTACH … (TYPE SQLITE)`), and native DuckDB `ATTACH`. The
-alternatives were weighed and rejected:
+DuckDB is the reference SQL-on-files engine. One dependency reads Parquet, JSONL,
+and native DuckDB databases and gives real SQL over them — `read_parquet`,
+`read_json_auto`, and native `ATTACH`. (SQLite is handled separately; see below.)
+The alternatives were weighed and rejected:
 
 - **Polars** — all-Rust and lighter, but has **no native SQLite reader**, so
   SQLite (a headline developer format) would need a separate `rusqlite` path: a
@@ -61,17 +79,23 @@ network (README "Remote & cloud files"). DuckDB's format readers are *loadable
 extensions*, and DuckDB will by default **auto-install them over the network** on
 first use. That would silently break the offline guarantee.
 
-A spike (see below) confirmed every reader we need is **statically bundled** in
-the `bundled` build and loads from the binary — *not* the network — under:
+With the `parquet` and `json` crate features enabled, those two readers — plus
+native DuckDB `ATTACH` — are compiled **into** libduckdb and are available with
+*no* extension directory and *no* network. Verified on a clean machine by
+pointing `extension_directory` at an empty folder and disabling both auto-flags:
 
 ```sql
-SET autoinstall_known_extensions = false;  -- never touch the network
-SET autoload_known_extensions   = true;    -- load the statically-linked ones
+SET autoinstall_known_extensions = false;  -- never install (never touch network)
+SET autoload_known_extensions    = false;  -- never even load from the on-disk
+                                           -- extension cache; only built-ins work
 ```
 
-Every DuckDB connection sucher opens runs these two pragmas first. `autoinstall
-= false` is the offline guarantee in one line; a reader that is somehow *not*
-bundled fails loudly instead of phoning home.
+Every DuckDB connection sucher opens runs these first. `autoinstall = false` is
+the network guard; `autoload = false` additionally refuses the on-disk extension
+cache, so only the statically-compiled readers (`parquet`, `json`, core) can run
+— a reader that is not built in fails loudly instead of phoning home. This is
+exactly why SQLite cannot go through DuckDB here (its scanner is neither, so it
+would fail under these pragmas) and is read with rusqlite instead.
 
 ### Reading pattern: DESCRIBE for schema, CAST-to-VARCHAR for cells
 
@@ -105,6 +129,22 @@ reads are single-digit-to-low-tens of milliseconds, well inside interactive
 budget. A dedicated service thread (as pdfium uses, ADR 0015) is the documented
 escalation if profiling ever shows a UI stall on pathological files; it is not
 warranted for v1.
+
+### SQLite via rusqlite (not DuckDB)
+
+Because DuckDB's SQLite scanner is loadable-only (would break the offline
+guarantee, see the Correction above), SQLite databases are read with the
+`rusqlite` crate (`bundled`), which statically compiles libsqlite — fully offline,
+no build-time download, no runtime install. This is a second read engine behind
+the same `Book::Data` interface: DuckDB for Parquet/JSONL/DuckDB, rusqlite for
+SQLite. It is *native-engine-per-source*, not a hybrid of interchangeable
+libraries — each file is read by the engine that actually owns its format, and
+both are equally lazy, windowed, and offline. The `:` SQL prompt therefore runs
+DuckDB SQL on a DuckDB-backed source and SQLite SQL on a SQLite file — which is
+the intuitive behaviour (you query a `.db` with SQLite SQL). Both engines expose
+the same internal shape (list tables → sheets, `DESCRIBE`/`PRAGMA` for schema,
+`LIMIT`/`OFFSET` windowing, a query override), so the grid is unaware which one
+backs a given file.
 
 ### Sheets = tables
 
@@ -149,7 +189,8 @@ JSONL → text).
 
 ## Consequences
 
-- New dependency `duckdb` (`bundled`) — one crate, one engine, statically linked.
+- New dependencies `duckdb` (`bundled`, `parquet`, `json`) and `rusqlite`
+  (`bundled`) — the two data engines, both statically linked and offline.
   The binary grows substantially: the release binary rose from ~26 MB to a
   **measured ~65 MB**, and a clean build compiles DuckDB's C++ (minutes, once,
   cached thereafter). This is the real cost;
@@ -165,19 +206,30 @@ JSONL → text).
 - Offline behaviour is enforced in code (`autoinstall = false`) and asserted in
   tests, not left to DuckDB's network-happy defaults.
 
-## Spike evidence (2026-07-21)
+## Spike evidence
 
-`duckdb 1.x` + `features = ["bundled"]`, pragmas `autoinstall=false,
-autoload=true`, no network:
+### Corrected run (2026-07-21, on a *clean* extension dir)
 
-- `read_parquet('…')` — **OK** (bundled).
-- `read_json_auto('…')` on `.jsonl` — **OK** (bundled).
-- `ATTACH '…' (TYPE SQLITE, READ_ONLY)`, list via `information_schema.tables`,
-  read rows — **OK** (SQLite scanner statically bundled; the risk that killed
-  the offline guarantee did not materialise).
-- `ATTACH '…native.duckdb' (READ_ONLY)` — **OK**.
+The decisive test: `duckdb 1.x` + `features = ["bundled", "parquet", "json"]`,
+`SET extension_directory='<empty>'; autoinstall=false; autoload=false` (a
+clean-machine simulation — no cached extensions, no network):
+
+- `read_parquet('…')` — **OK** (static via the `parquet` feature).
+- `read_json_auto('…')` on `.jsonl` — **OK** (static via the `json` feature).
+- `ATTACH '…native.duckdb' (READ_ONLY)` — **OK** (core).
+- `ATTACH '…' (TYPE SQLITE)` — **FAILS**: `Extension "…/sqlite_scanner.duckdb_extension"
+  not found`. This is the finding the first spike missed → SQLite moved to rusqlite.
 - `DESCRIBE <relation>` returns `(name, type)` without executing — **OK**;
   `CAST(col AS VARCHAR)` read returns clean strings incl. ISO dates, Unicode,
   NULL → `None` — **OK**.
-- `COPY … (FORMAT ARROW)` / `read_arrow('…')` — **FAILS** (`arrow` copy/scan
-  function absent) → Arrow files excluded from scope.
+- `COPY … (FORMAT ARROW)` / `read_arrow('…')` — **FAILS** (`arrow` function
+  absent) → Arrow files excluded from scope.
+
+### Original run (2026-07-21) — superseded, kept as the cautionary record
+
+The first spike ran with `autoload=true` on a developer machine whose
+`~/.duckdb/extensions` cache already held network-installed `parquet` and
+`sqlite_scanner` extensions (from an earlier default-pragma run). It therefore
+reported SQLite `ATTACH` as "statically bundled — OK", which CI disproved on a
+clean runner. Lesson: prove offline claims with an **empty `extension_directory`**,
+never against a developer's populated cache.

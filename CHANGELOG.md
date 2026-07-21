@@ -12,12 +12,14 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 - **Data files open in the grid, with an interactive SQL prompt.** Parquet
   (`.parquet` `.pq`), newline-delimited JSON (`.jsonl` `.ndjson`), SQLite
   (`.sqlite` `.sqlite3` `.db` `.db3`), and DuckDB (`.duckdb` `.ddb`) now render
-  in the existing spreadsheet grid, backed by a new `DataBook` that embeds
-  **DuckDB** (statically bundled from vendored source). Databases are opened
-  **read-only** and each table becomes a sheet (switch with `Tab`); Parquet/JSONL
-  are a single sheet named for the file stem. Columns keep their real names and
-  types, and DuckDB's canonical text gives correct ISO dates/timestamps with NULL
-  shown blank — no serial-number date wart. Press `:` in the grid for a live
+  in the existing spreadsheet grid, backed by a new `DataBook` with two native,
+  fully-static engines behind one interface: **DuckDB** (statically bundled from
+  vendored source) reads Parquet/JSONL/DuckDB, and **rusqlite**'s bundled
+  libsqlite reads SQLite — each format read by the engine that owns it, both
+  offline. Databases are opened **read-only** and each table becomes a sheet
+  (switch with `Tab`); Parquet/JSONL are a single sheet named for the file stem.
+  Columns keep their real names, and dates/timestamps render as ISO text with
+  NULL shown blank — no serial-number date wart. Press `:` in the grid for a live
   **SQL prompt** over the current file: the result replaces the view (schema,
   rows, and `/` search follow it), you can `FROM <stem>` a single-file source or
   `FROM <table>`/join across a database's tables, a parse/bind error keeps your
@@ -25,9 +27,10 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
   Reads are **lazy and uncapped** — the grid windows rows on demand (`LIMIT`/
   `OFFSET` + prefetch) and takes the schema from `DESCRIBE` without executing, so
   a file opens instantly regardless of size and scrolls to the end with no row
-  cap (unlike the streaming `.xlsx`/CSV backends). It is **fully offline**: every
-  DuckDB connection sets `autoinstall_known_extensions = false`, so reading a
-  data file never touches the network. Behind the **default-on `data` Cargo
+  cap (unlike the streaming `.xlsx`/CSV backends). It is **fully offline**: both
+  engines are statically compiled in and every DuckDB connection disables
+  extension autoinstall/autoload, so reading a data file never touches the
+  network. Behind the **default-on `data` Cargo
   feature** — `cargo install sucher` includes it (release binary ~65 MB with
   DuckDB bundled), and `cargo install --no-default-features` builds the lean
   ~26 MB binary without it. Arrow/Feather files are deliberately excluded (the

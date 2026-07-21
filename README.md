@@ -86,7 +86,8 @@ real pixels where one is available.
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
 | Data — columnar | `.parquet` `.pq` | embedded **DuckDB** (`read_parquet`) |
 | Data — line JSON | `.jsonl` `.ndjson` | DuckDB (`read_json_auto`) |
-| Data — database | `.sqlite` `.sqlite3` `.db` `.db3`, `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
+| Data — SQLite | `.sqlite` `.sqlite3` `.db` `.db3` | [`rusqlite`](https://crates.io/crates/rusqlite) bundled libsqlite (read-only); each table a sheet |
+| Data — DuckDB | `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
 | PDF | `.pdf` | [pdfium](https://crates.io/crates/pdfium-render) (Chrome's engine) → graphics, poppler `pdftocairo` fallback |
 | Image | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.tiff` `.ico` | [`image`](https://crates.io/crates/image) → graphics |
 | SVG | `.svg` | [`resvg`](https://crates.io/crates/resvg) rasteriser → picture above scrolling source |
@@ -116,7 +117,9 @@ listing for directories).
 
 The files most technical users live in — **Parquet, newline-delimited JSON,
 SQLite and DuckDB databases** — open in the same grid as spreadsheets, backed by
-an **embedded DuckDB**. Real column names sit in the header (not `A`/`B`/`C`),
+two native, statically-bundled engines behind one interface: an **embedded
+DuckDB** reads Parquet/JSONL/DuckDB, and **rusqlite**'s bundled libsqlite reads
+SQLite. Real column names sit in the header (not `A`/`B`/`C`),
 DuckDB's canonical text gives correct ISO dates and timestamps (NULL renders
 blank), and a database opens **read-only** with each table as its own sheet —
 `Tab` (or `[` / `]`) cycles them, and the SQL prompt can join across them.
@@ -146,8 +149,9 @@ It's **lazy and uncapped.** The grid windows rows on demand (`LIMIT`/`OFFSET`
 plus a prefetch cache) and reads the schema from `DESCRIBE`, which doesn't
 execute the query — so a file opens instantly regardless of size and scrolls to
 the end with **no row cap**, unlike the streaming `.xlsx`/CSV backends. And it's
-**fully offline**: every DuckDB connection sets `autoinstall_known_extensions =
-false`, so reading a data file never reaches for the network, in keeping with
+**fully offline**: both engines are compiled in statically and DuckDB has
+extension autoinstall/autoload disabled, so reading a data file never reaches for
+the network, in keeping with
 sucher's local-viewer identity.
 
 Data files sit behind the **default-on `data` Cargo feature**, so
@@ -412,9 +416,9 @@ markdown.rs    parse → logical lines + TOC + links; width-aware wrap/layout
 tui.rs         markdown TUI (scroll / TOC / search / links)
 text.rs        source/plain-text TUI (highlight, no wrap, pan + search)
 plain.rs       one-shot markdown renderer (kitty text-sizing in pipe mode)
-sheet.rs       grid UI over a `Book` (eager calamine, streaming xlsx, or lazy DuckDB)
+sheet.rs       grid UI over a `Book` (eager calamine, streaming xlsx, or lazy data)
 xlsx.rs        background streaming .xlsx reader (zip + quick-xml), capped
-data.rs        DuckDB-backed data files (Parquet/JSONL/SQLite/DuckDB) + SQL prompt
+data.rs        data files via DuckDB (Parquet/JSONL/DuckDB) + rusqlite (SQLite) + SQL prompt
 pdf.rs         pdfium page raster (poppler fallback) + prefetch/cache, sized to the display
 pdfium.rs      runtime-loaded pdfium service thread (one parse, resident doc)
 imgview.rs     image viewer
@@ -446,11 +450,13 @@ Design notes:
   previous one. A row cap bounds pathological files.
 - **Three Book backends.** The grid's `Book` seam now spans three shapes — eager
   (`MemBook`, calamine/CSV), capped-streaming (`StreamBook`, `.xlsx`), and
-  lazy-DuckDB (`DataBook`, `data.rs`) — each the right fit for its source. Data
-  reads are **lazy & uncapped** (window on demand, schema via `DESCRIBE` without
-  executing) and **offline** (`autoinstall_known_extensions = false` on every
-  connection). The `:` SQL prompt is the grid's first capability that varies by
-  backend — a method on `Book`, not a new viewer (ADR 0016).
+  lazy-data (`DataBook`, `data.rs`) — each the right fit for its source. `DataBook`
+  itself holds two native engines behind one interface: DuckDB (Parquet/JSONL/
+  DuckDB) and rusqlite (SQLite), chosen so every format is read by the engine that
+  owns it and stays **offline** (both statically compiled; DuckDB extension
+  autoinstall/autoload off). Data reads are **lazy & uncapped** (window on demand,
+  schema without executing). The `:` SQL prompt is the grid's first capability
+  that varies by backend — a method on `Book`, not a new viewer (ADR 0016).
 - **PDF renders to display size** (`pdftocairo -scale-to-x <terminal px>`)
   rather than a fixed DPI, and caches rendered pages.
 - **Video** drives a single long-lived `ffmpeg` process emitting raw frames; a
