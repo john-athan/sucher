@@ -2988,7 +2988,7 @@ dependencies = [
 
 [[package]]
 name = "sucher"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "calamine",
  "crossterm",
@@ -3008,6 +3008,7 @@ dependencies = [
  "resvg",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "tar",
  "toml",
  "zip",

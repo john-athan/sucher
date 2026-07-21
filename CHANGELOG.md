@@ -6,6 +6,18 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-21
+
+### Changed
+- **The fast pdfium PDF path is now self-contained.** `build.rs` fetches the
+  pinned, checksum-verified `libpdfium` for the build target and embeds it in the
+  binary (materialised to a cache dir on first use), so a plain `cargo install
+  sucher` gets the ~100× render speed with no extra steps — no `make`, no sidecar.
+  Build-time fetch is soft: offline builds, docs.rs, an unsupported target, or
+  `SUCHER_PDFIUM_NO_EMBED=1` skip embedding and fall back to poppler. An external
+  `libpdfium` (via `SUCHER_PDFIUM_LIB` or beside the binary) still overrides the
+  embedded copy. The Makefile no longer needs any pdfium plumbing.
+
 ## [0.3.0] - 2026-07-21
 
 ### Added

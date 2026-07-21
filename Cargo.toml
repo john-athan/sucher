@@ -1,6 +1,6 @@
 [package]
 name = "sucher"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["Jonathan Kaleve <jonathan.kaleve@gmail.com>"]
 description = "A fast terminal viewer for files that are awkward in a browser: markdown, spreadsheets, PDF, images, video, docx, pptx, Keynote, archives and binary."
@@ -41,9 +41,18 @@ html5ever = "0.39"
 markup5ever_rcdom = "0.39"
 # PDF rendering via pdfium (ADR 0015): Chrome's PDF engine, ~100× faster than
 # shelling to poppler on scanned pages. The library is loaded at *runtime* (never
-# linked), so this dep only pulls in the binding layer; libpdfium is fetched by
-# `make` and resolved at runtime, with poppler as the fallback.
+# linked), so this dep only pulls in the binding layer. `build.rs` fetches the
+# pinned libpdfium for the target and embeds it in the binary (materialised to a
+# cache dir on first use), so `cargo install sucher` is self-contained; poppler
+# remains the fallback when embedding is skipped.
 pdfium-render = "0.8.37"
+
+# build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
+# libpdfium for the build target. flate2/tar mirror the runtime deps' versions.
+[build-dependencies]
+sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
 
 [[bin]]
 name = "sucher"

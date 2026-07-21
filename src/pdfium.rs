@@ -15,6 +15,8 @@
 // (`pdf::render_page`) whenever the library is absent or a specific render fails.
 
 use image::DynamicImage;
+#[cfg(pdfium_embedded)]
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
@@ -196,7 +198,66 @@ fn resolve_library_path() -> Option<PathBuf> {
             return Some(cand);
         }
     }
+    // Last resort: the copy embedded in the binary by build.rs, materialised to a
+    // cache dir. This is what makes `cargo install sucher` self-contained; an
+    // external copy above still wins so a user can override with a newer library.
+    #[cfg(pdfium_embedded)]
+    if let Some(p) = materialize_embedded() {
+        return Some(p);
+    }
     None
+}
+
+/// The pdfium library embedded at build time (present only when build.rs fetched
+/// it for this target). Written to a cache file on first use because `dlopen`
+/// needs a real path, not memory.
+#[cfg(pdfium_embedded)]
+const EMBEDDED_LIB: &[u8] = include_bytes!(env!("SUCHER_PDFIUM_EMBEDDED"));
+#[cfg(pdfium_embedded)]
+const EMBEDDED_LIBFILE: &str = env!("SUCHER_PDFIUM_LIBFILE");
+
+/// Write the embedded library to `<cache>/sucher/` (once) and return its path.
+/// The file name carries a content stamp so a library update lands a new file and
+/// never loads a stale one; writes are atomic (temp + rename) so two first-run
+/// processes can't tear each other's file.
+#[cfg(pdfium_embedded)]
+fn materialize_embedded() -> Option<PathBuf> {
+    let stamp = fnv1a_hex(EMBEDDED_LIB);
+    let ext = Path::new(EMBEDDED_LIBFILE)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    let name = if ext.is_empty() {
+        format!("libpdfium-{stamp}")
+    } else {
+        format!("libpdfium-{stamp}.{ext}")
+    };
+    let dir = dirs::cache_dir()?.join("sucher");
+    std::fs::create_dir_all(&dir).ok()?;
+    let path = dir.join(&name);
+    if path.is_file()
+        && std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) == EMBEDDED_LIB.len() as u64
+    {
+        return Some(path); // already extracted
+    }
+    let tmp = dir.join(format!(".{stamp}.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, EMBEDDED_LIB).ok()?;
+    // rename is atomic within a dir; a lost race just means the other copy wins.
+    let _ = std::fs::rename(&tmp, &path);
+    let _ = std::fs::remove_file(&tmp);
+    path.is_file().then_some(path)
+}
+
+/// 8-hex-char FNV-1a of `bytes` — a cheap content stamp for the cache file name
+/// (not a security hash; the bytes are already trusted, compiled into the binary).
+#[cfg(pdfium_embedded)]
+fn fnv1a_hex(bytes: &[u8]) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{:08x}", h as u32)
 }
 
 #[cfg(test)]
@@ -237,16 +298,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    // End-to-end render through the real service thread. Ignored by default (needs
-    // a real libpdfium); run with the library available:
-    //   SUCHER_PDFIUM_LIB=/path/to/libpdfium.dylib \
-    //     cargo test --bin sucher -- --ignored --test-threads=1 renders_a_real_pdf
+    // End-to-end render through the real service thread. Ignored by default; run
+    // with a build that embedded pdfium (the default) or `SUCHER_PDFIUM_LIB` set:
+    //   cargo test --bin sucher -- --ignored --test-threads=1 renders_a_real_pdf
     #[test]
     #[ignore]
     fn renders_a_real_pdf() {
         assert!(
             available(),
-            "set SUCHER_PDFIUM_LIB to a real libpdfium to run this test"
+            "pdfium unavailable — build with embedding or set SUCHER_PDFIUM_LIB"
         );
         let img = render("samples/sample.pdf", 0, 800).expect("render page 0");
         assert_eq!(img.width(), 800, "should raster to the requested width");

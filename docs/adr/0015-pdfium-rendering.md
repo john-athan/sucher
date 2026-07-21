@@ -47,11 +47,19 @@ fallback.**
 - **Runtime loading, never linked.** No prebuilt *static* pdfium exists
   (bblanchon ships dynamic only; building from source needs depot_tools + gn, a
   multi-GB, non-reproducible build). So `libpdfium` is loaded at runtime via
-  `libloading` through `pdfium-render`. `make` fetches a **pinned, checksum-
-  verified** release (`chromium/7961`) into `vendor/` and copies it beside the
-  binary (`make install` → next to `sucher`; `make build`/`run` → into `target/`).
-  Resolution order at runtime: `$SUCHER_PDFIUM_LIB` → next to the executable →
-  system lib dirs.
+  `libloading` through `pdfium-render`.
+- **Embedded so `cargo install sucher` is self-contained.** `cargo install`
+  copies only the binary — a sidecar library or a `make` step can't reach those
+  users. So `build.rs` downloads the **pinned, checksum-verified** release
+  (`chromium/7961`) for the build target and the crate `include_bytes!`s it; at
+  first use the bytes are written to a cache file (`dlopen` needs a real path) and
+  loaded. The fetch is **soft**: an unsupported target, offline build, docs.rs,
+  missing `curl`, or a checksum mismatch skips embedding with a warning and the
+  build still succeeds (→ poppler at runtime). Offline/CI builds can supply the
+  library locally via `SUCHER_PDFIUM_LIB` or `vendor/pdfium/<lib>`, or opt out
+  with `SUCHER_PDFIUM_NO_EMBED=1`. Resolution order at runtime: `$SUCHER_PDFIUM_LIB`
+  → next to the executable → system lib dirs → the embedded copy — so an external
+  library always overrides the bundled one.
 - **One service thread.** pdfium's bindings/document handles are `!Send` and its
   library must be initialised exactly once per process, so all rendering runs on a
   single dedicated thread that owns the `Pdfium` instance and caches the
@@ -73,11 +81,14 @@ platform loses the feature outright.
 - Opening a scanned PDF drops from seconds to tens of milliseconds; the async +
   prefetch machinery (added alongside) now almost always hits warm cache. The
   browser preview poster benefits identically.
-- New dependency `pdfium-render`, plus a ~7 MB `libpdfium` shipped beside the
-  binary. Supply chain is pinned (release tag + SHA-256 for the primary target)
-  and auditable by cargo-deny; the lib is gitignored, fetched by `make`.
-- Poppler remains a required-ish runtime fallback (and still powers the
-  non-interactive `pdftotext`/`pdfinfo` paths), so `pdftocairo` is not removed.
-- Cross-platform checksums beyond mac-arm64 are not yet pinned; the Makefile
-  verifies where a checksum is known and otherwise trusts the pinned tag over TLS
-  with a warning — a follow-up can fill the rest in.
+- New dependency `pdfium-render` (+ `sha2`/`flate2`/`tar` as build-deps), and the
+  binary grows ~7 MB (the embedded library). Supply chain is pinned (release tag +
+  per-target SHA-256, verified in `build.rs`) and auditable by cargo-deny.
+- `cargo install sucher` now delivers the fast path with no extra steps; the
+  build downloads ~3.4 MB once per target. Reproducible offline builds pre-place
+  the library or set `SUCHER_PDFIUM_NO_EMBED=1`.
+- Poppler remains the runtime fallback (and still powers the non-interactive
+  `pdftotext`/`pdfinfo` paths), so `pdftocairo` is not removed.
+- Build-time network + a `curl` shell-out are the cost of a self-contained binary
+  without vendoring a multi-megabyte blob per platform into the crate (which would
+  blow the crates.io size limit). Both fail soft.

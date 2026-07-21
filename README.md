@@ -117,11 +117,16 @@ cd sucher
 make install        # builds --release, installs `sucher`, symlinks `s`
 ```
 
-`make install` puts the binary in `~/.cargo/bin`, creates a short `s` symlink
-next to it, and fetches + installs the pinned **`libpdfium`** (checksum-verified)
-alongside for the fast PDF path. (`make uninstall` removes all three.) A plain
-`cargo install` skips the library — PDFs then render via the poppler fallback;
-point `SUCHER_PDFIUM_LIB` at a `libpdfium` to enable the fast path there.
+`make install` puts the binary in `~/.cargo/bin` and creates a short `s` symlink
+next to it. (`make uninstall` removes both.)
+
+The fast PDF path is **self-contained**: the build fetches the pinned,
+checksum-verified **`libpdfium`** for your platform and embeds it in the binary
+(materialised to a cache dir on first use), so `cargo install sucher` gets it
+with no extra steps. Offline or sandboxed builds skip the fetch and fall back to
+poppler; pre-place the library at `vendor/pdfium/<lib>` or point
+`SUCHER_PDFIUM_LIB` at one to build the fast path offline, or set
+`SUCHER_PDFIUM_NO_EMBED=1` to opt out.
 
 ### Optional runtime dependencies
 
@@ -132,8 +137,8 @@ These are only needed for the formats that shell out to them:
 | PDF (fallback) | poppler (`pdftocairo`, `pdfinfo`, `pdftotext`) | `brew install poppler` |
 | Video | `ffmpeg`, `ffprobe` | `brew install ffmpeg` |
 
-The fast PDF path uses `libpdfium`, fetched automatically by `make install`;
-poppler remains the fallback and still powers `pdfinfo`/`pdftotext`.
+The fast PDF path uses `libpdfium`, embedded in the binary at build time (no
+install step); poppler remains the fallback and still powers `pdfinfo`/`pdftotext`.
 
 For pixel-perfect images / PDF / video, use a terminal with a graphics
 protocol — **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
@@ -282,9 +287,9 @@ ref, value, and load progress.
 when its library is present — a scanned page opens in ~30 ms instead of the
 several seconds poppler's software rasteriser takes — and falls back to poppler
 otherwise. Pages render off-thread with the neighbours prefetched, so stepping
-through is near-instant; visited pages stay cached. `make install` fetches and
-installs `libpdfium` automatically; set `SUCHER_PDFIUM_LIB` to point at a
-specific copy.
+through is near-instant; visited pages stay cached. `libpdfium` is embedded in
+the binary at build time, so the fast path works out of the box; set
+`SUCHER_PDFIUM_LIB` to override with a specific copy.
 
 **Image** — `x` open in native app · `q` quit.
 
