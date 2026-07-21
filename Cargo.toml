@@ -39,6 +39,11 @@ grep-regex = "0.1"
 # HTML → markdown (ADR 0008): a real HTML5 parser, not the XML reader.
 html5ever = "0.39"
 markup5ever_rcdom = "0.39"
+# PDF rendering via pdfium (ADR 0015): Chrome's PDF engine, ~100× faster than
+# shelling to poppler on scanned pages. The library is loaded at *runtime* (never
+# linked), so this dep only pulls in the binding layer; libpdfium is fetched by
+# `make` and resolved at runtime, with poppler as the fallback.
+pdfium-render = "0.8.37"
 
 [[bin]]
 name = "sucher"

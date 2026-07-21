@@ -16,9 +16,15 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
   (ADR 0004 amendment). Follows the existing `git` toggle.
 
 ### Changed
+- **PDF rendering now uses pdfium** (Chrome's engine) when its runtime library is
+  present, falling back to poppler otherwise (ADR 0015). Scanned pages that took
+  ~4.5 s with `pdftocairo` now render in ~30–50 ms (~100×); parsing is done once
+  in-process instead of re-spawned per page, with no PNG-to-temp round-trip.
+  `make`/`make install` fetch the pinned, checksum-verified `libpdfium` and place
+  it beside the binary; `SUCHER_PDFIUM_LIB` overrides the path.
 - PDF pages render on a background thread and the current page's neighbours are
   prefetched into the cache, so stepping through a PDF no longer blocks the UI on
-  each `pdftocairo` spawn — navigation is near-instant once neighbours are warm.
+  each render — navigation is near-instant once neighbours are warm.
 
 ### Fixed
 - New clippy 1.97 lints (`bool_assert_comparison`, `type_complexity`,

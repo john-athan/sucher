@@ -1,6 +1,8 @@
-// PDF viewer. Rasterizes pages with poppler's `pdftoppm` (no native linking),
-// displays them via the terminal graphics protocol, and pages with the
-// keyboard. Falls back to `pdftotext` for the non-interactive dump.
+// PDF viewer. Rasterizes pages via pdfium when its runtime library is present
+// (ADR 0015 — Chrome's engine, ~100× faster on scanned pages), falling back to
+// poppler's `pdftocairo` otherwise. Displays pages via the terminal graphics
+// protocol and pages with the keyboard; renders happen off-thread with the
+// neighbours prefetched. Falls back to `pdftotext` for the non-interactive dump.
 
 use crate::media::ImagePane;
 use crate::util;
@@ -82,9 +84,23 @@ fn render_page(path: &str, page: usize, target_w: u32) -> Result<image::DynamicI
     Ok(img)
 }
 
+/// Rasterise `page` (0-based) at `target_w` px wide, via pdfium when its library
+/// is present, otherwise via poppler. pdfium is ~100× faster on scanned pages and
+/// avoids a per-page subprocess; poppler is the always-available fallback, used
+/// both when the library is absent and when a specific pdfium render fails (a
+/// document pdfium rejects but poppler can still draw). See ADR 0015.
+fn render(path: &str, page: usize, target_w: u32) -> Result<image::DynamicImage, String> {
+    if crate::pdfium::available() {
+        if let Ok(img) = crate::pdfium::render(path, page, target_w) {
+            return Ok(img);
+        }
+    }
+    render_page(path, page, target_w)
+}
+
 /// First page rastered to an image, for the directory browser's preview pane.
 pub fn poster(path: &str) -> Result<image::DynamicImage, String> {
-    render_page(path, 0, target_px_width().min(900))
+    render(path, 0, target_px_width().min(900))
 }
 
 struct PdfApp {
@@ -160,7 +176,7 @@ impl PdfApp {
         let path = self.path.clone();
         let w = self.target_w;
         thread::spawn(move || {
-            let _ = tx.send((page, render_page(&path, page, w)));
+            let _ = tx.send((page, render(&path, page, w)));
         });
     }
 

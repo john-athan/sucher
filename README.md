@@ -75,7 +75,7 @@ real pixels where one is available.
 | Text / source | code, `.txt` `.log`, config files, extension-less UTF-8 text | syntax-highlighted text viewer (no soft-wrap; pan + search) |
 | Spreadsheet | `.xlsx`, `.xlsm` | streaming reader (zip + quick-xml) on a worker thread |
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
-| PDF | `.pdf` | poppler `pdftocairo` → graphics |
+| PDF | `.pdf` | [pdfium](https://crates.io/crates/pdfium-render) (Chrome's engine) → graphics, poppler `pdftocairo` fallback |
 | Image | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.tiff` `.ico` | [`image`](https://crates.io/crates/image) → graphics |
 | SVG | `.svg` | [`resvg`](https://crates.io/crates/resvg) rasteriser → picture above scrolling source |
 | Video | `.mp4` `.mov` `.mkv` `.webm` `.avi` `.m4v` | streaming `ffmpeg` pipe → graphics |
@@ -117,8 +117,11 @@ cd sucher
 make install        # builds --release, installs `sucher`, symlinks `s`
 ```
 
-`make install` puts the binary in `~/.cargo/bin` and creates a short `s`
-symlink next to it. (`make uninstall` removes both.)
+`make install` puts the binary in `~/.cargo/bin`, creates a short `s` symlink
+next to it, and fetches + installs the pinned **`libpdfium`** (checksum-verified)
+alongside for the fast PDF path. (`make uninstall` removes all three.) A plain
+`cargo install` skips the library — PDFs then render via the poppler fallback;
+point `SUCHER_PDFIUM_LIB` at a `libpdfium` to enable the fast path there.
 
 ### Optional runtime dependencies
 
@@ -126,8 +129,11 @@ These are only needed for the formats that shell out to them:
 
 | For | Needs | macOS |
 |-----|-------|-------|
-| PDF | poppler (`pdftocairo`, `pdfinfo`, `pdftotext`) | `brew install poppler` |
+| PDF (fallback) | poppler (`pdftocairo`, `pdfinfo`, `pdftotext`) | `brew install poppler` |
 | Video | `ffmpeg`, `ffprobe` | `brew install ffmpeg` |
+
+The fast PDF path uses `libpdfium`, fetched automatically by `make install`;
+poppler remains the fallback and still powers `pdfinfo`/`pdftotext`.
 
 For pixel-perfect images / PDF / video, use a terminal with a graphics
 protocol — **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
@@ -272,9 +278,13 @@ top/bottom · `h`/`l` pan long lines · `/` search (`n`/`N` next/prev) ·
 ref, value, and load progress.
 
 **PDF** — `j`/`k`, `←`/`→`, or `space` page · `g`/`G` first/last ·
-`x` open in native app · `q` quit. Pages render off-thread and the neighbours of
-the current page are prefetched, so stepping through is near-instant; visited
-pages stay cached.
+`x` open in native app · `q` quit. Rendered with **pdfium** (Chrome's engine)
+when its library is present — a scanned page opens in ~30 ms instead of the
+several seconds poppler's software rasteriser takes — and falls back to poppler
+otherwise. Pages render off-thread with the neighbours prefetched, so stepping
+through is near-instant; visited pages stay cached. `make install` fetches and
+installs `libpdfium` automatically; set `SUCHER_PDFIUM_LIB` to point at a
+specific copy.
 
 **Image** — `x` open in native app · `q` quit.
 
@@ -341,7 +351,8 @@ text.rs        source/plain-text TUI (highlight, no wrap, pan + search)
 plain.rs       one-shot markdown renderer (kitty text-sizing in pipe mode)
 sheet.rs       grid UI over a `Book` (streaming xlsx, or eager calamine)
 xlsx.rs        background streaming .xlsx reader (zip + quick-xml), capped
-pdf.rs         poppler page raster + page cache, sized to the display
+pdf.rs         pdfium page raster (poppler fallback) + prefetch/cache, sized to the display
+pdfium.rs      runtime-loaded pdfium service thread (one parse, resident doc)
 imgview.rs     image viewer
 svg.rs         resvg rasteriser + split image/source viewer
 video.rs       streaming ffmpeg pipe + background decoder, paced w/ frame-drop

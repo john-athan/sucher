@@ -27,6 +27,7 @@ mod keynote;
 mod markdown;
 mod media;
 mod pdf;
+mod pdfium;
 mod plain;
 mod pptx;
 mod query;
