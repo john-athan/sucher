@@ -28,6 +28,10 @@ pub enum Format {
     Html,
     Text,
     Sheet,
+    // Only ever constructed with the `data` feature (ADR 0016); the variant is
+    // unconditional so the grid's dispatch arms compile in the lean build too.
+    #[cfg_attr(not(feature = "data"), allow(dead_code))]
+    Data,
     Image,
     Svg,
     Pdf,
@@ -60,6 +64,13 @@ pub fn classify(ext: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
         "html" | "htm" | "xhtml" => Format::Html,
         // Tabular data — including csv/tsv — belongs in the grid viewer.
         "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" | "csv" | "tsv" => Format::Sheet,
+        // Data files (ADR 0016): the DuckDB-backed grid — Parquet, JSONL, SQLite,
+        // DuckDB. Feature-gated: without `data` these fall through to their prior
+        // handling (parquet → Binary hexdump, jsonl → Text), so the classifier is
+        // honest about what this build can actually open.
+        #[cfg(feature = "data")]
+        "parquet" | "pq" | "jsonl" | "ndjson" | "sqlite" | "sqlite3" | "db" | "db3" | "duckdb"
+        | "ddb" => Format::Data,
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "ico" => Format::Image,
         "pdf" => Format::Pdf,
         "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" => Format::Video,
@@ -135,6 +146,7 @@ impl Format {
             Format::Html => "HTML",
             Format::Text => "Text",
             Format::Sheet => "Spreadsheet",
+            Format::Data => "Data",
             Format::Image => "Image",
             Format::Svg => "SVG",
             Format::Pdf => "PDF",
@@ -160,6 +172,9 @@ impl Format {
             Format::Audio => "♪",
             Format::Pdf => "▤",
             Format::Sheet => "▤",
+            // A distinct glyph from Sheet's — same grid viewer, different family
+            // (queryable data files vs spreadsheets).
+            Format::Data => "▨",
             Format::Keynote => "▦",
             Format::Markdown
             | Format::Html
@@ -181,7 +196,8 @@ impl Format {
             Format::Image | Format::Svg | Format::Keynote => theme::palette().image,
             Format::Video | Format::Audio => theme::palette().video,
             Format::Pdf => theme::palette().pdf,
-            Format::Sheet => theme::palette().sheet,
+            // Data files share the tabular colour — they open in the same grid.
+            Format::Sheet | Format::Data => theme::palette().sheet,
             Format::Markdown
             | Format::Html
             | Format::Docx
@@ -203,6 +219,7 @@ impl Format {
                 | Format::Html
                 | Format::Text
                 | Format::Sheet
+                | Format::Data
                 | Format::Image
                 | Format::Svg
                 | Format::Pdf
@@ -277,6 +294,20 @@ mod tests {
         // A Jupyter notebook is a JSON document of cells reduced to markdown.
         assert_eq!(by_ext("ipynb"), Format::Ipynb);
         assert!(by_ext("ipynb").opens());
+    }
+
+    #[cfg(feature = "data")]
+    #[test]
+    fn data_files_are_their_own_format() {
+        // ADR 0016: DuckDB-backed grid — Parquet, JSONL, SQLite, DuckDB.
+        for e in [
+            "parquet", "pq", "jsonl", "ndjson", "sqlite", "sqlite3", "db", "db3", "duckdb", "ddb",
+        ] {
+            assert_eq!(by_ext(e), Format::Data, "{e} should be Data");
+        }
+        assert!(by_ext("parquet").opens());
+        // A `.json` file is usually one document, not a table — it stays Text.
+        assert_eq!(by_ext("json"), Format::Text);
     }
 
     #[test]

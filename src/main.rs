@@ -12,6 +12,8 @@
 mod anim;
 mod archive;
 mod config;
+#[cfg(feature = "data")]
+mod data;
 mod dir;
 mod docx;
 mod epub;
@@ -147,7 +149,9 @@ fn run() -> ExitCode {
                 }
             }
         }
-        Format::Sheet => {
+        // Data files (ADR 0016) reduce to the same grid viewer as spreadsheets;
+        // `Format::Data` is only ever produced when the `data` feature is on.
+        Format::Sheet | Format::Data => {
             if interactive {
                 if let Err(e) = sheet::run(title, path.clone()) {
                     eprintln!("sucher: {e}");
@@ -400,7 +404,7 @@ pub fn open_interactive(path: &str) {
     let r = match format {
         Format::Image => imgview::run(title, path.to_string()),
         Format::Svg => svg::run(title, path.to_string()),
-        Format::Sheet => sheet::run(title, path.to_string()),
+        Format::Sheet | Format::Data => sheet::run(title, path.to_string()),
         Format::Pdf => pdf::run(title, path.to_string()),
         Format::Video => video::run(title, path.to_string()),
         Format::Text => text::run(title, path.to_string()),

@@ -11,6 +11,14 @@ keywords = ["tui", "viewer", "markdown", "pdf", "spreadsheet"]
 categories = ["command-line-utilities", "visualization"]
 exclude = ["assets/", ".github/", "docs/", "Makefile"]
 
+[features]
+# `data` (default-on) is the DuckDB-backed data-file family — Parquet, JSONL,
+# SQLite, DuckDB (ADR 0016). It bundles DuckDB (a C++ build; ~30 MB of binary),
+# so `cargo install --no-default-features` yields the lean ~26 MB viewer without
+# it. `cargo install sucher` gets it.
+default = ["data"]
+data = ["dep:duckdb"]
+
 [profile.release]
 opt-level = 3
 lto = "thin"
@@ -46,6 +54,13 @@ markup5ever_rcdom = "0.39"
 # cache dir on first use), so `cargo install sucher` is self-contained; poppler
 # remains the fallback when embedding is skipped.
 pdfium-render = "0.8.37"
+# Data files (ADR 0016): Parquet, JSONL, SQLite, DuckDB behind one embedded SQL
+# engine. `bundled` compiles DuckDB from vendored source (no build-time download,
+# no runtime network), so `cargo install sucher` is self-contained. Optional and
+# default-on via the `data` feature; every connection runs with
+# `autoinstall_known_extensions=false` so reading a data file never touches the
+# network — the offline guarantee is enforced, not assumed.
+duckdb = { version = "1", features = ["bundled"], optional = true }
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.

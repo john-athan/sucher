@@ -203,9 +203,25 @@ fn parse_delimited(text: &str, delim: char) -> Vec<Vec<String>> {
 
 // ---- unified book ----
 
+/// True for the data-file extensions the DuckDB backend owns (ADR 0016). Kept in
+/// one place so `Book::open` and `preview_grid` route identically.
+#[cfg(feature = "data")]
+fn is_data_ext(lower: &str) -> bool {
+    [
+        ".parquet", ".pq", ".jsonl", ".ndjson", ".sqlite", ".sqlite3", ".db", ".db3", ".duckdb",
+        ".ddb",
+    ]
+    .iter()
+    .any(|e| lower.ends_with(e))
+}
+
 enum Book {
     Stream(StreamBook),
     Mem(MemBook),
+    // The DuckDB-backed data-file book (ADR 0016) — Parquet, JSONL, SQLite,
+    // DuckDB. Feature-gated: without `data` these extensions never reach here.
+    #[cfg(feature = "data")]
+    Data(crate::data::DataBook),
 }
 
 impl Book {
@@ -219,6 +235,12 @@ impl Book {
         } else if lower.ends_with(".tsv") {
             Ok(Book::Mem(MemBook::from_csv(path, '\t')?))
         } else {
+            // Data files (ADR 0016) route to the DuckDB backend before the final
+            // calamine fall-through; without the `data` feature they never match.
+            #[cfg(feature = "data")]
+            if is_data_ext(&lower) {
+                return Ok(Book::Data(crate::data::DataBook::open(path)?));
+            }
             Ok(Book::Mem(MemBook::open(path)?))
         }
     }
@@ -227,6 +249,8 @@ impl Book {
         match self {
             Book::Stream(b) => b.names(),
             Book::Mem(b) => b.sheets.iter().map(|s| s.name.clone()).collect(),
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.names(),
         }
     }
 
@@ -234,6 +258,8 @@ impl Book {
         match self {
             Book::Stream(b) => b.selected(),
             Book::Mem(b) => b.cur,
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.selected(),
         }
     }
 
@@ -245,6 +271,8 @@ impl Book {
                     b.cur = idx;
                 }
             }
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.select(idx),
         }
     }
 
@@ -256,10 +284,25 @@ impl Book {
                 let s = &b.sheets[b.cur];
                 (s.rows.len(), s.ncols, true, b.capped)
             }
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.dims(),
         }
     }
 
-    fn window(&self, r0: usize, r1: usize, c0: usize, c1: usize) -> Vec<Vec<String>> {
+    /// Real column names for backends that have them (the data book), so the grid
+    /// can show named headers instead of A/B/C; `None` keeps the letter headers
+    /// for the spreadsheet backends.
+    fn headers(&self) -> Option<Vec<String>> {
+        match self {
+            Book::Stream(_) | Book::Mem(_) => None,
+            #[cfg(feature = "data")]
+            Book::Data(b) => Some(b.headers()),
+        }
+    }
+
+    // `&mut self`: the data book windows lazily and caches its last fetch, so a
+    // window read can mutate. The eager/streaming backends ignore the mutability.
+    fn window(&mut self, r0: usize, r1: usize, c0: usize, c1: usize) -> Vec<Vec<String>> {
         match self {
             Book::Stream(b) => b.window(r0, r1, c0, c1),
             Book::Mem(b) => {
@@ -272,6 +315,8 @@ impl Book {
                     })
                     .collect()
             }
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.window(r0, r1, c0, c1),
         }
     }
 
@@ -291,6 +336,8 @@ impl Book {
                 }
                 hits
             }
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.find(query),
         }
     }
 }
@@ -358,13 +405,18 @@ pub fn dump(path: &str) -> String {
             std::thread::sleep(Duration::from_millis(50));
         }
         let (rows, ncols, _, capped) = b.dims();
+        // Bound the dump uniformly for EVERY backend: the data book reports an
+        // uncapped real count, so cap the materialised rows at ROW_CAP here to
+        // keep a pipe of a billion-row Parquet from exhausting memory — an honest
+        // cap consistent with how the streaming/CSV backends already truncate.
+        let dump_rows = rows.min(crate::xlsx::ROW_CAP);
         out.push_str(&format!("# {name}\n"));
-        for row in b.window(0, rows, 0, ncols) {
+        for row in b.window(0, dump_rows, 0, ncols) {
             out.push_str(&row.join("\t"));
             out.push('\n');
         }
-        if capped {
-            out.push_str(&format!("(… truncated at {rows} rows)\n"));
+        if capped || rows > dump_rows {
+            out.push_str(&format!("(… truncated at {dump_rows} rows)\n"));
         }
         out.push('\n');
     }
@@ -377,6 +429,23 @@ pub fn dump(path: &str) -> String {
 /// for their first worksheet only. Returns `None` on error or an empty sheet.
 pub fn preview_grid(path: &str, max_rows: usize, max_cols: usize) -> Option<Vec<Vec<String>>> {
     let lower = path.to_lowercase();
+    // Data files (ADR 0016): open the DuckDB book and take its first rows, with
+    // the real column names prepended as a header row so the preview is
+    // meaningful. Bounded and synchronous — DuckDB reads only the window asked
+    // for. Any error (bad file, missing table) degrades to no preview.
+    #[cfg(feature = "data")]
+    if is_data_ext(&lower) {
+        let mut db = crate::data::DataBook::open(path).ok()?;
+        let (_, ncols, _, _) = db.dims();
+        let cols = ncols.min(max_cols);
+        let mut rows: Vec<Vec<String>> = Vec::new();
+        rows.push(db.headers().into_iter().take(cols).collect());
+        for row in db.window(0, max_rows, 0, cols) {
+            rows.push(row);
+        }
+        rows.truncate(max_rows);
+        return if rows.is_empty() { None } else { Some(rows) };
+    }
     let mut rows: Vec<Vec<String>> = if lower.ends_with(".csv") || lower.ends_with(".tsv") {
         let delim = if lower.ends_with(".tsv") { '\t' } else { ',' };
         // A preview may legitimately show only a prefix, so read at most
@@ -610,13 +679,16 @@ impl SheetApp {
             .add_modifier(Modifier::BOLD);
         let gutter_style = Style::default().fg(Color::Rgb(110, 110, 122));
 
+        // Data files carry real column names; spreadsheets keep the A/B/C letters.
+        let headers = self.book.headers();
         let mut lines: Vec<Line> = Vec::new();
         let mut hdr = vec![Span::styled(" ".repeat(GUTTER as usize), gutter_style)];
         for c in self.col_off..col_end {
-            hdr.push(Span::styled(
-                center(&col_name(c), COL_W as usize),
-                header_style,
-            ));
+            let label = headers
+                .as_ref()
+                .and_then(|h| h.get(c).cloned())
+                .unwrap_or_else(|| col_name(c));
+            hdr.push(Span::styled(center(&label, COL_W as usize), header_style));
         }
         lines.push(Line::from(hdr));
 
@@ -640,9 +712,16 @@ impl SheetApp {
         f.render_widget(Paragraph::new(lines), area);
     }
 
-    fn render_status(&self, f: &mut Frame, area: Rect) {
+    fn render_status(&mut self, f: &mut Frame, area: Rect) {
         let (nrows, _, done, capped) = self.book.dims();
-        let reff = format!("{}{}", col_name(self.sel_col), self.sel_row + 1);
+        // Use the real column name under the cursor when the backend has one
+        // (data files), else the synthesised A/B/C letter (spreadsheets).
+        let col_label = self
+            .book
+            .headers()
+            .and_then(|h| h.get(self.sel_col).cloned())
+            .unwrap_or_else(|| col_name(self.sel_col));
+        let reff = format!("{}{}", col_label, self.sel_row + 1);
         let val = self
             .book
             .window(

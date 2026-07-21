@@ -95,6 +95,7 @@ fn fallback_glyph(fmt: Format) -> &'static str {
         Format::Html => "\u{f13b}",                   // nf-fa-html5
         Format::Text => "\u{f1c9}",                   // nf-fa-file_code_o
         Format::Sheet => "\u{f1c3}",                  // excel
+        Format::Data => "\u{f1c0}",                   // nf-fa-database (data files)
         Format::Image | Format::Svg => "\u{f1c5}",    // image
         Format::Pdf => "\u{f1c1}",                    // pdf
         Format::Video => "\u{f1c8}",                  // video

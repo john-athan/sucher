@@ -1760,7 +1760,8 @@ impl App {
                     Err(_) => self.preview.push(no_preview()),
                 }
             }
-            Format::Sheet => self.preview_sheet(&path),
+            // Data files (ADR 0016) preview through the same grid as spreadsheets.
+            Format::Sheet | Format::Data => self.preview_sheet(&path),
             Format::Archive => self.preview_archive(&path),
             Format::Binary => self.preview_hex(&path),
             // Everything else — including Image/Pdf/Video whose pixel attempt
