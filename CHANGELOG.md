@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-21
+
 ### Added
 - **Open in native app** — `x` hands the selected/open file to the OS default
   application, from the directory browser and from every fullscreen viewer. The
