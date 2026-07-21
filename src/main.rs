@@ -200,7 +200,7 @@ fn run() -> ExitCode {
             } else {
                 Vec::new()
             };
-            return render_markdown(interactive, title, src, images);
+            return render_markdown(interactive, title, src, images, Some(path.clone()));
         }
         Format::Pptx => {
             let src = match pptx::to_markdown(&path) {
@@ -215,7 +215,7 @@ fn run() -> ExitCode {
             } else {
                 Vec::new()
             };
-            return render_markdown(interactive, title, src, images);
+            return render_markdown(interactive, title, src, images, Some(path.clone()));
         }
         Format::Epub => {
             let src = match epub::to_markdown(&path) {
@@ -230,7 +230,7 @@ fn run() -> ExitCode {
             } else {
                 Vec::new()
             };
-            return render_markdown(interactive, title, src, images);
+            return render_markdown(interactive, title, src, images, Some(path.clone()));
         }
         Format::Ipynb => {
             let src = match ipynb::to_markdown(&path) {
@@ -245,7 +245,7 @@ fn run() -> ExitCode {
             } else {
                 Vec::new()
             };
-            return render_markdown(interactive, title, src, images);
+            return render_markdown(interactive, title, src, images, Some(path.clone()));
         }
         Format::Keynote => {
             if interactive {
@@ -295,7 +295,7 @@ fn run() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            return render_markdown(interactive, title, src, Vec::new());
+            return render_markdown(interactive, title, src, Vec::new(), Some(path.clone()));
         }
         // HTML is reduced to markdown (ADR 0008) and rendered like docx/pptx.
         Format::Html => {
@@ -306,7 +306,7 @@ fn run() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            return render_markdown(interactive, title, src, Vec::new());
+            return render_markdown(interactive, title, src, Vec::new(), Some(path.clone()));
         }
         // Recognized but still unopenable (legacy office binaries, audio): show
         // a metadata line, never feed the bytes to a renderer.
@@ -369,9 +369,10 @@ fn render_markdown(
     title: String,
     src: String,
     images: Vec<std::path::PathBuf>,
+    open: Option<String>,
 ) -> ExitCode {
     if interactive {
-        if let Err(e) = tui::run(title, src, images) {
+        if let Err(e) = tui::run(title, src, images, open) {
             eprintln!("sucher: {e}");
             return ExitCode::FAILURE;
         }
@@ -403,28 +404,28 @@ pub fn open_interactive(path: &str) {
         Format::Video => video::run(title, path.to_string()),
         Format::Text => text::run(title, path.to_string()),
         Format::Docx => match docx::to_markdown(path) {
-            Ok(src) => tui::run(title, src, docx::media(path)),
+            Ok(src) => tui::run(title, src, docx::media(path), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())
             }
         },
         Format::Pptx => match pptx::to_markdown(path) {
-            Ok(src) => tui::run(title, src, pptx::media(path)),
+            Ok(src) => tui::run(title, src, pptx::media(path), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())
             }
         },
         Format::Epub => match epub::to_markdown(path) {
-            Ok(src) => tui::run(title, src, epub::media(path)),
+            Ok(src) => tui::run(title, src, epub::media(path), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())
             }
         },
         Format::Ipynb => match ipynb::to_markdown(path) {
-            Ok(src) => tui::run(title, src, ipynb::media(path)),
+            Ok(src) => tui::run(title, src, ipynb::media(path), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())
@@ -434,14 +435,14 @@ pub fn open_interactive(path: &str) {
         Format::Archive => archive::run(title, path.to_string()),
         Format::Binary => hex::run(title, path.to_string()),
         Format::Markdown => match fs::read_to_string(path) {
-            Ok(src) => tui::run(title, src, Vec::new()),
+            Ok(src) => tui::run(title, src, Vec::new(), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())
             }
         },
         Format::Html => match html::to_markdown(path) {
-            Ok(src) => tui::run(title, src, Vec::new()),
+            Ok(src) => tui::run(title, src, Vec::new(), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())

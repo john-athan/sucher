@@ -27,7 +27,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
     // to the ordinary single-image decode — a static first frame in that case.
     if is_gif(&path) {
         if let Some(frames) = media::decode_frames(Path::new(&path)) {
-            return show_frames(title, frames);
+            return show_frames(title, frames, Some(path));
         }
     }
     // Decode by content, not extension, with explicit pixel limits (ADR 0009):
@@ -45,7 +45,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
             return Ok(());
         }
     };
-    show(title, img)
+    show(title, img, Some(path))
 }
 
 fn is_gif(path: &str) -> bool {
@@ -57,27 +57,35 @@ fn is_gif(path: &str) -> bool {
 
 /// Display an already-decoded still image interactively. Shared by the image
 /// viewer and by formats that surface an embedded raster (e.g. Keynote previews).
-pub fn show(title: String, img: DynamicImage) -> io::Result<()> {
+/// `open` is the on-disk file `x` should hand to the OS default app — the source
+/// document, which for an extracted preview (Keynote) is *not* the decoded image.
+pub fn show(title: String, img: DynamicImage, open: Option<String>) -> io::Result<()> {
     let (w, h) = (img.width(), img.height());
     let mut pane = ImagePane::new()?; // probe graphics before taking the screen
     pane.set(img);
-    run_pane(title, pane, w, h)
+    run_pane(title, pane, w, h, open)
 }
 
 /// Display a decoded animation interactively, looping in place. The status
 /// line's dimensions come from the first frame (all GIF frames share a canvas).
-fn show_frames(title: String, frames: Vec<Frame>) -> io::Result<()> {
+fn show_frames(title: String, frames: Vec<Frame>, open: Option<String>) -> io::Result<()> {
     let (w, h) = (frames[0].img.width(), frames[0].img.height());
     let mut pane = ImagePane::new()?;
     pane.set_animation(frames);
-    run_pane(title, pane, w, h)
+    run_pane(title, pane, w, h, open)
 }
 
 /// Take over the terminal and run the shared loop for a prepared pane (still or
 /// animated). One entry point so both paths share the exact same init/restore.
-fn run_pane(title: String, mut pane: ImagePane, w: u32, h: u32) -> io::Result<()> {
+fn run_pane(
+    title: String,
+    mut pane: ImagePane,
+    w: u32,
+    h: u32,
+    open: Option<String>,
+) -> io::Result<()> {
     let mut term = ratatui::init();
-    let res = main_loop(&mut term, &mut pane, &title, w, h);
+    let res = main_loop(&mut term, &mut pane, &title, w, h, open.as_deref());
     ratatui::restore();
     res
 }
@@ -88,6 +96,7 @@ fn main_loop(
     title: &str,
     w: u32,
     h: u32,
+    open: Option<&str>,
 ) -> io::Result<()> {
     // Full-view OPEN: zoom the picture up from a small centred box to full before
     // the static/animated display begins (ADR 0006 D3). Gated on the global
@@ -105,12 +114,16 @@ fn main_loop(
     let mut dirty = true;
     loop {
         if dirty {
-            term.draw(|f| render(f, pane, title, w, h))?;
+            term.draw(|f| render(f, pane, title, w, h, open.is_some()))?;
             dirty = false;
         }
         if event::poll(poll)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    if let (KeyCode::Char('x'), Some(p)) = (key.code, open) {
+                        crate::util::open_in_native_app(p);
+                        continue;
+                    }
                     if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
                         // Full-view CLOSE: mirror the intro, shrinking the current
                         // frame back down, then exit (ADR 0006 D3). Teardown is
@@ -140,8 +153,9 @@ fn main_loop(
 /// line split off the bottom. Implemented as the `t = 1` case of [`draw_zoom`],
 /// which guarantees the intro's settle frame is pixel-identical to this one —
 /// `zoom_rect(area, 1.0) == area` — so there is no jump when the zoom hands off.
-fn render(f: &mut RtFrame, pane: &mut ImagePane, title: &str, w: u32, h: u32) {
-    draw_zoom(f, pane, title, w, h, 1.0);
+fn render(f: &mut RtFrame, pane: &mut ImagePane, title: &str, w: u32, h: u32, can_open: bool) {
+    let hint = if can_open { "  [x] open" } else { "" };
+    draw_zoom(f, pane, title, w, h, 1.0, hint);
 }
 
 /// Draw one frame of the viewer with the picture scaled to `t` (0 → small centred
@@ -149,13 +163,25 @@ fn render(f: &mut RtFrame, pane: &mut ImagePane, title: &str, w: u32, h: u32) {
 /// but the bottom row, the status line sits on that row, and the image is rendered
 /// into `zoom_rect` of the pane area. `term.draw` clears the buffer each frame, so
 /// the shrinking/growing picture leaves no trail on the surrounding cells.
-fn draw_zoom(f: &mut RtFrame, pane: &mut ImagePane, title: &str, w: u32, h: u32, t: f32) {
+fn draw_zoom(
+    f: &mut RtFrame,
+    pane: &mut ImagePane,
+    title: &str,
+    w: u32,
+    h: u32,
+    t: f32,
+    hint: &str,
+) {
     let area = f.area();
     let chunks = Layout::default()
         .constraints([Constraint::Min(0), Constraint::Length(1)])
         .split(area);
     pane.render(f, zoom_rect(chunks[0], t));
-    status(f, chunks[1], &format!(" {title}   {w}×{h}px   [q] quit"));
+    status(
+        f,
+        chunks[1],
+        &format!(" {title}   {w}×{h}px{hint}   [q] quit"),
+    );
 }
 
 // The open/close zooms are the *graphics* animation path of ADR 0006: every frame
@@ -204,7 +230,7 @@ fn zoom_in(
             break;
         }
         let t = ease_out_cubic(anim.progress(now));
-        term.draw(|f| draw_zoom(f, pane, title, w, h, t))?;
+        term.draw(|f| draw_zoom(f, pane, title, w, h, t, ""))?;
         frames += 1;
     }
     anim::record("open-zoom", frames, anim.elapsed(Instant::now()));
@@ -236,7 +262,7 @@ fn zoom_out(
             break;
         }
         let t = 1.0 - ease_out_cubic(anim.progress(now));
-        term.draw(|f| draw_zoom(f, pane, title, w, h, t))?;
+        term.draw(|f| draw_zoom(f, pane, title, w, h, t, ""))?;
         frames += 1;
     }
     anim::record("close-zoom", frames, anim.elapsed(Instant::now()));

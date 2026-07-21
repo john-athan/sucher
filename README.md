@@ -208,7 +208,8 @@ s <file> | less     # piped: text dump
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l`/`→` open file or enter folder · `h`/`←`/`Backspace` parent ·
-`/` smart filter · `S` recursive search · `o` cycle sort (name/size/modified/ext) ·
+`x` open in native app · `/` smart filter · `S` recursive search ·
+`o` cycle sort (name/size/modified/ext) ·
 `O` reverse sort · `.` toggle dotfiles · `M` two/three-column layout ·
 `t` size/modified column · `?` key overlay · `q` quit. Press `?` for a
 which-key overlay of every binding (it also shows the current sort). Click a
@@ -258,35 +259,40 @@ shown as the **real rendered file** — the differentiator over `fd`/`rg`/`fzf`.
 
 **Markdown** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
 `t` table of contents · `/` search (`n`/`N` next/prev) · `l` link picker ·
-`i` image gallery (for docx/pptx/epub/ipynb embedded media; `n`/`p` cycle) · `?` help ·
-`q` quit.
+`i` image gallery (for docx/pptx/epub/ipynb embedded media; `n`/`p` cycle) ·
+`x` open in native app · `?` help · `q` quit.
 
 **Text / source** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G`
-top/bottom · `h`/`l` pan long lines · `/` search (`n`/`N` next/prev) · `q` quit.
+top/bottom · `h`/`l` pan long lines · `/` search (`n`/`N` next/prev) ·
+`x` open in native app · `q` quit.
 
 **Spreadsheet** — `h`/`j`/`k`/`l` or arrows move cell · `PgUp`/`PgDn` ·
 `g`/`G` top/bottom · `Tab` / `[` `]` switch sheet · `/` search all cells
-(`n`/`N` cycle) · `q` quit. Status bar shows the cell ref, value, and load
-progress.
+(`n`/`N` cycle) · `x` open in native app · `q` quit. Status bar shows the cell
+ref, value, and load progress.
 
-**PDF** — `j`/`k`, `←`/`→`, or `space` page · `g`/`G` first/last · `q` quit.
-Visited pages are cached.
+**PDF** — `j`/`k`, `←`/`→`, or `space` page · `g`/`G` first/last ·
+`x` open in native app · `q` quit. Pages render off-thread and the neighbours of
+the current page are prefetched, so stepping through is near-instant; visited
+pages stay cached.
 
-**Image** — `q` quit.
+**Image** — `x` open in native app · `q` quit.
 
 **SVG** — the rasterised picture fills the top pane; the XML source scrolls
-below it with `j`/`k` `↑`/`↓` · `g`/`G` top/bottom · `q` quit.
+below it with `j`/`k` `↑`/`↓` · `g`/`G` top/bottom · `x` open in native app ·
+`q` quit.
 
 **Video** — auto-plays on open · `space` play/pause · `←`/`→` ±5 s ·
-`↑`/`↓` ±30 s · `,`/`.` frame step · `g`/`G` start/end · `q` quit. No audio.
+`↑`/`↓` ±30 s · `,`/`.` frame step · `g`/`G` start/end · `x` open in native app ·
+`q` quit. No audio.
 
 **Archive** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
-`Enter`/`l` open folder · `h`/`Backspace` parent · `q` quit. A read-only,
-navigable table of contents (path + size) with a breadcrumb; sucher lists and
-lets you browse folders, but never extracts.
+`Enter`/`l` open folder · `h`/`Backspace` parent · `x` open in native app ·
+`q` quit. A read-only, navigable table of contents (path + size) with a
+breadcrumb; sucher lists and lets you browse folders, but never extracts.
 
 **Binary (hex)** — `j`/`k` `↑`/`↓` scroll · `d`/`u` page · `g`/`G` top/end ·
-`q` quit.
+`x` open in native app · `q` quit.
 
 ## Remote filesystems (S3, GCS, …)
 

@@ -313,6 +313,7 @@ impl VideoApp {
                     dirty = true;
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                        KeyCode::Char('x') => util::open_in_native_app(&self.path),
                         KeyCode::Char(' ') => {
                             if self.playing {
                                 self.stop_play();
@@ -357,7 +358,7 @@ impl VideoApp {
         }
         let state = if self.playing { "▶" } else { "⏸" };
         let status = format!(
-            " {}   {} {} / {}   {}×{}@{:.0}fps   [space] play  [←/→] ±5s  [↑/↓] ±30s  [,/.] frame  [q] quit  (no audio)",
+            " {}   {} {} / {}   {}×{}@{:.0}fps   [space] play  [←/→] ±5s  [↑/↓] ±30s  [,/.] frame  [x] open  [q] quit  (no audio)",
             self.title,
             state,
             fmt_time(self.pos),

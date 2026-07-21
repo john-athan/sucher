@@ -28,6 +28,10 @@ enum Mode {
 
 pub struct App {
     title: String,
+    /// Source file on disk for "open in native app" (`x`); the doc shown here is
+    /// a *rendered* form (docx/html → markdown), so this is the original, not the
+    /// markdown. `None` when the source has no file (rendered from stdin).
+    open: Option<String>,
     doc: Rendered,
     display: Vec<Line<'static>>,
     plain: Vec<String>,
@@ -51,7 +55,12 @@ pub struct App {
 
 /// Open a markdown document. `images` are embedded rasters (docx/pptx media)
 /// browsable in a gallery overlay; pass an empty vec for plain markdown.
-pub fn run(title: String, src: String, images: Vec<PathBuf>) -> io::Result<()> {
+pub fn run(
+    title: String,
+    src: String,
+    images: Vec<PathBuf>,
+    open: Option<String>,
+) -> io::Result<()> {
     let doc = Rendered::build(&src);
     // The graphics protocol must be probed over stdio *before* the alternate
     // screen is entered, so build the pane up front — only when there are images
@@ -63,6 +72,7 @@ pub fn run(title: String, src: String, images: Vec<PathBuf>) -> io::Result<()> {
     };
     let mut app = App {
         title,
+        open,
         doc,
         display: Vec::new(),
         plain: Vec::new(),
@@ -272,6 +282,11 @@ impl App {
                     self.load_gallery_image();
                 }
             }
+            KeyCode::Char('x') => {
+                if let Some(p) = &self.open {
+                    crate::util::open_in_native_app(p);
+                }
+            }
             KeyCode::Char('?') => self.mode = Mode::Help,
             _ => {}
         }
@@ -434,8 +449,14 @@ impl App {
         } else {
             String::new()
         };
+        // `[x] open` only when there's a source file to hand to the OS.
+        let open = if self.open.is_some() {
+            "  [x] open"
+        } else {
+            ""
+        };
         let status = format!(
-            " {}%  {} lines   [j/k] scroll  [t] toc  [/] search  [l] links{imgs}  [?] help  [q] quit",
+            " {}%  {} lines   [j/k] scroll  [t] toc  [/] search  [l] links{imgs}{open}  [?] help  [q] quit",
             pct.min(100),
             self.display.len()
         );
@@ -551,6 +572,7 @@ fn render_help(f: &mut Frame, area: Rect) {
         Line::from("  /                search  (n / N = next / prev)"),
         Line::from("  l                link picker"),
         Line::from("  i                image gallery (docx / pptx media)"),
+        Line::from("  x                open in native app  (OS default)"),
         Line::from("  ?                this help"),
         Line::from("  q / Esc          quit / close overlay"),
     ]);

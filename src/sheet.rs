@@ -299,6 +299,7 @@ impl Book {
 
 pub struct SheetApp {
     title: String,
+    path: String,
     book: Book,
     sel_row: usize,
     sel_col: usize,
@@ -320,6 +321,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
     };
     let mut app = SheetApp {
         title,
+        path,
         book,
         sel_row: 0,
         sel_col: 0,
@@ -470,6 +472,7 @@ impl SheetApp {
         let maxc = ncols.saturating_sub(1);
         match code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
             KeyCode::Char('j') | KeyCode::Down => self.sel_row = (self.sel_row + 1).min(maxr),
             KeyCode::Char('k') | KeyCode::Up => self.sel_row = self.sel_row.saturating_sub(1),
             KeyCode::Char('l') | KeyCode::Right => self.sel_col = (self.sel_col + 1).min(maxc),
@@ -682,7 +685,7 @@ impl SheetApp {
                 if done { "" } else { " so far" }
             )
         };
-        let hint = "[/] search [n/N]  [hjkl] move  [Tab] sheet  [q] quit";
+        let hint = "[/] search [n/N]  [hjkl] move  [Tab] sheet  [x] open  [q] quit";
         let text = format!(" {reff}: {val}    {load}{find}");
         let chunks = Layout::default()
             .direction(Direction::Horizontal)

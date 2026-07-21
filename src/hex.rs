@@ -24,6 +24,7 @@ const ROW: usize = 16;
 
 pub struct App {
     title: String,
+    path: String,
     data: Vec<u8>,
     truncated: bool,
     offset: usize,   // top visible row (each row is ROW bytes)
@@ -34,6 +35,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
     let (data, truncated) = read_capped(&path)?;
     let mut app = App {
         title,
+        path,
         data,
         truncated,
         offset: 0,
@@ -98,6 +100,7 @@ impl App {
         let half = (self.viewport_h / 2).max(1) as usize;
         match code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.offset = (self.offset + 1).min(self.max_offset())
             }
@@ -146,7 +149,7 @@ impl App {
             ""
         };
         let status = format!(
-            " {pct}%  {} bytes   [j/k] scroll  [d/u] page  [g/G] top/end  [q] quit{trunc}",
+            " {pct}%  {} bytes   [j/k] scroll  [d/u] page  [g/G] top/end  [x] open  [q] quit{trunc}",
             self.data.len(),
         );
         f.render_widget(

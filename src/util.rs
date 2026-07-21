@@ -177,6 +177,29 @@ pub fn cmd_path_arg(path: &str) -> String {
     }
 }
 
+/// Hand a **local file the user is already viewing** to the OS's default
+/// application ("open in native app"). Unlike [`is_safe_url`] — which gates
+/// *untrusted* link targets embedded in a document (ADR 0009 / S5) — the path
+/// here is one the user explicitly selected or opened in sucher, so no scheme
+/// allow-list applies; the file's own default handler is what "open externally"
+/// means. Still guards the `-`-leading case ([`cmd_path_arg`]) so the path is
+/// never misread as an option, and spawns detached (never blocks the TUI, never
+/// waits on the child) so returning to sucher is instant. Best-effort: a missing
+/// opener binary is silently ignored, matching [`open_url`](crate::tui).
+pub fn open_in_native_app(path: &str) {
+    let arg = cmd_path_arg(path);
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(arg).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = Command::new("xdg-open").arg(arg).spawn();
+    // `rundll32 …FileProtocolHandler` opens via the default handler without a
+    // `cmd` re-parse that a crafted filename could exploit (mirrors `open_url`).
+    #[cfg(target_os = "windows")]
+    let _ = Command::new("rundll32")
+        .args(["url.dll,FileProtocolHandler", &arg])
+        .spawn();
+}
+
 /// Whether `url` (a link target from an *untrusted* document) is one we are
 /// willing to hand to the OS opener (ADR 0009 / S5). Accepts only `http://`,
 /// `https://`, and `mailto:` (scheme matched case-insensitively) and rejects any

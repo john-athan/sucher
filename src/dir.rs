@@ -500,6 +500,11 @@ enum CharAction {
     Top,
     Bottom,
     Open,
+    /// Hand the selected entry to the OS default application ("open in native
+    /// app"). Bound to `x`. Works on any entry — including ones sucher has no
+    /// in-app viewer for (legacy .doc, audio) and directories (opens the file
+    /// manager).
+    OpenExternal,
     Parent,
     Filter,
     /// Enter recursive-search mode (ADR 0007). Bound to `S`.
@@ -528,6 +533,9 @@ fn browse_char(c: char) -> Option<CharAction> {
         'g' => CharAction::Top,
         'G' => CharAction::Bottom,
         'l' => CharAction::Open,
+        // Open the selection in the OS default app. Bound here (not left to
+        // typeahead) so `x` is a motion, never the start of a name search.
+        'x' => CharAction::OpenExternal,
         'h' => CharAction::Parent,
         '/' => CharAction::Filter,
         // Enter recursive search (ADR 0007). Capital `S`; binding it here also
@@ -1450,6 +1458,11 @@ impl App {
                 }
             }
             CharAction::Open => return self.activate(),
+            CharAction::OpenExternal => {
+                if let Some(e) = self.selected() {
+                    crate::util::open_in_native_app(&e.path.to_string_lossy());
+                }
+            }
             CharAction::Parent => self.go_parent(),
             CharAction::Filter => {
                 self.mode = Mode::Filter;
@@ -3012,6 +3025,7 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         row("d / u", "half-page down / up"),
         row("g / G", "top / bottom"),
         row("h / l", "parent / open  (←/→, Enter)"),
+        row("x", "open in native app  (OS default)"),
         row("type…", "jump to a name (typeahead)"),
         Line::from(""),
         heading(" Find"),

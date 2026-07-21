@@ -7,9 +7,18 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 ## [Unreleased]
 
 ### Added
+- **Open in native app** — `x` hands the selected/open file to the OS default
+  application, from the directory browser and from every fullscreen viewer. The
+  *source* file is opened, not the rendered form (docx → the `.docx`, Keynote →
+  the `.key`); works even for formats sucher has no in-app viewer for (ADR 0014).
 - Repo HEAD readout on the browser's breadcrumb row: current branch (or
   detached commit), ahead/behind vs upstream, and a dirty dot — `⎇ main ↑2 ↓1 ●`
   (ADR 0004 amendment). Follows the existing `git` toggle.
+
+### Changed
+- PDF pages render on a background thread and the current page's neighbours are
+  prefetched into the cache, so stepping through a PDF no longer blocks the UI on
+  each `pdftocairo` spawn — navigation is near-instant once neighbours are warm.
 
 ### Fixed
 - New clippy 1.97 lints (`bool_assert_comparison`, `type_complexity`,

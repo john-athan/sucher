@@ -40,6 +40,7 @@ struct Node {
 
 pub struct App {
     title: String,
+    path: String,
     entries: Vec<Entry>,
     cwd: String, // path prefix of the open folder ("" = root, else ends with '/')
     view: Vec<Node>,
@@ -58,6 +59,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
     };
     let mut app = App {
         title,
+        path,
         entries,
         cwd: String::new(),
         view: Vec::new(),
@@ -306,6 +308,7 @@ impl App {
         let half = (self.viewport_h / 2).max(1) as usize;
         match code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
             KeyCode::Char('j') | KeyCode::Down => self.sel = (self.sel + 1).min(max),
             KeyCode::Char('k') | KeyCode::Up => self.sel = self.sel.saturating_sub(1),
             KeyCode::Char('d') | KeyCode::PageDown => self.sel = (self.sel + half).min(max),
@@ -372,7 +375,7 @@ impl App {
         f.render_widget(Paragraph::new(Text::from(rows)).block(block), body[0]);
 
         let status = format!(
-            " {} items   [j/k] move  [Enter/l] open folder  [h/Bksp] up  [g/G] top/end  [q] quit",
+            " {} items   [j/k] move  [Enter/l] open folder  [h/Bksp] up  [g/G] top/end  [x] open  [q] quit",
             self.view.len(),
         );
         f.render_widget(

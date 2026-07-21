@@ -35,6 +35,7 @@ enum Mode {
 
 pub struct App {
     title: String,
+    path: String,
     lines: Vec<String>,  // raw lines, for search + horizontal slicing
     hl: Vec<Vec<Token>>, // one token row per raw line (1:1 with `lines`)
     lang: String,        // detected language label, or "text"
@@ -60,6 +61,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
 
     let mut app = App {
         title,
+        path,
         lines,
         hl,
         lang: language_name(&ext),
@@ -178,6 +180,7 @@ impl App {
         let half = (self.viewport_h / 2).max(1) as usize;
         match code {
             KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.offset = (self.offset + 1).min(self.max_offset())
             }
@@ -289,7 +292,7 @@ impl App {
             ""
         };
         let status = format!(
-            " {}%  {} lines   [j/k] scroll  [h/l] pan  [/] search  [n/N] next/prev  [q] quit   {}{}",
+            " {}%  {} lines   [j/k] scroll  [h/l] pan  [/] search  [n/N] next/prev  [x] open  [q] quit   {}{}",
             pct.min(100),
             self.lines.len(),
             self.lang,

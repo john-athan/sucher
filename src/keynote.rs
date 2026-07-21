@@ -22,7 +22,9 @@ const PREVIEW_PARTS: &[&str] = &[
 
 pub fn run(title: String, path: String) -> std::io::Result<()> {
     match preview_image(&path) {
-        Ok(img) => crate::imgview::show(title, img),
+        // `x` in the viewer opens the .key package itself (Keynote), not the
+        // extracted preview JPEG.
+        Ok(img) => crate::imgview::show(title, img, Some(path)),
         Err(e) => {
             eprintln!("sucher: {path}: {e}");
             Ok(())

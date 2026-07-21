@@ -54,6 +54,7 @@ pub fn render_svg(path: &str) -> Result<DynamicImage, String> {
 
 struct App {
     title: String,
+    path: String,
     pane: ImagePane,
     dims: (u32, u32),
     src: Vec<String>,
@@ -83,6 +84,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
 
     let mut app = App {
         title,
+        path,
         pane,
         dims,
         src,
@@ -113,6 +115,7 @@ impl App {
                         dirty = true;
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                            KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
                             KeyCode::Char('j') | KeyCode::Down => {
                                 self.offset = (self.offset + 1).min(self.max_offset())
                             }
@@ -147,7 +150,7 @@ impl App {
 
         let (w, h) = self.dims;
         let status = format!(
-            " {}   SVG {w}×{h}px   [j/k] scroll source  [q] quit",
+            " {}   SVG {w}×{h}px   [j/k] scroll source  [x] open  [q] quit",
             self.title
         );
         f.render_widget(
