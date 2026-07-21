@@ -82,6 +82,10 @@ pub struct DataBook {
     conn: Connection,
     sheets: Vec<Sheet>,
     cur: usize,
+    /// The `:` prompt's query lens over the ACTIVE sheet, or `None` to show the
+    /// base table/view. The tabs ARE the source relations; this is a transient
+    /// override on the current one, cleared whenever the active sheet changes.
+    override_sql: Option<String>,
     /// Active sheet schema: `(column_name, column_type)` from `DESCRIBE`.
     schema: Vec<(String, String)>,
     /// Active sheet real row count (`COUNT(*)`), cached — this powers lazy scroll.
@@ -106,6 +110,7 @@ impl DataBook {
             conn,
             sheets,
             cur: 0,
+            override_sql: None,
             schema: Vec::new(),
             total: 0,
             cache: None,
@@ -114,11 +119,22 @@ impl DataBook {
         Ok(book)
     }
 
+    /// The relation every read (schema, count, window, find) wraps in a subquery:
+    /// the user's `:` override when one is set, else the active sheet's base
+    /// relation. Routing all reads through here is what makes an override replace
+    /// the entire view — schema, dims, cells, and search — with the query result.
+    fn active_relation(&self) -> String {
+        match &self.override_sql {
+            Some(sql) => sql.clone(),
+            None => self.sheets[self.cur].relation.clone(),
+        }
+    }
+
     /// (Re)load the active sheet's schema and row count, and drop any stale
     /// window. `DESCRIBE` binds the relation without executing it, so this also
     /// doubles as the point where a malformed file first errors.
     fn load_active(&mut self) -> Result<(), String> {
-        let relation = self.sheets[self.cur].relation.clone();
+        let relation = self.active_relation();
         self.schema = describe(&self.conn, &relation)?;
         self.total = count(&self.conn, &relation)?;
         self.cache = None;
@@ -140,11 +156,51 @@ impl DataBook {
     pub fn select(&mut self, idx: usize) {
         if idx < self.sheets.len() && idx != self.cur {
             self.cur = idx;
+            // Switching tabs returns to the base table. The tabs ARE the source
+            // relations, and the `:` prompt is only a transient query lens over
+            // the current one — moving to a different source drops that lens.
+            self.override_sql = None;
             // A reload failure leaves the book pointed at the new sheet with an
             // empty schema/zero count — the grid renders an empty sheet rather
             // than panicking; the previous sheet's data is already dropped.
             let _ = self.load_active();
         }
+    }
+
+    /// Point the active sheet's reads at the user's `:` query (a "lens" over the
+    /// base relation), or clear it. Trimmed-empty input reverts to the base table.
+    ///
+    /// The bind/parse error path is the delicate one: a bad query must leave the
+    /// book EXACTLY as it was so the grid keeps rendering the prior result. We
+    /// stash the previous override, tentatively install the new one, and reload;
+    /// on failure we restore the old override and reload it back, then surface
+    /// DuckDB's error. On success the new schema/count are live and the stale
+    /// window cache is dropped by `load_active`.
+    pub fn set_sql(&mut self, sql: &str) -> Result<(), String> {
+        let trimmed = sql.trim();
+        if trimmed.is_empty() {
+            self.override_sql = None;
+            self.load_active()?;
+            return Ok(());
+        }
+        let prev = self.override_sql.take();
+        self.override_sql = Some(trimmed.to_string());
+        match self.load_active() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Restore the previous lens and reload it so the schema/count/
+                // cache describe the prior result again — the book is untouched.
+                self.override_sql = prev;
+                let _ = self.load_active();
+                Err(e)
+            }
+        }
+    }
+
+    /// The running `:` query for the active sheet, if any — for the status line's
+    /// "a query is live" indicator. `None` means the raw base table is shown.
+    pub fn active_sql(&self) -> Option<&str> {
+        self.override_sql.as_deref()
     }
 
     /// (total_rows, ncols, done, capped). Unlike the other backends the total is
@@ -209,7 +265,7 @@ impl DataBook {
             return Ok(Vec::new());
         }
         let proj = cast_projection(&self.schema);
-        let rel = &self.sheets[self.cur].relation;
+        let rel = self.active_relation();
         let sql = format!("SELECT {proj} FROM ({rel}) LIMIT {len} OFFSET {start}");
         let mut stmt = self.conn.prepare(&sql).map_err(|e| e.to_string())?;
         let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
@@ -278,7 +334,7 @@ impl DataBook {
         if self.schema.is_empty() {
             return None;
         }
-        let rel = &self.sheets[self.cur].relation;
+        let rel = self.active_relation();
         let pattern = quote_literal(&format!("%{}%", escape_like(query)));
         let mut proj = String::from("__sucher_rn");
         let mut filter = String::new();
@@ -596,6 +652,68 @@ mod tests {
     }
 
     #[test]
+    fn set_sql_overrides_view_and_reverts() {
+        let path = make_parquet();
+        let p = path.to_str().unwrap();
+        let mut book = DataBook::open(p).expect("open parquet");
+        // The single view is named by the file stem; query it by that name.
+        let view = quote_ident(&file_stem(p));
+
+        // Baseline: the raw view is 3 rows × 4 cols, no live query.
+        assert_eq!(book.dims(), (3, 4, true, false));
+        assert_eq!(book.active_sql(), None);
+
+        // A valid query replaces the ENTIRE view: schema, dims, cells all reflect
+        // the result — 1 row / 1 col named `n`, holding the count.
+        let q = format!("SELECT count(*) AS n FROM {view}");
+        book.set_sql(&q).expect("ok");
+        assert_eq!(book.dims(), (1, 1, true, false));
+        assert_eq!(book.headers(), vec!["n"]);
+        assert_eq!(book.window(0, 1, 0, 1), vec![vec!["3"]]);
+        assert_eq!(book.active_sql(), Some(q.as_str()));
+
+        // Search runs over the CURRENT (override) view, not the base table.
+        assert_eq!(book.find("3"), vec![(0, 0)]);
+
+        // Empty input clears the override and returns to the base table.
+        book.set_sql("").expect("revert ok");
+        assert_eq!(book.dims(), (3, 4, true, false));
+        assert_eq!(book.headers(), vec!["id", "name", "d", "note"]);
+        assert_eq!(book.active_sql(), None);
+
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn set_sql_error_restores_previous_view() {
+        let path = make_parquet();
+        let p = path.to_str().unwrap();
+        let mut book = DataBook::open(p).expect("open parquet");
+        let view = quote_ident(&file_stem(p));
+
+        // Install a good override first, so "previous" is a non-trivial state.
+        let good = format!("SELECT id, name FROM {view} WHERE id >= 2");
+        book.set_sql(&good).expect("ok");
+        assert_eq!(book.dims(), (2, 2, true, false));
+        assert_eq!(book.headers(), vec!["id", "name"]);
+        let before = book.window(0, 2, 0, 2);
+
+        // A bad query (bind error) must FAIL and leave the book exactly as it was.
+        let err = book
+            .set_sql(&format!("SELECT nonexistent_col FROM {view}"))
+            .expect_err("bad query errors");
+        assert!(!err.is_empty(), "a human-readable DuckDB error is returned");
+
+        // Restore-on-error guarantee: schema/dims/cells are the previous result.
+        assert_eq!(book.dims(), (2, 2, true, false));
+        assert_eq!(book.headers(), vec!["id", "name"]);
+        assert_eq!(book.window(0, 2, 0, 2), before);
+        assert_eq!(book.active_sql(), Some(good.as_str()));
+
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
     fn sqlite_tables_become_sheets() {
         let path = scratch_path("sq", "db");
         let p = path.to_str().unwrap();
@@ -625,7 +743,18 @@ mod tests {
         assert_eq!(book.window(0, 2, 0, 2)[1], vec!["2", "pear"]);
         assert_eq!(book.find("apple"), vec![(0, 1)]);
 
+        // An override on this sheet…
+        book.set_sql("SELECT count(*) AS n FROM db.items")
+            .expect("ok");
+        assert_eq!(book.dims(), (1, 1, true, false));
+        assert_eq!(
+            book.active_sql(),
+            Some("SELECT count(*) AS n FROM db.items")
+        );
+
+        // …is dropped when switching to another sheet: the tab is the source.
         book.select(1);
+        assert_eq!(book.active_sql(), None);
         assert_eq!(book.dims(), (1, 1, true, false));
         assert_eq!(book.headers(), vec!["name"]);
 

@@ -340,6 +340,41 @@ impl Book {
             Book::Data(b) => b.find(query),
         }
     }
+
+    /// Whether this backend accepts the `:` SQL prompt — the grid's first
+    /// capability that varies by backend (ADR 0016). Only the DuckDB `Data` book
+    /// is queryable; the spreadsheet backends are not.
+    fn supports_sql(&self) -> bool {
+        match self {
+            Book::Stream(_) | Book::Mem(_) => false,
+            #[cfg(feature = "data")]
+            Book::Data(_) => true,
+        }
+    }
+
+    /// Run a `:` query against the active sheet, replacing its view with the
+    /// result (or clearing the override on empty input). Delegates to the `Data`
+    /// book; kept total for the other backends, which never reach here because
+    /// the key is gated on `supports_sql`. (Without the `data` feature only the
+    /// non-queryable arms remain, so `sql` goes unread — allowed explicitly.)
+    #[cfg_attr(not(feature = "data"), allow(unused_variables))]
+    fn set_sql(&mut self, sql: &str) -> Result<(), String> {
+        match self {
+            Book::Stream(_) | Book::Mem(_) => Err("this file type is not queryable".into()),
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.set_sql(sql),
+        }
+    }
+
+    /// The running `:` query for the active sheet, if any — for the status line's
+    /// live-query indicator. `None` for the non-queryable backends.
+    fn active_sql(&self) -> Option<String> {
+        match self {
+            Book::Stream(_) | Book::Mem(_) => None,
+            #[cfg(feature = "data")]
+            Book::Data(b) => b.active_sql().map(str::to_string),
+        }
+    }
 }
 
 // ---- app ----
@@ -356,6 +391,13 @@ pub struct SheetApp {
     query: String,
     matches: Vec<(usize, usize)>,
     match_idx: usize,
+    // SQL prompt (ADR 0016), mirroring the `/` search prompt above. Only ever
+    // active on a `Data` book (the `:` key is gated on `book.supports_sql()`).
+    sql_editing: bool,
+    sql_input: String,
+    // A transient one-line note (a DuckDB error, or "query ok") shown in the
+    // status bar until the next navigation or query clears it.
+    status_msg: Option<String>,
 }
 
 pub fn run(title: String, path: String) -> io::Result<()> {
@@ -378,6 +420,9 @@ pub fn run(title: String, path: String) -> io::Result<()> {
         query: String::new(),
         matches: Vec::new(),
         match_idx: 0,
+        sql_editing: false,
+        sql_input: String::new(),
+        status_msg: None,
     };
     let mut term = ratatui::init();
     let res = app.main_loop(&mut term);
@@ -536,6 +581,12 @@ impl SheetApp {
         if self.searching {
             return self.key_search(code);
         }
+        if self.sql_editing {
+            return self.key_sql(code);
+        }
+        // Any normal-mode key clears a transient status note (a prior error or
+        // "query ok"), so it lasts only until the user next does something.
+        self.status_msg = None;
         let (nrows, ncols, _, _) = self.book.dims();
         let maxr = nrows.saturating_sub(1);
         let maxc = ncols.saturating_sub(1);
@@ -556,6 +607,12 @@ impl SheetApp {
                 self.searching = true;
                 self.query.clear();
             }
+            // The SQL prompt is available only on a queryable (Data) book. Seed
+            // the editor with the running query so the user edits it in place.
+            KeyCode::Char(':') if self.book.supports_sql() => {
+                self.sql_editing = true;
+                self.sql_input = self.book.active_sql().unwrap_or_default();
+            }
             KeyCode::Char('n') => self.cycle_match(1),
             KeyCode::Char('N') => self.cycle_match(-1),
             _ => {}
@@ -574,6 +631,41 @@ impl SheetApp {
                 self.query.pop();
             }
             KeyCode::Char(c) => self.query.push(c),
+            _ => {}
+        }
+        false
+    }
+
+    /// The `:` SQL prompt, paralleling `key_search`. `Esc` cancels (view
+    /// unchanged); `Enter` runs the query — on success the cursor and offsets
+    /// reset and matches clear, on a bind/parse error we STAY in the prompt with
+    /// the user's text intact so they can fix it. There is no query history.
+    fn key_sql(&mut self, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Esc => self.sql_editing = false,
+            KeyCode::Enter => match self.book.set_sql(&self.sql_input) {
+                Ok(()) => {
+                    // The view was replaced: reset the viewport and drop stale
+                    // search hits, which pointed into the previous relation.
+                    self.sel_row = 0;
+                    self.sel_col = 0;
+                    self.row_off = 0;
+                    self.col_off = 0;
+                    self.matches.clear();
+                    self.match_idx = 0;
+                    self.status_msg = Some("query ok".into());
+                    self.sql_editing = false;
+                }
+                Err(e) => {
+                    // Keep the prompt open with the text so the user can correct
+                    // it (or Esc out); the previous view is intact underneath.
+                    self.status_msg = Some(e);
+                }
+            },
+            KeyCode::Backspace => {
+                self.sql_input.pop();
+            }
+            KeyCode::Char(c) => self.sql_input.push(c),
             _ => {}
         }
         false
@@ -754,6 +846,22 @@ impl SheetApp {
             return;
         }
 
+        // SQL prompt takes over the bar while editing (ADR 0016). On a bind/parse
+        // error we stay here with `status_msg` set to the DuckDB message, so it is
+        // shown in place of the key hint until the query is fixed or cancelled.
+        if self.sql_editing {
+            let tail = match &self.status_msg {
+                Some(m) => format!("    {m}"),
+                None => "    Enter=run  Esc=cancel".to_string(),
+            };
+            let bar = format!(":{}{}", self.sql_input, tail);
+            f.render_widget(
+                Paragraph::new(bar).style(Style::default().fg(Color::Rgb(252, 211, 77))),
+                area,
+            );
+            return;
+        }
+
         let find = if self.matches.is_empty() {
             String::new()
         } else {
@@ -764,8 +872,23 @@ impl SheetApp {
                 if done { "" } else { " so far" }
             )
         };
-        let hint = "[/] search [n/N]  [hjkl] move  [Tab] sheet  [x] open  [q] quit";
-        let text = format!(" {reff}: {val}    {load}{find}");
+        let hint = if self.book.supports_sql() {
+            "[/] search [n/N]  [:] query  [hjkl] move  [Tab] sheet  [x] open  [q] quit"
+        } else {
+            "[/] search [n/N]  [hjkl] move  [Tab] sheet  [x] open  [q] quit"
+        };
+        // A live `:` query is a lens over the raw table: show it (truncated) so the
+        // user knows they are not looking at the source, plus any transient note.
+        let live = self
+            .book
+            .active_sql()
+            .map(|q| format!("[:{}] ", truncate(&q, 40)))
+            .unwrap_or_default();
+        let note = match &self.status_msg {
+            Some(m) => format!("  {m}"),
+            None => String::new(),
+        };
+        let text = format!(" {live}{reff}: {val}    {load}{find}{note}");
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
