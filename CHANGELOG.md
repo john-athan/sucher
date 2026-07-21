@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-21
+
 ### Added
 - **Data files open in the grid, with an interactive SQL prompt.** Parquet
   (`.parquet` `.pq`), newline-delimited JSON (`.jsonl` `.ndjson`), SQLite
