@@ -25,6 +25,13 @@ jobs:
         run: cargo test
       - name: Build (release)
         run: cargo build --release
+      # Guard the lean build: the `data` feature (DuckDB, ADR 0016) is default-on,
+      # so also prove the crate still compiles and its non-DuckDB tests pass with
+      # it off — this path has silently broken before.
+      - name: Build & test without default features (lean)
+        run: |
+          cargo build --no-default-features
+          cargo test --no-default-features
 
   deny:
     runs-on: ubuntu-latest

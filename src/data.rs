@@ -793,6 +793,36 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    /// Large-Parquet benchmark, ignored by default (mirrors the `big_xlsx` one).
+    /// Point it at a real file to prove the lazy-windowing claim:
+    ///   `SUCHER_BIG_PARQUET=/path/big.parquet cargo test --release big_parquet -- --ignored --nocapture`
+    /// Open (schema + COUNT only) and a window near the END must both be fast —
+    /// neither materialises the file, so wall-clock is independent of row count.
+    #[test]
+    #[ignore = "set SUCHER_BIG_PARQUET to a large .parquet to run"]
+    fn big_parquet_opens_and_scrolls_lazily() {
+        let Ok(path) = std::env::var("SUCHER_BIG_PARQUET") else {
+            return;
+        };
+        let t = std::time::Instant::now();
+        let mut book = DataBook::open(&path).expect("open big parquet");
+        let (total, ncols, _, _) = book.dims();
+        eprintln!(
+            "open {total} rows × {ncols} cols in {} ms",
+            t.elapsed().as_millis()
+        );
+        // A window at the far end: lazy LIMIT/OFFSET, not a full scan into memory.
+        let t2 = std::time::Instant::now();
+        let start = total.saturating_sub(50);
+        let win = book.window(start, total, 0, ncols.min(8));
+        eprintln!(
+            "window @{start} ({} rows) in {} ms",
+            win.len(),
+            t2.elapsed().as_millis()
+        );
+        assert!(!win.is_empty());
+    }
+
     #[test]
     fn offline_reads_parquet_without_network() {
         // The core offline guarantee: a FRESH connection carrying only the two

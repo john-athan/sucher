@@ -31,6 +31,13 @@ allow = [
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "bzip2-1.0.6",
+    # CDLA-Permissive-2.0: a permissive, OSI-friendly data license, used by
+    # `webpki-roots`. It reaches the tree only through libduckdb-sys's
+    # non-optional *build* dependency on `reqwest` (ADR 0016) — a download path
+    # that is `#[cfg(not(feature = "bundled"))]`, i.e. dead code in our `bundled`
+    # build (DuckDB is compiled from the vendored `duckdb.tar.gz`, never fetched).
+    # It is compiled at build time only and is not linked into the binary.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
