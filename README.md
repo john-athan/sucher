@@ -10,12 +10,15 @@
 [![Built with ratatui](https://img.shields.io/badge/TUI-ratatui-7dd3fc.svg)](https://ratatui.rs)
 
 A fast terminal viewer for the files that are awkward to open in a browser —
-**markdown, spreadsheets, PDF, images, SVG, video, Word/PowerPoint/Keynote,
-EPUB e-books, archives, and raw binary** — behind one tiny command:
+**markdown, spreadsheets, data files (Parquet, JSONL, SQLite, DuckDB), PDF,
+images, SVG, video, Word/PowerPoint/Keynote, EPUB e-books, archives, and raw
+binary** — behind one tiny command:
 
 ```sh
 s report.md
 s data.xlsx
+s data.parquet      # data files open in the grid — with a `:` SQL prompt
+s app.db            # SQLite / DuckDB: each table a sheet
 s paper.pdf
 s photo.jpg
 s diagram.svg
@@ -56,6 +59,12 @@ real pixels where one is available.
 - **Handles huge files** — a 240 MB / 800k-row spreadsheet opens in ~160 ms and
   stays scrollable, because sheets stream in on a background thread instead of
   being loaded whole.
+- **Queryable data files** — Parquet, JSONL, SQLite, and DuckDB open in the grid:
+  each database table becomes a tab, columns keep their real names and types
+  (ISO dates, not serial numbers), and a `:` SQL prompt — powered by an
+  **embedded DuckDB** — turns any of them into a live query over the file. It's
+  **lazy and uncapped**, so a billion-row Parquet opens instantly and scrolls to
+  the end, and **fully offline** — reading a data file never touches the network.
 - **Real graphics** — images, rasterised SVGs, PDF pages, video frames, and
   Keynote previews render as actual pixels via the kitty / iTerm2 / sixel
   protocols (with a Unicode half-block fallback), through
@@ -75,6 +84,9 @@ real pixels where one is available.
 | Text / source | code, `.txt` `.log`, config files, extension-less UTF-8 text | syntax-highlighted text viewer (no soft-wrap; pan + search) |
 | Spreadsheet | `.xlsx`, `.xlsm` | streaming reader (zip + quick-xml) on a worker thread |
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
+| Data — columnar | `.parquet` `.pq` | embedded **DuckDB** (`read_parquet`) |
+| Data — line JSON | `.jsonl` `.ndjson` | DuckDB (`read_json_auto`) |
+| Data — database | `.sqlite` `.sqlite3` `.db` `.db3`, `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
 | PDF | `.pdf` | [pdfium](https://crates.io/crates/pdfium-render) (Chrome's engine) → graphics, poppler `pdftocairo` fallback |
 | Image | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.tiff` `.ico` | [`image`](https://crates.io/crates/image) → graphics |
 | SVG | `.svg` | [`resvg`](https://crates.io/crates/resvg) rasteriser → picture above scrolling source |
@@ -95,10 +107,56 @@ or dumping bytes. Other archive types (`.7z` `.rar` `.xz` `.bz2` `.zst`) are
 recognized but have no lister; extract them with a shell tool.
 
 When stdout is not a TTY (piped), sucher prints a sensible text dump instead of
-launching the TUI (`pdftotext` for PDF, TSV for sheets, metadata for video,
+launching the TUI (`pdftotext` for PDF, TSV for sheets and data files, metadata for video,
 styled text for markdown/html/docx/pptx/epub/ipynb, faithful bytes for text/source, raw XML for
 SVG, a canonical hexdump for binary, a `size⇥path` table for archives, a plain
 listing for directories).
+
+## Data files & SQL
+
+The files most technical users live in — **Parquet, newline-delimited JSON,
+SQLite and DuckDB databases** — open in the same grid as spreadsheets, backed by
+an **embedded DuckDB**. Real column names sit in the header (not `A`/`B`/`C`),
+DuckDB's canonical text gives correct ISO dates and timestamps (NULL renders
+blank), and a database opens **read-only** with each table as its own sheet —
+`Tab` (or `[` / `]`) cycles them, and the SQL prompt can join across them.
+Sample files ship in `samples/` so you can try it straight away:
+
+```sh
+s samples/sales.parquet     # one sheet, named for the file stem
+s samples/app.db            # SQLite: one sheet per table, switch with Tab
+s samples/events.jsonl      # newline-delimited JSON as a grid
+```
+
+Press `:` in the grid for an **interactive SQL prompt** that runs over the
+current file; the result replaces the view (schema, rows, and `/` search all
+follow it). For a single-file source, `FROM` the file's stem; for a database,
+`FROM` any table or join across them:
+
+```sql
+:  SELECT region, sum(revenue) AS total
+   FROM sales GROUP BY region ORDER BY total DESC
+```
+
+A live query shows truncated in the status bar. A parse/bind error stays in the
+prompt with your text — and the previous view — intact; empty input reverts to
+the base table; switching tabs drops the query.
+
+It's **lazy and uncapped.** The grid windows rows on demand (`LIMIT`/`OFFSET`
+plus a prefetch cache) and reads the schema from `DESCRIBE`, which doesn't
+execute the query — so a file opens instantly regardless of size and scrolls to
+the end with **no row cap**, unlike the streaming `.xlsx`/CSV backends. And it's
+**fully offline**: every DuckDB connection sets `autoinstall_known_extensions =
+false`, so reading a data file never reaches for the network, in keeping with
+sucher's local-viewer identity.
+
+Data files sit behind the **default-on `data` Cargo feature**, so
+`cargo install sucher` includes them out of the box. DuckDB is compiled from
+vendored source and statically bundled — self-contained, with no build-time
+download and no runtime network — which puts the release binary at **~65 MB**.
+If you don't need it, `cargo install --no-default-features` builds the lean
+~26 MB binary without DuckDB (Parquet then falls back to the hexdump and JSONL
+to the text viewer).
 
 ## Install
 
@@ -354,8 +412,9 @@ markdown.rs    parse → logical lines + TOC + links; width-aware wrap/layout
 tui.rs         markdown TUI (scroll / TOC / search / links)
 text.rs        source/plain-text TUI (highlight, no wrap, pan + search)
 plain.rs       one-shot markdown renderer (kitty text-sizing in pipe mode)
-sheet.rs       grid UI over a `Book` (streaming xlsx, or eager calamine)
+sheet.rs       grid UI over a `Book` (eager calamine, streaming xlsx, or lazy DuckDB)
 xlsx.rs        background streaming .xlsx reader (zip + quick-xml), capped
+data.rs        DuckDB-backed data files (Parquet/JSONL/SQLite/DuckDB) + SQL prompt
 pdf.rs         pdfium page raster (poppler fallback) + prefetch/cache, sized to the display
 pdfium.rs      runtime-loaded pdfium service thread (one parse, resident doc)
 imgview.rs     image viewer
@@ -385,6 +444,13 @@ Design notes:
   parsed incrementally on a worker thread and the grid reads them live, so
   opening is independent of total file size. Switching sheets frees the
   previous one. A row cap bounds pathological files.
+- **Three Book backends.** The grid's `Book` seam now spans three shapes — eager
+  (`MemBook`, calamine/CSV), capped-streaming (`StreamBook`, `.xlsx`), and
+  lazy-DuckDB (`DataBook`, `data.rs`) — each the right fit for its source. Data
+  reads are **lazy & uncapped** (window on demand, schema via `DESCRIBE` without
+  executing) and **offline** (`autoinstall_known_extensions = false` on every
+  connection). The `:` SQL prompt is the grid's first capability that varies by
+  backend — a method on `Book`, not a new viewer (ADR 0016).
 - **PDF renders to display size** (`pdftocairo -scale-to-x <terminal px>`)
   rather than a fixed DPI, and caches rendered pages.
 - **Video** drives a single long-lived `ffmpeg` process emitting raw frames; a
@@ -418,7 +484,17 @@ SUCHER_BIG=/path/to/big.xlsx cargo test --release big_xlsx -- --ignored --nocapt
 - Archives are listed and folder-navigable, but never extracted: you can browse
   into directories, though individual entries can't be opened or unpacked.
 - Spreadsheet dates show as serial numbers (style table isn't read); the
-  streaming reader caps very large sheets.
+  streaming reader caps very large sheets. (Data files don't have this wart —
+  DuckDB renders dates as ISO text.)
+- Data files are **read-only**: databases are attached `READ_ONLY`, and there's
+  no writing or editing. A `.db` that isn't actually SQLite errors on open rather
+  than falling back. **Arrow/Feather** files aren't supported — DuckDB's Arrow
+  *file* reader isn't in the bundled build and would need a network extension, so
+  it's deliberately excluded (Parquet covers the columnar need). A `find`/search
+  over a data file follows the query's scan order, not a stable row order.
+- The release binary is **~65 MB** because DuckDB is compiled in and statically
+  bundled; build the lean ~26 MB binary with `cargo install --no-default-features`
+  (dropping the `data` feature and Parquet/JSONL/SQLite/DuckDB support).
 - Video has no audio, and terminal frame rate is capped by image transmission.
 - Inside the full-screen TUI, markdown headings use color/bold (not the
   text-sizing protocol — that applies to `--plain` / pipe output).

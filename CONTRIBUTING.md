@@ -28,6 +28,12 @@ that one registry drives both which viewer opens a file and how the directory
 browser colours and previews it. Then dispatch the new variant in `src/main.rs`
 (the `main()` match for TTY vs. pipe, and `open_interactive` for previews).
 
+**Data files are the exception.** Parquet/JSONL/SQLite/DuckDB reduce to the
+shared grid viewer via `src/data.rs` (an embedded DuckDB `DataBook`), behind the
+default-on `data` Cargo feature — analogous to how docx/pptx/html reduce to the
+markdown viewer (see `docs/adr/0016`). Adding another data format is therefore a
+branch in the `DataBook`/classifier, not a new module or viewer.
+
 ## Runtime dependencies
 
 PDF needs poppler (`pdftocairo`, `pdfinfo`, `pdftotext`); video needs `ffmpeg`
