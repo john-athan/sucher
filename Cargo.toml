@@ -53,7 +53,7 @@ markup5ever_rcdom = "0.39"
 # pinned libpdfium for the target and embeds it in the binary (materialised to a
 # cache dir on first use), so `cargo install sucher` is self-contained; poppler
 # remains the fallback when embedding is skipped.
-pdfium-render = "0.8.37"
+pdfium-render = "0.9.3"
 # Data files (ADR 0016). DuckDB reads Parquet, JSONL and native DuckDB databases;
 # its Parquet/JSON readers are statically linked via the `parquet`/`json` features
 # (NOT loadable extensions), so they work with zero network. `bundled` compiles
