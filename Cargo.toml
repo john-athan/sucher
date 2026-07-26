@@ -68,7 +68,7 @@ rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.
 [build-dependencies]
-sha2 = "0.10"
+sha2 = "0.11"
 flate2 = "1"
 tar = "0.4"
 
