@@ -63,7 +63,7 @@ duckdb = { version = "1", features = ["bundled", "parquet", "json"], optional = 
 # sqlite_scanner is a loadable extension only (no static feature exists) and would
 # auto-install over the network on first use, breaking sucher's offline guarantee.
 # rusqlite is the SQLite-native engine, fully static and offline (ADR 0016).
-rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.
