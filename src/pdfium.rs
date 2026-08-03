@@ -131,7 +131,11 @@ fn render_one(
     if page >= pages.len() as usize {
         return Err("pdfium: page out of range".to_string());
     }
-    let page = pages.get(page as u16).map_err(|e| format!("{e:?}"))?;
+    // The bound check above keeps `page` below `pages.len()`, itself a
+    // `PdfPageIndex`, so the cast can't wrap.
+    let page = pages
+        .get(page as PdfPageIndex)
+        .map_err(|e| format!("{e:?}"))?;
     let pw = page.width().value;
     if pw <= 0.0 {
         return Err("pdfium: non-positive page width".to_string());
@@ -142,7 +146,7 @@ fn render_one(
     let bitmap = page
         .render_with_config(&cfg)
         .map_err(|e| format!("{e:?}"))?;
-    Ok(bitmap.as_image())
+    bitmap.as_image().map_err(|e| format!("{e:?}"))
 }
 
 /// Platform file name of the pdfium shared library.
