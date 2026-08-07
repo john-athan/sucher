@@ -6,6 +6,47 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Added
+- **File operations in the directory browser.** sucher still changes only *where
+  files are*, never *what they contain* (no editing, no archive extraction, no
+  writes to a spreadsheet or database), but the browser can now do the shell
+  around files. `Space` marks and steps down, `V` inverts the view, `Ctrl-a`
+  marks all; the mark set is **global**, surviving navigation, so a selection can
+  be gathered across several folders and acted on once. With nothing marked every
+  verb falls back to the entry under the cursor. `y`/`X` copy/cut to a clipboard
+  that also survives navigation, `p` pastes into the current directory, `r`
+  renames (opening pre-filled with the cursor at the end of the stem, so typing
+  keeps the extension), `a` creates (a trailing `/` makes a folder), `D` moves to
+  the trash, `U` undoes, and `Y` yanks absolute paths via **OSC 52** so it works
+  over ssh with no helper binary.
+
+  Every batch **shows its plan before anything happens**: item and byte totals,
+  each destination, which names took a ` (2)` suffix to dodge a collision, and
+  which marked paths vanished in the meantime. `Enter` authorises, `Esc` cancels,
+  `o` re-plans under overwrite and shows the count it would replace in red.
+  Collisions are suffixed by default; overwriting is never automatic.
+
+  **Nothing is ever permanently deleted.** There is no permanent-delete binding,
+  and the rule is total rather than a property of one key: an overwrite trashes
+  what it displaces before writing, a cross-device move trashes the original once
+  the copy lands, and undoing a copy trashes what sucher created. Where no trash
+  exists the operation fails honestly instead of falling back to `rm`.
+
+  Operations run on a background thread with live progress and can be cancelled;
+  `Esc` backs out one layer per press (cancel the run, then the clipboard, then
+  the marks, then quit) and `q` is refused while a run is in flight, so sucher
+  cannot exit with a mutation half done and unreported. Failures and
+  informational notes are shown in a report rather than reduced to a status line.
+  One operation at a time; a batch is capped at 50,000 entries and 64 levels and
+  is refused whole rather than copied halfway. Symlinks are copied as links and
+  never followed.
+
+  New modules: `marks.rs` (pure global mark set), `fileop/` (`collect` bounded
+  walk, a **pure** `plan`, and an `execute` that replays a decided list and also
+  runs undo), and `lineedit.rs` (single-line buffer with a UTF-8-safe cursor).
+  Adds the `trash` dependency and `tempfile` as the project's first
+  dev-dependency. See ADR 0017.
+
 ## [0.5.0] - 2026-07-21
 
 ### Added

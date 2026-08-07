@@ -1,6 +1,6 @@
 # ADR 0017: File operations in the browser (multi-select, copy/move/rename/create/trash)
 
-Status: proposed (decided; implementation is follow-up work)
+Status: accepted (implemented)
 Date: 2026-08-07
 
 ## Context

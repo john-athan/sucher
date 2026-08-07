@@ -56,6 +56,14 @@ real pixels where one is available.
   same smart query as the filter, plus `content:` to grep *inside* files — and
   every hit renders in the preview pane as the **actual framed file** (the PDF
   page, the image, the spreadsheet grid), not a grey line of text.
+- **File operations that never destroy.** Mark across folders with `Space`, then
+  copy/cut/paste (`y` `X` `p`), rename (`r`), create (`a`), delete (`D`). Every
+  batch **shows its plan before it runs**: what lands where, what got a ` (2)`
+  suffix to dodge a collision, what has vanished since you marked it. Nothing is
+  overwritten silently, and **nothing is ever permanently deleted**: delete means
+  the system trash, and so does anything an overwrite displaces or an undo takes
+  back. `U` undoes the last operation. Large copies run in the background with
+  live progress, so the browser stays usable while they go.
 - **Handles huge files** — a 240 MB / 800k-row spreadsheet opens in ~160 ms and
   stays scrollable, because sheets stream in on a background thread instead of
   being loaded whole.
@@ -284,7 +292,16 @@ s <file> | less     # piped: text dump
 `x` open in native app · `/` smart filter · `S` recursive search ·
 `o` cycle sort (name/size/modified/ext) ·
 `O` reverse sort · `.` toggle dotfiles · `M` two/three-column layout ·
-`t` size/modified column · `?` key overlay · `q` quit. Press `?` for a
+`t` size/modified column · `?` key overlay · `q` quit.
+
+**Select and act** (see *File operations* below) 
+`Space` mark/unmark then move down · `V` invert marks · `Ctrl-a` mark all ·
+`y`/`X` copy/cut · `p` paste here · `r` rename · `a` create (trailing `/` makes
+a folder) · `D` move to trash · `U` undo · `Y` yank absolute path(s) ·
+`Esc` backs out one layer at a time (cancel the run, then the clipboard, then
+the marks, then quit).
+
+Press `?` for a
 which-key overlay of every binding (it also shows the current sort). Click a
 breadcrumb segment to jump there;
 the wheel scrolls the list. The right pane renders a live
@@ -329,6 +346,49 @@ The walk uses ripgrep's parallel directory walker: it honours `.gitignore`, skip
 dotfiles unless `.` toggled them on, and caps at 5000 hits (surfaced in the
 status line). Because every result flows through the same preview pane, a hit is
 shown as the **real rendered file** — the differentiator over `fd`/`rg`/`fzf`.
+
+**File operations.** sucher stays a viewfinder: it changes *where files are*,
+never *what they contain*. There is no editing, no archive extraction, and no
+writing to a spreadsheet or database. What it does do is the shell around files:
+mark, copy, move, rename, create, delete.
+
+`Space` marks the entry under the cursor and steps down, so holding it marks a
+run. **The mark set is global**: it survives walking into other folders, which is
+what makes "gather five files from three directories, then act once" the point of
+the feature rather than a slower cursor. `V` inverts the current view, `Ctrl-a`
+marks all of it. With nothing marked, every verb acts on the entry under the
+cursor instead, so the keys work before you have learned marking at all.
+
+`y` copies and `X` cuts to a clipboard that survives navigation; `p` pastes into
+the directory you are standing in. `r` renames, opening pre-filled with the
+cursor at the end of the name so typing replaces it and keeps the extension. `a`
+creates, and a trailing `/` makes a folder instead of a file.
+
+Every batch **shows its plan before anything happens**: how many items and bytes,
+where each one lands, which names got a ` (2)` suffix to dodge a collision, and
+which marked paths have vanished since you marked them. `Enter` authorises, `Esc`
+cancels, and `o` toggles overwriting, which re-plans the batch and shows the
+count it would replace in red. Collisions are suffixed by default and overwriting
+is never the automatic answer.
+
+**Nothing is ever permanently deleted.** `D` moves to the system trash, and there
+is no permanent-delete binding at all. The rule is total rather than a property
+of one key: an overwrite trashes whatever it displaces before writing, a move
+across devices trashes the original after the copy lands, and undoing a copy
+trashes what sucher created. Where no trash is available (some remote mounts) the
+operation fails and says so rather than quietly falling back to `rm`.
+
+`U` undoes the last operation, replaying the inverses of the steps that actually
+happened, so a partly failed run undoes exactly the part that succeeded. A
+trashing is the exception: the system trash is where those come back from, and
+the report says so instead of pretending. Large operations run in the background
+with live progress and can be cancelled with `Esc`; sucher refuses to quit while
+one is still running rather than exiting with the work half done.
+
+`Y` yanks the selected absolute path(s) to the system clipboard using OSC 52, so
+it works over ssh with no helper binary. Delivery is up to the terminal (tmux
+needs `set -g set-clipboard on`), and the status line says so rather than
+claiming more than it knows.
 
 **Markdown** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
 `t` table of contents · `/` search (`n`/`N` next/prev) · `l` link picker ·
@@ -412,6 +472,9 @@ main.rs        dispatch by format; TTY → TUI, pipe → text dump
 format.rs      single classification registry (one source of truth)
 dir.rs         directory browser (list + live preview), opens files via main
 search.rs      recursive/streaming/content-aware search engine (ignore + grep)
+marks.rs       the browser's global multi-select set (pure, no filesystem)
+fileop/        file operations: collect (bounded walk) -> plan (pure) -> execute
+lineedit.rs    single-line buffer with a cursor, for the rename/create prompt
 markdown.rs    parse → logical lines + TOC + links; width-aware wrap/layout
 tui.rs         markdown TUI (scroll / TOC / search / links)
 text.rs        source/plain-text TUI (highlight, no wrap, pan + search)
@@ -457,6 +520,17 @@ Design notes:
   autoinstall/autoload off). Data reads are **lazy & uncapped** (window on demand,
   schema without executing). The `:` SQL prompt is the grid's first capability
   that varies by backend — a method on `Book`, not a new viewer (ADR 0016).
+- **File operations decide before they act.** The hard part of a file manager is
+  the decision matrix, not the syscall: name collisions, a destination nested
+  inside its own source, the user standing in the directory being moved. So
+  `collect` establishes the facts (one bounded walk, symlinks recorded and never
+  followed), `plan` is a **pure** function from those facts to either a fully
+  resolved plan or a named refusal, and `execute` replays a decided list on a
+  background thread with nothing left to choose. The whole matrix is unit-tested
+  with no temp directory, and the confirm overlay can show the exact outcome
+  before a byte moves. `trash::delete` and `fs::rename` each sit behind a single
+  private seam, which is what makes "sucher never permanently deletes" a property
+  of the engine rather than a rule every caller has to remember.
 - **PDF renders to display size** (`pdftocairo -scale-to-x <terminal px>`)
   rather than a fixed DPI, and caches rendered pages.
 - **Video** drives a single long-lived `ffmpeg` process emitting raw frames; a
@@ -501,6 +575,23 @@ SUCHER_BIG=/path/to/big.xlsx cargo test --release big_xlsx -- --ignored --nocapt
 - The release binary is **~65 MB** because DuckDB is compiled in and statically
   bundled; build the lean ~26 MB binary with `cargo install --no-default-features`
   (dropping the `data` feature and Parquet/JSONL/SQLite/DuckDB support).
+- File operations act on **whole paths only**. There is no editing, no archive
+  extraction, no writing to a spreadsheet or database, no permission changes, no
+  bulk rename through an editor, and no symlink creation on paste. Operations are
+  browse-mode only: recursive search is a text surface where every printable key
+  belongs to the query, so press `Enter` into a hit's folder and act there.
+- **There is no permanent delete**, by design. On a filesystem with no trash
+  (some remote mounts) `D` fails and says so rather than falling back to `rm`.
+  Restoring a trashed file is the system trash's job, not sucher's, so `U` says
+  where to look instead of pretending it can bring one back.
+- One operation runs at a time; a second is refused rather than queued. A single
+  operation is capped at 50,000 entries and 64 levels of depth, and a batch past
+  either is refused whole before anything is mutated rather than copied halfway.
+- A cross-device move (any FUSE mount) is a copy followed by trashing the
+  original, so undoing one leaves a recoverable duplicate in the system trash
+  alongside the restored tree.
+- `Y` uses OSC 52, which is fire-and-forget: sucher can confirm it sent the
+  sequence, never that the clipboard took it. tmux needs `set -g set-clipboard on`.
 - Video has no audio, and terminal frame rate is capped by image transmission.
 - Inside the full-screen TUI, markdown headings use color/bold (not the
   text-sizing protocol — that applies to `--plain` / pipe output).
