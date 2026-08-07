@@ -7,7 +7,7 @@ use crate::config::{IconMode, Layout};
 use crate::format::Format;
 use crate::git::{self, GitStatus};
 use crate::media::{self, ImagePane};
-use crate::{highlight, icons, query, theme, typeahead};
+use crate::{fileop, highlight, icons, query, theme, typeahead};
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEventKind,
 };
@@ -46,6 +46,52 @@ enum Mode {
     /// the local `/` filter (D1): its own key (`S`), its own text buffer, its own
     /// background tree walk. Present only while `App.search` is `Some`.
     Search,
+    /// A file-operation overlay owns the keyboard (ADR 0017 D5). ONE arm carries
+    /// both overlays rather than two sibling arms, because what they share is the
+    /// part `Mode` is actually deciding: they are modal popups drawn over the
+    /// browse layout, they swallow every key and every click, and search never
+    /// runs underneath either of them (D9). Every `match self.mode` site therefore
+    /// gains exactly one arm and asks "is an operation overlay up?" once, not two
+    /// arms that could drift apart as the remaining operations land. What differs
+    /// between them is what the popup is *for*, which is what [`OpView`] carries.
+    Op(OpView),
+}
+
+/// Which file-operation overlay is on screen.
+enum OpView {
+    /// A fully resolved plan waiting to be authorised. Shown BEFORE anything
+    /// happens, which is the whole of ADR 0017 D5: the user sees the outcome,
+    /// including every collision-dodging rename, before a byte moves.
+    Confirm(fileop::Plan),
+    /// A finished run that did not do everything it set out to. A partial result
+    /// is reported, never swallowed (ADR 0009), so this is deliberately an overlay
+    /// and not a status line: a one-line summary of four failures would be exactly
+    /// the silent truncation that doctrine exists to forbid.
+    Failures(fileop::Report),
+}
+
+/// The browser's half of the one operation in flight (ADR 0017 D2).
+///
+/// It is created the moment a plan is authorised and dropped when the run's
+/// `Done` arrives, so it lives and dies with `App::op`. Besides the streamed
+/// counters it carries the paths the run consumes, captured from the plan while
+/// the plan is still owned here: the report that comes back names what happened,
+/// not which marks asked for it, and the marks have to be dropped on completion
+/// (see [`App::finish_op`]).
+struct InFlight {
+    /// The plan's own one-line summary, captured at authorisation time so the
+    /// status line names the operation without re-deriving its verb.
+    label: String,
+    /// Items the plan resolved: the denominator the streamed count climbs to.
+    total: usize,
+    /// Every path this run acts on, plus the marks that had already vanished.
+    /// Both are consumed by the operation and both are unmarked when it ends.
+    targets: Vec<PathBuf>,
+    /// Cumulative counters as last reported by `Msg::Progress`.
+    items: usize,
+    bytes: u64,
+    /// The path the worker was on when it last reported.
+    current: PathBuf,
 }
 
 /// Which trailing metadata column the entry list draws (ADR 0005, D2). The
@@ -482,6 +528,29 @@ struct App {
     // dismissed by the next keypress (which-key convention). Only ever true in
     // browse mode — every mode change dismisses it first (see `handle_key`).
     help: bool,
+    // The multi-select set a later file operation will act on (ADR 0017 D2/D3).
+    // Keyed by absolute path and deliberately NOT cleared on a directory change:
+    // gathering three files here and two in a sibling folder, then acting once, is
+    // the entire reason multi-select beats operating on the cursor. Empty is the
+    // ordinary state, and while it is empty the browser is byte-for-byte the
+    // pre-feature build: the mark gutter reserves no width and the status line
+    // keeps its key hint, both appearing only once something is actually marked.
+    marks: crate::marks::Marks,
+    // The ONE file operation in flight, or `None` (ADR 0017 D2). Exactly one at a
+    // time, mirroring how `raster_pending` allows a single live raster worker: a
+    // second request while this is `Some` is refused with an honest "busy" status
+    // and never queued, because queued mutation cannot be reasoned about while the
+    // user is still navigating. Dropping the `Run` cancels its worker, so an
+    // operation can never outlive the browser that asked for it.
+    op: Option<fileop::Run>,
+    // The browser-side state of that same run: the progress the status line draws
+    // and the marks the run will consume. `Some` exactly while `op` is `Some`.
+    op_progress: Option<InFlight>,
+    // The undo stack (ADR 0017 D8): the journals of completed operations, oldest
+    // first, bounded at `UNDO_DEPTH` by `push_journal`. Only ever appended to for
+    // now; the `U` binding that pops it lands in a later step, which is why this
+    // grows without anything yet reading it.
+    journal: Vec<fileop::Journal>,
 }
 
 enum Action {
@@ -518,6 +587,17 @@ enum CharAction {
     ReverseSort,
     /// Toggle the which-key help overlay. Bound to `?`.
     Help,
+    /// Toggle the mark on the entry under the cursor, then step the selection one
+    /// row down so holding the key marks a run (ADR 0017 D4). Bound to `Space`.
+    ToggleMark,
+    /// Toggle every entry in the CURRENT filtered view, in listing order (ADR 0017
+    /// D4). Bound to `V`. Marks held in other directories are outside the listing,
+    /// so a global set survives an invert here untouched (D3).
+    InvertMarks,
+    /// Send the selection to the OS trash, behind the confirm overlay (ADR 0017
+    /// D4/D7). Bound to `D`. There is no permanent-delete binding at all, here or
+    /// anywhere: trash is the only way something leaves a path in sucher.
+    Trash,
     Quit,
 }
 
@@ -552,6 +632,17 @@ fn browse_char(c: char) -> Option<CharAction> {
         // typeahead treats them as motions, never as the start of a name search.
         'o' => CharAction::CycleSort,
         'O' => CharAction::ReverseSort,
+        // Multi-select (ADR 0017 D4). Registering `Space` and `V` here is what
+        // keeps typeahead correct for them (ADR 0002 D2): a bound char is never
+        // the start of a name search, so a space can never open a name buffer and
+        // `V` stays a mark key rather than a jump to `Videos/`.
+        ' ' => CharAction::ToggleMark,
+        'V' => CharAction::InvertMarks,
+        // Delete to trash (ADR 0017 D4). Capital `D`, so the lowercase `d`
+        // half-page motion is untouched; registering it here is what keeps
+        // typeahead correct (ADR 0002 D2), since a bound char never starts a name
+        // search and `D` would otherwise jump to `Downloads/`.
+        'D' => CharAction::Trash,
         // Toggle the help overlay. Bound (not left to typeahead) so `?` never
         // starts a name search; the overlay is dismissed by the next key.
         '?' => CharAction::Help,
@@ -643,6 +734,18 @@ pub fn run(
         search_area: Rect::default(),
         sort: Sort::default(),
         help: false,
+        // No marks at startup, which is also the state in which the browser
+        // renders byte-for-byte as it did before ADR 0017 (no gutter, no status
+        // line). The set is filled only from the browse listing, by `Space`, `V`
+        // and `Ctrl-a`, and survives every later directory change (D3).
+        marks: crate::marks::Marks::new(),
+        // No operation at startup, and none is created until a plan is authorised
+        // in the confirm overlay, so a browser that is only ever browsed pays
+        // nothing for this feature: `pump_fileop` returns immediately and the
+        // fast-poll tier is never entered.
+        op: None,
+        op_progress: None,
+        journal: Vec::new(),
     };
     app.load();
 
@@ -788,6 +891,23 @@ impl App {
         self.all.get(*self.view.get(i)?)
     }
 
+    /// The current filtered view as the `(path, size, is_dir)` rows
+    /// [`crate::marks::Marks`] consumes, in listing order (ADR 0017 D3). Owned
+    /// rather than an iterator over `self`, because every caller feeds them
+    /// straight into `&mut self.marks`, and materialising the listing first keeps
+    /// that mutation independent of the `all`/`view` borrows instead of relying on
+    /// disjoint-field capture rules. It costs one small allocation per keystroke,
+    /// never per frame.
+    fn view_rows(&self) -> Vec<(PathBuf, u64, bool)> {
+        self.view
+            .iter()
+            .map(|&i| {
+                let e = &self.all[i];
+                (e.path.clone(), e.size, e.kind == Format::Directory)
+            })
+            .collect()
+    }
+
     fn move_sel(&mut self, delta: isize) {
         if self.view.is_empty() {
             return;
@@ -880,6 +1000,9 @@ impl App {
             git: self.git.as_ref(),
             meta: self.meta,
             fade_t: None,
+            // The outgoing layer of a folder slide must look exactly like what was
+            // on screen, so it carries the same mark gutter the live pane had.
+            marks: mark_gutter(&self.marks),
         };
         // Snapshot only the visible window (perf: list virtualisation), sized from
         // the live scroll offset so the "old" layer matches what was on screen.
@@ -1007,6 +1130,253 @@ impl App {
         true
     }
 
+    /// Drain the file-operation channel, mirroring [`App::pump_search`] (ADR 0017
+    /// D2). Folds every `Msg::Progress` into the status-line counters and finishes
+    /// the run on `Msg::Done`. Returns whether anything changed (→ redraw), and is
+    /// an immediate `false` when no operation is in flight, so a browser that is
+    /// only being browsed pays one `Option` test per loop iteration.
+    fn pump_fileop(&mut self) -> bool {
+        // The receiver is borrowed only for the drain itself, so the fold below is
+        // free to mutate `self` (the same shape `pump_raster` uses).
+        let msgs = match self.op.as_ref() {
+            Some(run) => run.drain(),
+            None => return false,
+        };
+        if msgs.is_empty() {
+            return false;
+        }
+        // The executor sends exactly one `Done`, always last, always preceded by a
+        // final unthrottled `Progress`. Holding it until the whole batch is folded
+        // keeps that ordering true even when both arrive in one drain.
+        let mut done = None;
+        for msg in msgs {
+            match msg {
+                fileop::Msg::Progress {
+                    items,
+                    bytes,
+                    current,
+                } => {
+                    if let Some(flight) = self.op_progress.as_mut() {
+                        // Cumulative, not incremental: the worker throttles its
+                        // sends, so each message is the whole truth so far.
+                        flight.items = items;
+                        flight.bytes = bytes;
+                        flight.current = current;
+                    }
+                }
+                fileop::Msg::Done(report) => done = Some(report),
+            }
+        }
+        if let Some(report) = done {
+            self.finish_op(report);
+        }
+        true
+    }
+
+    /// Retire a finished operation: reload, unmark, journal, report.
+    ///
+    /// The order matters. The marks go before the reload so the refreshed listing
+    /// is drawn with the gutter already correct, and the outcome is decided last,
+    /// once there is nothing left that could still fail.
+    fn finish_op(&mut self, report: fileop::Report) {
+        self.op = None;
+        let flight = self.op_progress.take();
+
+        // Drop the marks this run consumed. A selection has served its purpose the
+        // moment it is acted on, and marks left pointing at paths that are now in
+        // the trash would be a lie about what is selected: the gutter would show
+        // rows that no longer exist and the next operation would collect them into
+        // its `missing` list for no reason. Only the run's own targets go, so marks
+        // gathered in other directories survive, which is the whole point of a
+        // global set (ADR 0017 D3).
+        if let Some(flight) = &flight {
+            for path in &flight.targets {
+                self.marks.remove(path);
+            }
+        }
+
+        // Reload so the listing reflects what happened; `load` also refreshes the
+        // git gutter and the parent cache, both of which a mutation can invalidate.
+        let wanted = self.selected().map(|e| e.name.clone());
+        let prev = self.state.selected();
+        self.load();
+        let names: Vec<&str> = self
+            .view
+            .iter()
+            .map(|&i| self.all[i].name.as_str())
+            .collect();
+        let next = reselect(&names, wanted.as_deref(), prev);
+        self.state.select(next);
+
+        // ADR 0017 D8: the journal records what actually happened, so an operation
+        // that failed every step has nothing to undo. Pushing that empty journal
+        // would spend a slot on the bounded stack and evict a real one, so it is
+        // skipped rather than stored.
+        if !report.journal.steps.is_empty() {
+            push_journal(&mut self.journal, report.journal.clone(), UNDO_DEPTH);
+        }
+
+        // The run's own totals go to the status line either way: a clean run has
+        // nothing more to say, and a partly failed one leaves the summary behind
+        // once its overlay is dismissed, so the outcome does not vanish with the
+        // popup that reported it.
+        self.status = Some(op_done_status(report.kind, report.items, report.bytes));
+        if report.failures.is_empty() {
+            return;
+        }
+        // A partial result is reported, never swallowed (ADR 0009), so failures get
+        // an overlay rather than a status line. Search is left first when it is up:
+        // a background walk costs one key to restart, while a failure that never
+        // reached the user is gone for good, so the walk is the cheaper thing to
+        // lose. A live filter is simply left in place under the popup.
+        if matches!(self.mode, Mode::Search) {
+            self.exit_search();
+        }
+        self.show_op(OpView::Failures(report));
+    }
+
+    /// Put an operation overlay on screen. The which-key help is dismissed first,
+    /// because two popups drawn over each other would leave the user answering the
+    /// one they cannot see.
+    ///
+    /// The status line is deliberately left alone: while an overlay is up the
+    /// status line renders from the mode itself, and what was there before is
+    /// what the user should see again once the overlay closes.
+    fn show_op(&mut self, view: OpView) {
+        self.help = false;
+        self.mode = Mode::Op(view);
+    }
+
+    /// The `D` binding: resolve a trash operation and show it for authorisation
+    /// (ADR 0017 D4/D7). Nothing is mutated here; this only decides.
+    fn request_trash(&mut self) {
+        if self.op.is_some() {
+            // ADR 0017 D2: exactly one operation in flight, refused rather than
+            // queued, and said out loud rather than ignored.
+            self.status = Some("busy: an operation is already running".to_string());
+            return;
+        }
+        let paths = targets(&self.marks, self.selected().map(|e| e.path.as_path()));
+        if paths.is_empty() {
+            self.status = Some(fileop::Refusal::NothingSelected.to_string());
+            return;
+        }
+        // The one filesystem question the operation asks before it runs: what is
+        // actually there, and what has already vanished (ADR 0017 D2).
+        let collected = match fileop::collect(&paths) {
+            Ok(collected) => collected,
+            Err(refusal) => {
+                // A refusal is a complete, honest answer rather than an error to
+                // hide, so it goes to the status line verbatim and nothing changes.
+                self.status = Some(refusal.to_string());
+                return;
+            }
+        };
+        if collected.sources.is_empty() {
+            // Everything selected had already vanished. The planner would refuse
+            // this as "nothing selected", which is true but hides the half worth
+            // knowing, so it is named here instead. The stale marks go with it:
+            // leaving them would keep a gutter pointing at paths that are gone
+            // (ADR 0017 D3).
+            let gone = mark_count(collected.missing.len());
+            for path in &collected.missing {
+                self.marks.remove(path);
+            }
+            self.status = Some(format!("{gone} already gone, so there is nothing to trash"));
+            return;
+        }
+        // Owned so the `PlanCtx` borrow below does not pin `self` across the match.
+        let cwd = self.cwd.clone();
+        let resolved = fileop::plan(
+            fileop::Op::Trash {
+                sources: collected.sources,
+            },
+            &fileop::PlanCtx {
+                // Trash has no destination directory, so there are no names to
+                // collide with and an empty listing is the whole truth.
+                //
+                // EVERY operation that DOES have a destination (copy, move,
+                // rename, create) must pass the UNFILTERED listing of that
+                // directory, hidden entries included, read fresh from the
+                // filesystem at plan time. Neither `self.view` (which hides
+                // dotfiles unless `.` is toggled) nor `self.all` (a snapshot from
+                // the last `load`) will do: planning against either would let an
+                // operation land on top of a `.env` the user cannot see, which is
+                // exactly the hole ADR 0017 D5 closes.
+                dest_listing: &[],
+                cwd: &cwd,
+                // Marks that had already vanished ride into the plan so the
+                // overlay can show them; never silently dropped (D3).
+                missing: &collected.missing,
+                policy: fileop::Conflict::Rename,
+            },
+        );
+        match resolved {
+            Ok(plan) => self.show_op(OpView::Confirm(plan)),
+            Err(refusal) => self.status = Some(refusal.to_string()),
+        }
+    }
+
+    /// Authorise a plan: hand it to the executor and remember what it consumes.
+    fn start_op(&mut self, plan: fileop::Plan) {
+        // Read everything the status line and the completion path need while the
+        // plan is still here; `fileop::start` takes it by value.
+        let label = plan.summary();
+        let total = plan.items();
+        let mut targets: Vec<PathBuf> = plan
+            .steps
+            .iter()
+            .map(|s| s.src.clone())
+            // A create has no source, and an empty path is nobody's mark.
+            .filter(|p| !p.as_os_str().is_empty())
+            .collect();
+        targets.extend(plan.missing.iter().cloned());
+        self.op_progress = Some(InFlight {
+            label,
+            total,
+            targets,
+            items: 0,
+            bytes: 0,
+            current: PathBuf::new(),
+        });
+        self.op = Some(fileop::start(plan));
+    }
+
+    /// Keys while a file-operation overlay is up (ADR 0017 D5). The overlay is
+    /// modal: it consumes every key, so nothing leaks through to the listing
+    /// underneath while the user is deciding.
+    fn handle_op_key(&mut self, code: KeyCode) -> Option<Action> {
+        if !matches!(self.mode, Mode::Op(OpView::Confirm(_))) {
+            // A report of failures is read, not answered, so any key closes it,
+            // following the same which-key convention as the help overlay.
+            self.mode = Mode::Browse;
+            return None;
+        }
+        match code {
+            KeyCode::Enter | KeyCode::Char('y') => {
+                // Taking the mode by value moves the plan into the executor
+                // without cloning it; the browser returns to the listing at once
+                // so the user can keep navigating while the run streams.
+                if let Mode::Op(OpView::Confirm(plan)) =
+                    std::mem::replace(&mut self.mode, Mode::Browse)
+                {
+                    self.start_op(plan);
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('n') => {
+                self.mode = Mode::Browse;
+                self.status = Some("cancelled".to_string());
+            }
+            // `o` (toggle overwrite, re-plan, show the result in the danger
+            // colour) belongs here and is deliberately absent: ADR 0017 D5 gives
+            // it to paste, and trash has no destination and no collisions, so
+            // there is nothing for it to toggle. A key that silently did nothing
+            // would be worse than an unbound one.
+            _ => {}
+        }
+        None
+    }
+
     /// Move the results-list selection by `delta` (ADR 0007 §7); a no-op outside
     /// search mode or with no results.
     fn search_move(&mut self, delta: isize) {
@@ -1049,6 +1419,16 @@ impl App {
             // has its preview built in this same iteration, not one loop (≤60 ms)
             // later. Inert (an early `false`) when not searching.
             if self.pump_search() {
+                dirty = true;
+            }
+            // Drain the file-operation stream (ADR 0017 D2), beside the search
+            // pump and for the same reason: progress must advance and completion
+            // must be noticed without waiting on a keypress. Run BEFORE the preview
+            // recompute so the reload a finished operation performs settles the
+            // selection first, and this iteration previews the settled row rather
+            // than one that is about to move. Inert (an early `false`) when no
+            // operation is running.
+            if self.pump_fileop() {
                 dirty = true;
             }
             // Recompute the preview when the selection changed. Sourced from the
@@ -1123,6 +1503,12 @@ impl App {
             // (ADR 0007 §6); the same 60 ms tier as the raster. Once the walk sends
             // `Done` the engine is dropped and this falls back to the idle cadence.
             let searching = self.search.as_ref().is_some_and(|s| s.engine.is_some());
+            // An operation streaming progress polls on the same 60 ms tier as a
+            // raster or a live search, so the counters and the current path move
+            // while the work happens (ADR 0017 D2). It clears the moment `Done`
+            // arrives and `pump_fileop` drops the run, so a browser with no
+            // operation running still blocks the full second and does nothing.
+            let operating = self.op.is_some();
             // A live fade emits as fast as the per-frame budget allows (~4 ms ⇒
             // ≤250 fps) so the interpolation is smooth up to the display refresh
             // (ADR 0006 D2); the heavier raster/GIF paths keep their 60 ms cadence.
@@ -1134,7 +1520,7 @@ impl App {
             let fading = self.fade.is_some() || self.slide.is_some();
             let timeout = if fading {
                 Duration::from_millis(4)
-            } else if raster_active || animating || searching {
+            } else if raster_active || animating || searching || operating {
                 Duration::from_millis(60)
             } else {
                 Duration::from_millis(1000)
@@ -1196,6 +1582,13 @@ impl App {
                         }
                         _ => {}
                     },
+                    // A click or wheel while a file-operation overlay is up is
+                    // swallowed whole (ADR 0017 D5). Deliberately NOT the help
+                    // overlay's dismiss-on-click rule: a confirm popup is a
+                    // question awaiting an answer, and a stray click that either
+                    // cancelled it or scrolled the listing hidden behind it would
+                    // be a worse surprise than a click that does nothing.
+                    Event::Mouse(_) if matches!(self.mode, Mode::Op(_)) => {}
                     // A click or wheel while the help overlay is up dismisses it
                     // (and is otherwise swallowed), mirroring the keyboard rule.
                     Event::Mouse(_) if self.help => {
@@ -1286,6 +1679,13 @@ impl App {
 
     fn handle_key(&mut self, key: KeyEvent) -> Option<Action> {
         let code = key.code;
+        // A file-operation overlay is modal and claims the keyboard before any
+        // other surface (ADR 0017 D5). It is checked first because it can appear
+        // asynchronously, when a run finishes with failures, and it must own the
+        // next key even if the browser was in filter mode when that happened.
+        if matches!(self.mode, Mode::Op(_)) {
+            return self.handle_op_key(code);
+        }
         if let Mode::Filter = self.mode {
             // The filter is a text-input surface; typeahead never applies here
             // (ADR 0002). Every printable key spells the fuzzy query.
@@ -1387,6 +1787,22 @@ impl App {
             }
         }
 
+        // `Ctrl-a` marks every entry in the current filtered view (ADR 0017 D4).
+        // This is the one mark binding that does NOT live in `browse_char`, and
+        // for a structural reason: `browse_char` maps a bare character, so it has
+        // no way to say "with Control held", and registering a plain `a` there
+        // would spend a letter the ADR wants left alone. Placing the arm above the
+        // typeahead candidate block below is safe because that block never buffers
+        // a key with Ctrl or Alt held (its `ctrl_alt` check), so `Ctrl-a` could not
+        // have started a name search either way and ADR 0002 D2 is untouched: the
+        // set of bound plain CHARACTERS is still exactly `browse_char`.
+        if code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let rows = self.view_rows();
+            self.marks
+                .mark_all(rows.iter().map(|(p, s, d)| (p.as_path(), *s, *d)));
+            return None;
+        }
+
         // A printable char with no Ctrl/Alt held is a typeahead candidate; its
         // fate is the session × binding precedence. Ctrl/Alt keys (and Shift,
         // already folded into the char) are never buffered.
@@ -1423,7 +1839,20 @@ impl App {
                     return self.run_char_action(action);
                 }
             }
-            KeyCode::Esc => return Some(Action::Quit),
+            // `Esc` clears a live selection before it quits (ADR 0017 D4). This is
+            // the single guard on the key, and it earns its place: a key that
+            // silently quit the browser while a set of marks was held would throw
+            // away a selection the user had deliberately gathered across folders,
+            // which is worse than the small conditional. With nothing marked the
+            // key quits exactly as it always did. The typeahead branch further up
+            // still claims `Esc` while a name session is live (ADR 0002 D3), so
+            // this arm is only reached when there is no session to cancel.
+            KeyCode::Esc => {
+                if self.marks.is_empty() {
+                    return Some(Action::Quit);
+                }
+                self.marks.clear();
+            }
             KeyCode::Down => self.move_sel(1),
             KeyCode::Up => self.move_sel(-1),
             KeyCode::PageDown => self.move_sel(half),
@@ -1492,6 +1921,33 @@ impl App {
                 self.resort();
             }
             CharAction::Help => self.help = !self.help,
+            CharAction::ToggleMark => {
+                // Toggle the row under the cursor, then step down one row, so
+                // holding `Space` marks a run (ADR 0017 D4). The size and kind are
+                // the ones the listing is showing; `Marks` documents them as a
+                // snapshot that the operation engine re-checks against the real
+                // filesystem before acting.
+                if let Some(e) = self.selected() {
+                    let path = e.path.clone();
+                    let (size, is_dir) = (e.size, e.kind == Format::Directory);
+                    self.marks.toggle(&path, size, is_dir);
+                    let next = mark_advance(self.state.selected(), self.view.len());
+                    self.state.select(next);
+                }
+            }
+            CharAction::InvertMarks => {
+                // Only the CURRENT filtered view is inverted, in listing order.
+                // Rows hidden by the filter or by the dot toggle are not in
+                // `view`, so `V` never touches what the user cannot see, and marks
+                // held in other directories survive because they are outside this
+                // listing entirely (ADR 0017 D3).
+                let rows = self.view_rows();
+                self.marks
+                    .invert(rows.iter().map(|(p, s, d)| (p.as_path(), *s, *d)));
+            }
+            // Resolve the trash operation and show the plan; nothing is mutated
+            // until the overlay is authorised (ADR 0017 D5).
+            CharAction::Trash => self.request_trash(),
             CharAction::Quit => return Some(Action::Quit),
         }
         None
@@ -2005,6 +2461,9 @@ impl App {
                 git: self.git.as_ref(), // current pane's gutter (D2).
                 meta: self.meta,
                 fade_t, // the current pane fades in after a dir change (D3).
+                // The mark gutter is a CURRENT-pane affair, and appears only once
+                // something is marked (ADR 0017 D3).
+                marks: mark_gutter(&self.marks),
             };
             // Only the CURRENT (middle) pane slides; the parent and preview render
             // statically (ADR 0006 D3). A live slide composes the static block plus
@@ -2045,6 +2504,9 @@ impl App {
                 git: self.git.as_ref(), // current pane's gutter (D2).
                 meta: self.meta,
                 fade_t, // the current pane fades in after a dir change (D3).
+                // The mark gutter is a CURRENT-pane affair, and appears only once
+                // something is marked (ADR 0017 D3).
+                marks: mark_gutter(&self.marks),
             };
             // The current pane slides; the preview renders statically (ADR 0006 D3).
             match self.slide.as_ref().filter(|s| !s.anim.done(now)) {
@@ -2073,6 +2535,14 @@ impl App {
         // browse-only anyway). `Clear` punches a hole so the popup isn't see-through.
         if self.help {
             render_browse_help(f, area, self.sort);
+        }
+        // The file-operation overlay draws last of all, over the help overlay too
+        // (which `show_op` has already dismissed, so in practice they never
+        // coexist). `Mode::Op` renders the ordinary browse layout underneath on
+        // purpose: the confirm popup is a question about the listing behind it,
+        // and hiding that listing would take away the context the answer needs.
+        if let Mode::Op(view) = &self.mode {
+            render_op_overlay(f, area, view);
         }
     }
 
@@ -2112,6 +2582,11 @@ impl App {
             selected,
             title: format!(" {} ", pretty_dir_name(&parent)),
             git: None,
+            // No mark gutter here either (ADR 0017 D3). The parent pane is
+            // navigation context, not a surface you select on: marks are only ever
+            // set from the current listing, which is exactly why this pane also
+            // carries `MetaCol::None` and no git gutter.
+            marks: None,
             meta: MetaCol::None, // no trailing column — cleaner context pane.
             fade_t: None,        // the parent pane didn't change — never fades (D3).
         };
@@ -2230,8 +2705,44 @@ impl App {
                 "text + kind: ext: size: modified:   [Enter] keep  [Esc] clear"
             };
             format!(" /{}    {hint}", self.filter)
+        } else if let Mode::Op(view) = &self.mode {
+            // An overlay owns the screen, so the line under it names the keys that
+            // answer it rather than repeating state the popup already shows.
+            match view {
+                OpView::Confirm(plan) => {
+                    format!(" {}    [Enter]/[y] run  [Esc]/[n] cancel", plan.summary())
+                }
+                OpView::Failures(report) => {
+                    format!(" {}    [any key] close", fail_count(report.failures.len()))
+                }
+            }
+        } else if let Some(flight) = &self.op_progress {
+            // The in-flight line outranks `self.status` and the mark line both,
+            // and for the same reason in each case: it is the only line here that
+            // changes on its own. A `self.status` left over from before the run
+            // started (the sort blurb, a "no viewer for …") would otherwise hide an
+            // operation that has no other way to show itself, and the mark line is
+            // standing state that is about to be cleared by the run anyway. Filter
+            // mode still wins above, because that line is being typed into.
+            format!(
+                " {}",
+                op_progress_status(&flight.label, flight.items, flight.total, &flight.current)
+            )
         } else if let Some(s) = &self.status {
             format!(" {s}")
+        } else if !self.marks.is_empty() {
+            // A selection held across directories must never be invisible state
+            // (ADR 0017 D3), but it is standing state rather than news, so it
+            // ranks BELOW the two branches above. Filter mode keeps its own line
+            // because that line is being typed into, and a transient `self.status`
+            // message ("no viewer for …", the "type: …" typeahead echo, the sort
+            // blurb) would otherwise be swallowed for as long as anything stayed
+            // marked, which is the whole time the feature is in use. That leaves
+            // the static key hint as the branch this replaces, which is the one
+            // carrying nothing time-sensitive.
+            let dirs = self.marks.marks().iter().filter(|m| m.is_dir).count();
+            let line = marks_status(self.marks.len(), dirs, self.marks.bytes());
+            format!(" {line}")
         } else {
             let hidden = if self.show_hidden { "shown" } else { "hidden" };
             // Concise now that `?` opens the full which-key overlay; the dot state
@@ -2243,10 +2754,13 @@ impl App {
         };
         // Filter mode borrows the palette's yellow (`doc`, which is exactly the
         // old hardcoded 252,211,77 in sucher-dark) so the mode stays themeable.
-        let color = if let Mode::Filter = self.mode {
-            theme::palette().doc
-        } else {
-            theme::palette().dim
+        // Written out per mode rather than with a catch-all, so a later mode has
+        // to state its colour instead of quietly inheriting `dim`.
+        let color = match &self.mode {
+            Mode::Filter => theme::palette().doc,
+            // Failures borrow the same semantic red the overlay uses.
+            Mode::Op(OpView::Failures(_)) => theme::palette().pdf,
+            Mode::Browse | Mode::Search | Mode::Op(OpView::Confirm(_)) => theme::palette().dim,
         };
         f.render_widget(
             Paragraph::new(Line::from(txt)).style(Style::default().fg(color)),
@@ -2473,6 +2987,18 @@ const FADE_BG: Color = Color::Rgb(16, 16, 20);
 /// exactly when there is real work to show and is otherwise still.
 const SPINNER: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
+/// How many completed operations the undo stack keeps (ADR 0017 D8). Bounded
+/// because a journal pins the paths it can put back, and an unbounded stack would
+/// hold a growing set of them for the life of the process while `U` realistically
+/// reaches back one or two operations.
+const UNDO_DEPTH: usize = 16;
+
+/// How many screen rows the confirm overlay spends on the vanished-marks block
+/// before it collapses into a count (ADR 0017 D3). Small on purpose: the marks
+/// that went missing must be visible, but they must not crowd out the plan the
+/// user is actually being asked to authorise.
+const MISSING_ROWS: usize = 4;
+
 /// A single pane's worth of entries to draw, decoupled from `App` so the SAME
 /// renderer ([`render_entry_list`]) serves both the current and the parent pane
 /// (ADR 0004, D1). Selection is an index into `order`, not `entries`.
@@ -2502,6 +3028,57 @@ struct EntryListView<'a> {
     /// the current pane ever sets `Some` (right after a directory change); the
     /// parent context pane — which didn't change — always passes `None`.
     fade_t: Option<f32>,
+    /// Optional multi-select state for the mark gutter (ADR 0017 D3). `Some` for
+    /// the current pane and ONLY while the set is non-empty, which is what makes
+    /// the gutter invisible until used: with nothing marked it reserves no width
+    /// and the listing is byte-for-byte the pre-feature render, the same rule
+    /// `git` above follows and `MetaCol::None` follows for the trailing column.
+    /// The parent pane always passes `None`, because it is navigation context
+    /// rather than a surface you act on, which is also why it carries no git
+    /// gutter and no metadata column.
+    marks: Option<&'a crate::marks::Marks>,
+}
+
+/// The mark set an entry pane draws its gutter from, or `None` when there is
+/// nothing to draw (ADR 0017 D3). One definition of the "only when non-empty"
+/// rule, so the several current-pane construction sites cannot drift apart on it,
+/// and a free function over the set rather than a `&self` helper so a caller can
+/// build its view from disjoint fields while `&mut self.state` is still needed for
+/// the render.
+fn mark_gutter(marks: &crate::marks::Marks) -> Option<&crate::marks::Marks> {
+    (!marks.is_empty()).then_some(marks)
+}
+
+/// The glyph a marked row shows in the mark gutter (ADR 0017 D3). An unmarked row
+/// draws two blanks in its place, so names stay column-aligned whatever is
+/// selected, and both forms are one cell wide plus a trailing space.
+///
+/// `IconMode::None` means "no file-type icons" rather than "ASCII terminal", but
+/// the browser already reads it as the ASCII-safe mode wherever it decorates
+/// something that is not a file: `head_spans` swaps `⎇ ↑ ↓ ●` for `git: + - *`
+/// there. The mark gutter follows that convention instead of inventing a second
+/// reading of the mode. Pure, so the ASCII guarantee is unit-tested.
+fn mark_glyph(icons: IconMode) -> &'static str {
+    match icons {
+        IconMode::None => "*",
+        _ => "◆",
+    }
+}
+
+/// Total width an entry pane reserves before the name column: 2 cells for the
+/// block borders, 2 for the selection cursor gutter that the `highlight_symbol`
+/// list reserves on every row, 2 more for the glyph column in the glyphed icon
+/// modes (ADR 0003 D5), and 2 each for the git and mark gutters, but only when
+/// those are actually drawn. Both optional gutters are invisible until used (ADR
+/// 0004 D2, ADR 0017 D3): with neither present a pane reserves exactly what it
+/// reserved before either feature existed and the name reclaims the difference.
+/// Pure, so that guarantee is unit-tested rather than eyeballed.
+fn entry_chrome_w(icons: IconMode, git: bool, marks: bool) -> u16 {
+    let base = match icons {
+        IconMode::None => 4, // borders + cursor gutter
+        _ => 6,              // borders + cursor gutter + glyph cell
+    };
+    base + if git { 2 } else { 0 } + if marks { 2 } else { 0 }
 }
 
 /// Decide the effective column count for a frame: three (Miller) only when the
@@ -2755,6 +3332,9 @@ fn visible_window(
 /// - `view.git` reserves a 2-cell gutter only when `Some` (the current pane in a
 ///   repo); when `None` (parent pane, non-repo, or git off) it costs zero width
 ///   and the name reclaims it — so two-column output is byte-for-byte pre-git.
+/// - `view.marks` reserves a second 2-cell gutter under the same rule (ADR 0017
+///   D3): `Some` only for the current pane with a non-empty selection, so a
+///   browser with nothing marked reserves nothing and looks exactly as it did.
 fn entry_items(
     area: Rect,
     view: &EntryListView,
@@ -2762,20 +3342,12 @@ fn entry_items(
     window: std::ops::Range<usize>,
 ) -> Vec<ListItem<'static>> {
     let fade = |c: Color| fade_color(view.fade_t, c);
-    // Width reserved before the name: 2 for the block borders, 2 for the
-    // selection cursor gutter (the `highlight_symbol` List reserves on every row
-    // so names align whether selected or not), plus a 2-cell glyph column ("X ")
-    // in the glyphed modes. `IconMode::None` drops the glyph, so the name
-    // reclaims those two cells (D5).
-    let chrome_w = match icons {
-        IconMode::None => 4, // borders + gutter
-        _ => 6,              // borders + gutter + glyph cell
-    };
-    // The git gutter is a 2-cell slot drawn only when a git map is present; when
-    // absent (parent pane, non-repo, git off) it costs nothing and the name
-    // reclaims it, keeping the pre-git layout byte-for-byte.
-    let git_w: u16 = if view.git.is_some() { 2 } else { 0 };
-    let inner_w = area.width.saturating_sub(chrome_w + git_w) as usize;
+    // Every optional gutter's width is decided in one place, so the reserved
+    // width and the spans built below can never disagree about whether a slot is
+    // drawn. Both the git gutter (D2) and the mark gutter (ADR 0017 D3) cost zero
+    // width when they are not drawn, and the name reclaims what they do not take.
+    let chrome_w = entry_chrome_w(icons, view.git.is_some(), view.marks.is_some());
+    let inner_w = area.width.saturating_sub(chrome_w) as usize;
     let size_w = 8usize;
     // The trailing metadata column reserves ` {value:>8}` (9 cells) for both
     // `Size` and `Modified` — they share the width so columns align across a
@@ -2820,7 +3392,25 @@ fn entry_items(
             //             the SAME tint on the filename so the whole row keys
             //             to language identity.
             //   None    → no glyph column at all; name uses the Format colour.
-            let mut spans: Vec<Span> = Vec::with_capacity(4);
+            let mut spans: Vec<Span> = Vec::with_capacity(5);
+            // Mark gutter (ADR 0017 D3), drawn only when `view.marks` is `Some`,
+            // which happens only for the current pane with a non-empty set. It
+            // sits at the pane's left edge, ahead of the icon, so every mark lines
+            // up in one uninterrupted vertical band and a run marked by holding
+            // `Space` reads as a run; an unmarked row pays two blanks instead, so
+            // the names below it stay column-aligned. The accent is the palette's
+            // existing "this is where you are acting" colour, so no new `Palette`
+            // field is needed, and it fades with everything else on this row.
+            if let Some(marks) = view.marks {
+                if marks.contains(&e.path) {
+                    spans.push(Span::styled(
+                        format!("{} ", mark_glyph(icons)),
+                        Style::default().fg(fade(theme::palette().accent)),
+                    ));
+                } else {
+                    spans.push(Span::raw("  "));
+                }
+            }
             let name_color = match icons {
                 IconMode::Unicode => {
                     let c = e.kind.color();
@@ -3029,6 +3619,20 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         row("x", "open in native app  (OS default)"),
         row("type…", "jump to a name (typeahead)"),
         Line::from(""),
+        heading(" Select"),
+        row("Space", "mark / unmark, then move down"),
+        row("V", "invert marks in this view"),
+        row("Ctrl-a", "mark everything in this view"),
+        row("Esc", "clear marks (quits when nothing is marked)"),
+        Line::from(""),
+        heading(" Act"),
+        // Named as trash, not delete: sucher has no permanent-delete binding at
+        // all, and the help is where that promise has to be legible (ADR 0017 D7).
+        row(
+            "D",
+            "move to trash  (shows the plan first; never permanent)",
+        ),
+        Line::from(""),
         heading(" Find"),
         row("/", "filter this folder  (kind: ext: size: modified:)"),
         row("S", "recursive search  (also content:)"),
@@ -3064,6 +3668,332 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
             Style::default().fg(accent).add_modifier(Modifier::BOLD),
         )));
     f.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
+}
+
+/// Draw a file-operation overlay: the plan awaiting authorisation, or the
+/// failures a finished run left behind (ADR 0017 D5).
+///
+/// Built on the same `centered_rect` + `Clear` geometry and the same two-tone
+/// accent/dim style as [`render_browse_help`], so the two popups read as one
+/// system. The keys that answer it live in the title, which buys back a row for
+/// the content and matches the help overlay's " any key to close ".
+fn render_op_overlay(f: &mut Frame, area: Rect, view: &OpView) {
+    let popup = centered_rect(area, 60, 60);
+    f.render_widget(Clear, popup);
+    let accent = theme::palette().accent;
+    // The inner box, minus the border on each side.
+    let w = popup.width.saturating_sub(2) as usize;
+    let h = popup.height.saturating_sub(2) as usize;
+
+    let (title, lines) = match view {
+        OpView::Confirm(plan) => (
+            format!(" {} · [Enter] run  [Esc] cancel ", kind_title(plan.kind)),
+            confirm_lines(plan, w, h),
+        ),
+        OpView::Failures(report) => (
+            format!(
+                " {} · {} · [any key] close ",
+                kind_title(report.kind),
+                fail_count(report.failures.len())
+            ),
+            failure_lines(report, w, h),
+        ),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(accent))
+        .title(Line::from(Span::styled(
+            title,
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        )));
+    f.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
+}
+
+/// The confirm overlay's body: what the plan will do, before it does any of it
+/// (ADR 0017 D5).
+///
+/// The step list is built LAST and sized to whatever rows are actually left, and
+/// that ordering is what makes the "showing 8 of 41" promise hold. Because
+/// [`fit_rows`] spends one of those rows on the count, the body lands on exactly
+/// `h` lines when it overflows, so the final `truncate` can only ever fire on a
+/// terminal too short for the header alone, where no step rows are drawn either.
+/// The overlay can therefore never look like the whole plan when it is not.
+fn confirm_lines(plan: &fileop::Plan, w: usize, h: usize) -> Vec<Line<'static>> {
+    let accent = theme::palette().accent;
+    let dim = theme::palette().dim;
+    // ADR 0017 asks for a danger colour and `Palette` is not grown for it: `pdf`
+    // is already this codebase's semantic red (`git.rs` renders a deleted path in
+    // it), so the facts that deserve alarm borrow it.
+    let danger = theme::palette().pdf;
+    let styled = |text: String, color: Color| {
+        Line::from(Span::styled(truncate(&text, w), Style::default().fg(color)))
+    };
+
+    let mut lines = vec![Line::from(Span::styled(
+        truncate(&format!("  {}", plan.summary()), w),
+        Style::default().fg(accent).add_modifier(Modifier::BOLD),
+    ))];
+    // Trash is the one operation with nowhere to name (D7); every other one says
+    // where the batch is going before it says what is in it.
+    if !plan.dest.as_os_str().is_empty() {
+        lines.push(styled(format!("  into {}", plan.dest.display()), dim));
+    }
+    let renamed = plan.renamed();
+    if renamed > 0 {
+        lines.push(styled(
+            format!("  {renamed} suffixed to avoid a collision"),
+            dim,
+        ));
+    }
+    let overwrites = plan.overwrites();
+    if overwrites > 0 {
+        // Displacing something is the one thing here that loses a name, so it is
+        // the one line drawn in the danger colour.
+        lines.push(styled(
+            format!("  {overwrites} will be overwritten"),
+            danger,
+        ));
+    }
+    // Marks that had already vanished are shown, never silently dropped (D3).
+    if !plan.missing.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(styled(
+            format!("  {} already gone:", mark_count(plan.missing.len())),
+            danger,
+        ));
+        let (shown, hidden) = fit_rows(plan.missing.len(), MISSING_ROWS);
+        for path in plan.missing.iter().take(shown) {
+            lines.push(styled(format!("    {}", path.display()), dim));
+        }
+        if hidden > 0 {
+            lines.push(styled(format!("    … and {hidden} more"), dim));
+        }
+    }
+    lines.push(Line::from(""));
+
+    let (shown, hidden) = fit_rows(plan.steps.len(), h.saturating_sub(lines.len()));
+    for step in plan.steps.iter().take(shown) {
+        lines.push(styled(format!("  {}", step_line(step, plan.kind)), accent));
+    }
+    if hidden > 0 {
+        lines.push(Line::from(Span::styled(
+            truncate(&format!("  … and {hidden} more"), w),
+            Style::default().fg(dim).add_modifier(Modifier::ITALIC),
+        )));
+    }
+    lines.truncate(h);
+    lines
+}
+
+/// The failure overlay's body: what the run managed, then what it did not, each
+/// with the executor's own one-line reason (ADR 0009). Sized by the same
+/// [`fit_rows`] rule as the confirm overlay, so a long failure list says how many
+/// it is not showing rather than ending without warning.
+fn failure_lines(report: &fileop::Report, w: usize, h: usize) -> Vec<Line<'static>> {
+    let accent = theme::palette().accent;
+    let dim = theme::palette().dim;
+    let danger = theme::palette().pdf;
+    let mut lines = vec![
+        Line::from(Span::styled(
+            truncate(
+                &format!(
+                    "  {}",
+                    op_done_status(report.kind, report.items, report.bytes)
+                ),
+                w,
+            ),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+    let (shown, hidden) = fit_rows(report.failures.len(), h.saturating_sub(lines.len()));
+    for failure in report.failures.iter().take(shown) {
+        lines.push(Line::from(Span::styled(
+            truncate(&format!("  {}", failure.msg), w),
+            Style::default().fg(danger),
+        )));
+    }
+    if hidden > 0 {
+        lines.push(Line::from(Span::styled(
+            truncate(&format!("  … and {hidden} more"), w),
+            Style::default().fg(dim).add_modifier(Modifier::ITALIC),
+        )));
+    }
+    lines.truncate(h);
+    lines
+}
+
+/// How many of `total` rows to draw in `room` screen rows, and how many are left
+/// over. A list that does not fit spends one of its own rows saying how many it
+/// is not showing, so a truncated list can never be mistaken for a complete one
+/// (ADR 0017 D5). `room == 0` therefore shows nothing and reports everything as
+/// hidden, rather than showing a first row with no way to say more follow. Pure,
+/// so the arithmetic is unit-tested rather than eyeballed on a short terminal.
+fn fit_rows(total: usize, room: usize) -> (usize, usize) {
+    if total <= room {
+        return (total, 0);
+    }
+    let shown = room.saturating_sub(1);
+    (shown, total - shown)
+}
+
+/// The final component of a path for display, or the whole path when it has none
+/// (the filesystem root). Used by the overlay and the progress line, which have a
+/// popup's width to work with and not a screen's.
+fn leaf_name(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string_lossy().into_owned())
+}
+
+/// One step as the confirm overlay lists it: what is acted on, and what it
+/// becomes. Pure, so the collision-suffix rendering the user authorises is
+/// unit-tested rather than eyeballed.
+fn step_line(step: &fileop::Step, kind: fileop::Kind) -> String {
+    let src = leaf_name(&step.src);
+    let dest = leaf_name(&step.dest);
+    match kind {
+        // Trash has no destination path to name (ADR 0017 D7), so the line says
+        // where the entry is going in words rather than inventing a path for it.
+        fileop::Kind::Trash => format!("{src}  →  trash"),
+        // A create has no source; the name being made is the whole of the step.
+        fileop::Kind::Create => dest,
+        fileop::Kind::Copy | fileop::Kind::Move | fileop::Kind::Rename => {
+            if src == dest {
+                // The common case: nothing collided, so naming the same string
+                // twice would only be noise.
+                src
+            } else {
+                format!("{src}  →  {dest}")
+            }
+        }
+    }
+}
+
+/// The overlay's title for an operation. Capitalised because it heads a popup,
+/// unlike the lowercase verb `Plan::summary` uses mid-sentence.
+fn kind_title(kind: fileop::Kind) -> &'static str {
+    match kind {
+        fileop::Kind::Copy => "Copy",
+        fileop::Kind::Move => "Move",
+        fileop::Kind::Rename => "Rename",
+        fileop::Kind::Create => "Create",
+        // Named in full, so the popup states the promise of ADR 0017 D7 rather
+        // than saying "Delete" and leaving the user to hope.
+        fileop::Kind::Trash => "Move to trash",
+    }
+}
+
+/// The past-tense verb for a finished operation.
+fn done_verb(kind: fileop::Kind) -> &'static str {
+    match kind {
+        fileop::Kind::Copy => "copied",
+        fileop::Kind::Move => "moved",
+        fileop::Kind::Rename => "renamed",
+        fileop::Kind::Create => "created",
+        fileop::Kind::Trash => "trashed",
+    }
+}
+
+/// The status line a finished run leaves behind, e.g.
+/// `trashed 3 items, 1.2K · restore from the system trash`.
+///
+/// Sizes go through [`crate::util::human_size`], the formatter the listing's size
+/// column uses, so the two never disagree about what a megabyte looks like. Pure,
+/// so the wording is unit-tested.
+fn op_done_status(kind: fileop::Kind, items: usize, bytes: u64) -> String {
+    let noun = if items == 1 { "item" } else { "items" };
+    let mut out = format!("{} {items} {noun}", done_verb(kind));
+    if bytes > 0 {
+        out.push_str(&format!(", {}", crate::util::human_size(bytes)));
+    }
+    if kind == fileop::Kind::Trash {
+        // ADR 0017 D8: sucher does not restore from the trash in process, so the
+        // line points at the surface that does instead of implying `U` will. A
+        // half-supported undo is worse than an honest pointer to Finder.
+        out.push_str(" · restore from the system trash");
+    }
+    out
+}
+
+/// The status line while an operation runs, e.g. `trash 3 items · 2/3 · notes.md`.
+///
+/// The label is the plan's own summary, captured at authorisation time, so the
+/// line the user is watching names the operation they authorised word for word.
+/// Pure, so the format is unit-tested.
+fn op_progress_status(label: &str, items: usize, total: usize, current: &Path) -> String {
+    let mut out = format!("{label} · {items}/{total}");
+    let name = leaf_name(current);
+    // Empty before the first progress message arrives, and an empty tail would
+    // just leave a dangling separator.
+    if !name.is_empty() {
+        out.push_str(&format!(" · {name}"));
+    }
+    out
+}
+
+/// `1 step` / `3 steps`, for the failure overlay's title and status line.
+fn fail_count(n: usize) -> String {
+    let noun = if n == 1 { "step" } else { "steps" };
+    format!("{n} {noun} failed")
+}
+
+/// `1 mark` / `3 marks`, for the vanished-marks block.
+fn mark_count(n: usize) -> String {
+    let noun = if n == 1 { "mark" } else { "marks" };
+    format!("{n} {noun}")
+}
+
+/// The paths an operation acts on: the mark set when it is non-empty, otherwise
+/// the entry under the cursor (ADR 0017 D3).
+///
+/// Every operation shares this rule, so it lives here once rather than being
+/// retyped by each binding as copy, move and rename land. Marks are handed over
+/// in mark order, which is the order the planner allocates collision suffixes in,
+/// so the same selection always produces the same plan. Pure, so the rule is
+/// unit-tested without a browser.
+fn targets(marks: &crate::marks::Marks, cursor: Option<&Path>) -> Vec<PathBuf> {
+    if !marks.is_empty() {
+        return marks.marks().iter().map(|m| m.path.clone()).collect();
+    }
+    // No marks and nothing under the cursor is an empty batch, which the planner
+    // refuses by name rather than this function guessing at one.
+    cursor.map(Path::to_path_buf).into_iter().collect()
+}
+
+/// Where the cursor lands after an operation reloaded the listing.
+///
+/// The name it was sitting on wins whenever it survived, which is the same rule
+/// [`App::go_parent`] uses to land on the directory it came out of. When that
+/// name is gone, the same ROW is kept instead, clamped to the shortened listing:
+/// after a delete that is the entry which moved up into the deleted one's place,
+/// which is where a file manager leaves the cursor and is far more considerate
+/// than snapping back to the top of a long folder. Pure, so both branches are
+/// unit-tested without a filesystem.
+fn reselect(names: &[&str], wanted: Option<&str>, prev: Option<usize>) -> Option<usize> {
+    if names.is_empty() {
+        return None;
+    }
+    if let Some(wanted) = wanted {
+        if let Some(i) = names.iter().position(|n| *n == wanted) {
+            return Some(i);
+        }
+    }
+    Some(prev.unwrap_or(0).min(names.len() - 1))
+}
+
+/// Push a completed journal onto the bounded undo stack (ADR 0017 D8).
+///
+/// It is the OLDEST entry that goes when the bound is reached: undo walks
+/// backwards from the most recent operation, so the far end of the stack is the
+/// part nobody is going to reach for. Pure, so the bound is unit-tested rather
+/// than trusted.
+fn push_journal(stack: &mut Vec<fileop::Journal>, journal: fileop::Journal, depth: usize) {
+    stack.push(journal);
+    while stack.len() > depth {
+        stack.remove(0);
+    }
 }
 
 /// The bare folder name for a pane title (`~/src/foo` → `foo`), or `/` for the
@@ -3316,6 +4246,45 @@ fn row_to_index(
     }
     let idx = offset + (row - first_row) as usize;
     (idx < view_len).then_some(idx)
+}
+
+/// The selection after a `Space` mark (ADR 0017 D4): one row down from `cur` in a
+/// listing of `len` rows, so holding the key marks a run without a second hand on
+/// `j`. It stops at the last row rather than wrapping, matching the clamp every
+/// other browse motion uses ([`App::move_sel`]): wrapping would silently send the
+/// cursor back to the top and re-toggle rows the user had just marked. `None` on an
+/// empty listing, where there is nothing to mark and nothing to select. Pure, so
+/// the arithmetic is unit-tested without a terminal.
+fn mark_advance(cur: Option<usize>, len: usize) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some((cur.unwrap_or(0) + 1).min(len - 1))
+}
+
+/// The status-line summary of the mark set (ADR 0017 D3), e.g. `3 marked · 1.1M`.
+/// A selection held across directories must never be invisible state, and this line
+/// is what keeps it visible.
+///
+/// `bytes` is [`crate::marks::Marks::bytes`], which totals the marked FILES only:
+/// listings give directories size 0, so a marked folder contributes nothing and the
+/// figure says nothing about the tree underneath it. Printing that number beside a
+/// count that includes folders would imply their contents had been measured, so the
+/// folders are counted out separately (`3 marked · 1.1M + 2 folders`), and a
+/// selection of nothing but folders drops the size rather than claiming a
+/// misleading `0 B`. Only the operation planner, which walks each tree, can give a
+/// real recursive total. Pure, so the wording is unit-tested.
+fn marks_status(total: usize, dirs: usize, bytes: u64) -> String {
+    let files = total.saturating_sub(dirs);
+    let folders = if dirs == 1 { "folder" } else { "folders" };
+    let size = if dirs == 0 {
+        crate::util::human_size(bytes)
+    } else if files == 0 {
+        format!("{dirs} {folders}")
+    } else {
+        format!("{} + {dirs} {folders}", crate::util::human_size(bytes))
+    };
+    format!("{total} marked · {size}")
 }
 
 /// Clamp a search-results selection move (ADR 0007 §7): from the current selection,
@@ -3837,6 +4806,323 @@ mod tests {
         );
         // A pure name/metadata hit → empty (no snippet segment drawn).
         assert_eq!(snippet_suffix(None), "");
+    }
+
+    /// Every mark key must be a BOUND char, so typeahead treats it as a motion
+    /// and never as the first letter of a name search (ADR 0002 D2, ADR 0017 D4).
+    /// `Space` is the one that matters most: an unbound space would open a name
+    /// buffer that no file name can ever start with.
+    #[test]
+    fn mark_keys_are_bound_chars_so_typeahead_passes_them_through() {
+        assert!(matches!(browse_char(' '), Some(CharAction::ToggleMark)));
+        assert!(matches!(browse_char('V'), Some(CharAction::InvertMarks)));
+        // The typeahead precedence rule reads `browse_char` directly, so an idle
+        // press of either key runs the binding instead of starting a session.
+        for c in [' ', 'V'] {
+            assert!(matches!(
+                typeahead::action(false, browse_char(c).is_some()),
+                typeahead::Action::PassThrough
+            ));
+        }
+        // A letter that is still free must keep starting a name search, proving
+        // the two new bindings did not quietly swallow the alphabet.
+        assert!(browse_char('R').is_none());
+        // `Ctrl-a` is deliberately NOT a `browse_char` binding: a bare `a` stays
+        // free for typeahead, and the handler tests the modifier itself.
+        assert!(browse_char('a').is_none());
+    }
+
+    #[test]
+    fn mark_advance_steps_down_and_stops_at_the_last_row() {
+        // Nothing listed: nothing to mark, nothing to select.
+        assert_eq!(mark_advance(None, 0), None);
+        assert_eq!(mark_advance(Some(3), 0), None);
+        // A fresh listing with no selection yet behaves as if on row 0.
+        assert_eq!(mark_advance(None, 5), Some(1));
+        // The ordinary case: holding Space walks down the listing.
+        assert_eq!(mark_advance(Some(0), 5), Some(1));
+        assert_eq!(mark_advance(Some(3), 5), Some(4));
+        // At the last row it toggles in place and does NOT wrap to the top, which
+        // would re-toggle rows the user had just marked.
+        assert_eq!(mark_advance(Some(4), 5), Some(4));
+        // A single-row listing is the same rule taken to its limit.
+        assert_eq!(mark_advance(Some(0), 1), Some(0));
+    }
+
+    /// The mark gutter is invisible until used (ADR 0017 D3): with no marks the
+    /// reserved width is exactly what it was before the feature, and with marks it
+    /// is two cells wider, whatever the icon mode and whatever git is doing.
+    #[test]
+    fn mark_gutter_costs_two_cells_only_when_it_is_drawn() {
+        for icons in [IconMode::None, IconMode::Unicode, IconMode::Nerd] {
+            for git in [false, true] {
+                let without = entry_chrome_w(icons, git, false);
+                let with = entry_chrome_w(icons, git, true);
+                assert_eq!(with, without + 2, "{git}");
+            }
+        }
+        // The pre-feature values, pinned: borders + cursor gutter, plus the glyph
+        // cell in the glyphed modes, plus the git gutter when a repo is listed.
+        assert_eq!(entry_chrome_w(IconMode::None, false, false), 4);
+        assert_eq!(entry_chrome_w(IconMode::Unicode, false, false), 6);
+        assert_eq!(entry_chrome_w(IconMode::Nerd, false, false), 6);
+        assert_eq!(entry_chrome_w(IconMode::Unicode, true, false), 8);
+        // Both gutters drawn at once still just add their two cells each.
+        assert_eq!(entry_chrome_w(IconMode::Unicode, true, true), 10);
+        assert_eq!(entry_chrome_w(IconMode::None, true, true), 8);
+    }
+
+    /// The gutter is drawn only for a non-empty set, and only where a set is
+    /// passed at all: the parent pane passes `None` and so can never draw one.
+    #[test]
+    fn mark_gutter_is_some_only_when_something_is_marked() {
+        let mut marks = crate::marks::Marks::new();
+        assert!(mark_gutter(&marks).is_none());
+        marks.insert(Path::new("/a/b.txt"), 10, false);
+        assert!(mark_gutter(&marks).is_some());
+        marks.clear();
+        assert!(mark_gutter(&marks).is_none());
+    }
+
+    /// The glyph is one cell in every mode, and pure ASCII under `IconMode::None`,
+    /// following the convention `head_spans` set for that mode.
+    #[test]
+    fn mark_glyph_is_one_cell_and_ascii_under_icon_mode_none() {
+        assert_eq!(mark_glyph(IconMode::None), "*");
+        for icons in [IconMode::None, IconMode::Unicode, IconMode::Nerd] {
+            assert_eq!(mark_glyph(icons).chars().count(), 1);
+        }
+        assert!(mark_glyph(IconMode::None).is_ascii());
+    }
+
+    /// The status line is honest about what was measured (ADR 0017 D3): the byte
+    /// total covers marked files only, so marked folders are counted out rather
+    /// than folded into a figure that would imply their trees had been walked.
+    #[test]
+    fn marks_status_never_implies_folder_contents_were_measured() {
+        // Files only: the plain count and total.
+        assert_eq!(marks_status(3, 0, 1_200_000), "3 marked · 1.1M");
+        assert_eq!(marks_status(1, 0, 0), "1 marked · 0 B");
+        // A mixed selection names the folders separately, so the size is plainly
+        // "and these folders on top", not "this is everything".
+        assert_eq!(marks_status(3, 1, 2048), "3 marked · 2.0K + 1 folder");
+        assert_eq!(marks_status(5, 2, 2048), "5 marked · 2.0K + 2 folders");
+        // Folders only: no size at all, because `0 B` would be a lie by omission.
+        assert_eq!(marks_status(1, 1, 0), "1 marked · 1 folder");
+        assert_eq!(marks_status(2, 2, 0), "2 marked · 2 folders");
+    }
+
+    /// A trash step as the planner resolves it: a source, no destination (ADR
+    /// 0017 D7). Built by hand so the overlay's formatting is tested without a
+    /// filesystem, since nothing in these tests may touch a real path or a real
+    /// trash.
+    fn trash_step(src: &str, items: usize, bytes: u64) -> fileop::Step {
+        fileop::Step {
+            src: PathBuf::from(src),
+            dest: PathBuf::new(),
+            kind: fileop::NodeKind::File,
+            nodes: Vec::new(),
+            items,
+            bytes,
+            renamed: false,
+            overwrite: false,
+        }
+    }
+
+    /// `D` must be a BOUND char so typeahead treats it as a motion and never as
+    /// the first letter of a name search (ADR 0002 D2, ADR 0017 D4). Unbound, `D`
+    /// would jump to `Downloads/` instead of asking about the trash.
+    #[test]
+    fn trash_is_a_bound_char_so_typeahead_passes_it_through() {
+        assert!(matches!(browse_char('D'), Some(CharAction::Trash)));
+        assert!(matches!(
+            typeahead::action(false, browse_char('D').is_some()),
+            typeahead::Action::PassThrough
+        ));
+        // The lowercase half-page motion is untouched: the two keys are distinct
+        // bindings, not one case-folded one.
+        assert!(matches!(browse_char('d'), Some(CharAction::HalfDown)));
+    }
+
+    /// The rule every later operation will share (ADR 0017 D3): act on the marks
+    /// when there are any, otherwise on the row under the cursor.
+    #[test]
+    fn targets_prefer_the_mark_set_and_fall_back_to_the_cursor() {
+        let mut marks = crate::marks::Marks::new();
+        let cursor = PathBuf::from("/here/under-cursor.txt");
+
+        // Nothing marked: the cursor alone.
+        assert_eq!(
+            targets(&marks, Some(cursor.as_path())),
+            vec![cursor.clone()]
+        );
+        // Nothing marked and nothing selected (an empty listing): an empty batch,
+        // which the planner refuses by name rather than this helper guessing.
+        assert!(targets(&marks, None).is_empty());
+
+        // With marks, the cursor is ignored entirely, even when it is a row that
+        // is not itself marked.
+        marks.insert(Path::new("/a/one.txt"), 1, false);
+        marks.insert(Path::new("/b/two.txt"), 2, false);
+        assert_eq!(
+            targets(&marks, Some(cursor.as_path())),
+            vec![PathBuf::from("/a/one.txt"), PathBuf::from("/b/two.txt")]
+        );
+        // Mark order, not sorted order: the planner allocates collision suffixes
+        // walking this list, so the sequence is a correctness property.
+        marks.clear();
+        marks.insert(Path::new("/z/last.txt"), 1, false);
+        marks.insert(Path::new("/a/first.txt"), 1, false);
+        assert_eq!(
+            targets(&marks, None),
+            vec![PathBuf::from("/z/last.txt"), PathBuf::from("/a/first.txt")]
+        );
+    }
+
+    /// The undo stack is bounded at 16 and drops the OLDEST journal (ADR 0017 D8).
+    #[test]
+    fn the_undo_stack_is_bounded_and_evicts_the_oldest() {
+        let journal = |n: usize| fileop::Journal {
+            kind: fileop::Kind::Trash,
+            steps: vec![fileop::Undoable::Trashed {
+                path: PathBuf::from(format!("/gone/{n}")),
+            }],
+        };
+        let mut stack = Vec::new();
+        for n in 0..UNDO_DEPTH {
+            push_journal(&mut stack, journal(n), UNDO_DEPTH);
+        }
+        assert_eq!(stack.len(), UNDO_DEPTH);
+        assert_eq!(stack[0], journal(0));
+
+        // One past the bound: the newest is kept and the oldest goes, because undo
+        // walks backwards and nobody reaches the far end.
+        push_journal(&mut stack, journal(99), UNDO_DEPTH);
+        assert_eq!(stack.len(), UNDO_DEPTH);
+        assert_eq!(stack[0], journal(1));
+        assert_eq!(stack[UNDO_DEPTH - 1], journal(99));
+
+        // The bound holds however far past it the stack is pushed.
+        for n in 100..120 {
+            push_journal(&mut stack, journal(n), UNDO_DEPTH);
+        }
+        assert_eq!(stack.len(), UNDO_DEPTH);
+        assert_eq!(stack[UNDO_DEPTH - 1], journal(119));
+    }
+
+    /// A truncated list must never read as a complete one (ADR 0017 D5): the row
+    /// that says how many are missing comes out of the same budget.
+    #[test]
+    fn fit_rows_spends_a_row_saying_what_it_is_not_showing() {
+        // Everything fits: nothing is held back and no note is needed.
+        assert_eq!(fit_rows(0, 10), (0, 0));
+        assert_eq!(fit_rows(8, 10), (8, 0));
+        assert_eq!(fit_rows(10, 10), (10, 0));
+        // One too many: the last row becomes the note, so 9 of 11 are drawn and
+        // the overlay says "and 2 more" rather than silently stopping at 10.
+        assert_eq!(fit_rows(11, 10), (9, 2));
+        // The "showing 8 of 41" case: 8 rows plus the note fill the 9 available.
+        assert_eq!(fit_rows(41, 9), (8, 33));
+        // A single row of space is spent entirely on the honest count, because a
+        // lone first entry with no way to say more follow would be the lie.
+        assert_eq!(fit_rows(41, 1), (0, 41));
+        // No space at all: nothing is shown and everything is reported hidden.
+        assert_eq!(fit_rows(41, 0), (0, 41));
+        assert_eq!(fit_rows(0, 0), (0, 0));
+        // The two counts always account for the whole list, and the rows actually
+        // drawn (entries plus the note) never exceed the room they were given.
+        for total in 0..20 {
+            for room in 0..20 {
+                let (shown, hidden) = fit_rows(total, room);
+                assert_eq!(shown + hidden, total, "{total} in {room}");
+                if room > 0 {
+                    assert!(shown + usize::from(hidden > 0) <= room, "{total} in {room}");
+                }
+            }
+        }
+    }
+
+    /// A step reads as "what it is now, then what it becomes", except where there
+    /// is nothing on one side of the arrow to name.
+    #[test]
+    fn step_lines_name_both_ends_only_when_they_differ() {
+        // Trash has no destination path (ADR 0017 D7), so it says so in words.
+        assert_eq!(
+            step_line(&trash_step("/here/notes.md", 1, 12), fileop::Kind::Trash),
+            "notes.md  →  trash"
+        );
+        // A copy that collided shows the suffixed name it will actually land as,
+        // which is the whole point of showing the plan first (D5).
+        let mut copied = trash_step("/src/a.txt", 1, 3);
+        copied.dest = PathBuf::from("/dst/a (2).txt");
+        copied.renamed = true;
+        assert_eq!(
+            step_line(&copied, fileop::Kind::Copy),
+            "a.txt  →  a (2).txt"
+        );
+        // A copy that did not collide names one side only.
+        let mut plain = trash_step("/src/a.txt", 1, 3);
+        plain.dest = PathBuf::from("/dst/a.txt");
+        assert_eq!(step_line(&plain, fileop::Kind::Move), "a.txt");
+        // A create has no source at all.
+        let mut made = trash_step("", 1, 0);
+        made.dest = PathBuf::from("/dst/new.md");
+        assert_eq!(step_line(&made, fileop::Kind::Create), "new.md");
+    }
+
+    /// The two operation status lines, which are the only place a run reports
+    /// itself when nothing failed.
+    #[test]
+    fn operation_status_lines_read_as_sentences() {
+        // ADR 0017 D8: trash points at the system trash rather than implying `U`
+        // will bring it back.
+        assert_eq!(
+            op_done_status(fileop::Kind::Trash, 3, 2048),
+            "trashed 3 items, 2.0K · restore from the system trash"
+        );
+        // One item is singular, and a run with no payload bytes drops the size
+        // clause instead of printing a `0 B` that says nothing.
+        assert_eq!(op_done_status(fileop::Kind::Create, 1, 0), "created 1 item");
+        assert_eq!(
+            op_done_status(fileop::Kind::Copy, 2, 1024),
+            "copied 2 items, 1.0K"
+        );
+
+        // Progress: the label is the plan's own summary, so the line names the
+        // operation the user authorised word for word.
+        assert_eq!(
+            op_progress_status("trash 3 items, 2.0K", 2, 3, Path::new("/a/b/notes.md")),
+            "trash 3 items, 2.0K · 2/3 · notes.md"
+        );
+        // Before the first progress message there is no current path, and a
+        // dangling separator would be worse than none.
+        assert_eq!(
+            op_progress_status("trash 3 items", 0, 3, Path::new("")),
+            "trash 3 items · 0/3"
+        );
+        assert_eq!(fail_count(1), "1 step failed");
+        assert_eq!(fail_count(4), "4 steps failed");
+        assert_eq!(mark_count(1), "1 mark");
+        assert_eq!(mark_count(2), "2 marks");
+    }
+
+    /// After an operation reloads the listing the cursor keeps its name where it
+    /// survived, and otherwise keeps its row rather than snapping to the top.
+    #[test]
+    fn reselect_keeps_the_name_then_the_row() {
+        let after = ["a.txt", "b.txt", "c.txt"];
+        // The name survived, wherever it moved to.
+        assert_eq!(reselect(&after, Some("c.txt"), Some(0)), Some(2));
+        // The name is gone (it was just trashed): the same row is kept, which is
+        // the entry that moved up into its place.
+        assert_eq!(reselect(&after, Some("gone.txt"), Some(1)), Some(1));
+        // The row is clamped when the listing got shorter, so a delete at the
+        // bottom lands on the new last row rather than nowhere.
+        assert_eq!(reselect(&after, Some("gone.txt"), Some(9)), Some(2));
+        // No previous selection behaves as row 0.
+        assert_eq!(reselect(&after, None, None), Some(0));
+        // Everything in the folder went: there is nothing to select.
+        assert_eq!(reselect(&[], Some("a.txt"), Some(0)), None);
     }
 
     #[test]

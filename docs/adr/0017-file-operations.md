@@ -250,6 +250,24 @@ trash is the restore surface and the status line says so, because `trash`'s
 restore API is not available on every platform and a half-supported undo is
 worse than an honest pointer to Finder.
 
+Undo has to work on the road the move actually travels. A cross-device move (D6)
+cannot be reversed by a rename for exactly the reason it could not be performed
+by one, so undo runs the same transplant backwards: it enumerates the
+destination, copies the tree home, and trashes the copy. It shares one
+tree-copying function with the forward path, which is what makes the round trip
+lossless rather than merely intended: symlinks are recreated without being
+followed on the way back because it is the same code that did so on the way out.
+If the copy home does not complete whole, the destination is left untouched and
+said so, since losing the surviving copy to a partial restore is the one outcome
+undo must never produce.
+
+One residue is accepted rather than hidden: the forward cross-device move trashed
+the original, so after an undo the user has their tree restored *and* a stale
+copy of it sitting in the system trash. That is recoverable clutter, not data
+loss, and the alternative (teaching the journal to carry a whole tree so the
+trashed original could be reclaimed) buys nothing the restored copy does not
+already give.
+
 ### D9: Not in search mode
 
 Recursive search is a text-input surface where every printable key belongs to
