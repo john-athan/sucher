@@ -124,7 +124,7 @@ Every binding is registered in `browse_char`, the single source of truth (ADR
 | --- | --- |
 | `Space` | toggle mark, advance |
 | `V` / `Ctrl-a` | invert marks / mark all in view |
-| `Esc` | clear marks if any, else quit |
+| `Esc` | back out one layer: cancel the run, else clear the clipboard, else clear marks, else quit |
 | `y` | copy selection to the clipboard |
 | `X` | cut selection to the clipboard |
 | `p` | paste the clipboard into the current directory |
@@ -141,9 +141,18 @@ schemes (uppercase-only, or a `m` leader menu) preserve more of the alphabet but
 trade away the muscle memory that makes these keys guessable for anyone arriving
 from yazi, ranger, or vim.
 
-`Esc` gains one guard: it clears marks when marks exist and otherwise quits as
-before. A destructive-feeling key that silently quits with a live selection would
-be worse than the small conditional.
+`Esc` becomes a precedence ladder rather than a single key, where each press
+backs out exactly one layer and names what it just undid: an operation in flight
+is cancelled, otherwise a loaded clipboard is cleared, otherwise a live mark set
+is cleared, and with none of those present it quits as it always did. A key that
+silently quit with a live selection would be worse than the conditional, and the
+ladder generalises that instinct instead of special-casing it.
+
+Its counterpart: `q` is **refused while an operation is in flight**, saying that
+one is running and that `Esc` cancels it. `Run`'s `Drop` trips the cancel flag,
+so without this rule, quitting mid-copy would abandon a half-copied tree and exit
+before anything reported it. That is the silent partial ADR 0009 forbids,
+arrived at through the back door of process teardown.
 
 `Y` uses **OSC 52** rather than a clipboard crate: no dependency, and it works
 through ssh. That is the same reasoning that put the kitty graphics and

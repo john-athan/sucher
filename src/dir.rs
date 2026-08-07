@@ -62,12 +62,115 @@ enum OpView {
     /// A fully resolved plan waiting to be authorised. Shown BEFORE anything
     /// happens, which is the whole of ADR 0017 D5: the user sees the outcome,
     /// including every collision-dodging rename, before a byte moves.
-    Confirm(fileop::Plan),
+    Confirm(Pending),
     /// A finished run that did not do everything it set out to. A partial result
     /// is reported, never swallowed (ADR 0009), so this is deliberately an overlay
     /// and not a status line: a one-line summary of four failures would be exactly
     /// the silent truncation that doctrine exists to forbid.
     Failures(fileop::Report),
+}
+
+/// A plan on the confirm overlay, plus what it would take to plan it again.
+///
+/// The overwrite toggle (`o`, ADR 0017 D5) re-plans the whole batch under the
+/// other conflict policy, and it has to do so as a PURE recomputation: `collect`
+/// walks the entire source tree, and the user pressing `o` is toggling a display
+/// of a decision, not asking for a fresh look at the disk. So the planner's
+/// inputs are kept here from the moment the overlay opens, and `o` calls
+/// [`fileop::plan`] again with nothing else changed.
+struct Pending {
+    /// The plan currently on screen: what the user is being asked to authorise.
+    plan: fileop::Plan,
+    /// `None` for an operation with no destination directory, which is trash
+    /// (ADR 0017 D7): nothing collides, so there is nothing for `o` to toggle.
+    ///
+    /// Boxed because `Mode` is stored inline in `App` and is otherwise a handful
+    /// of bytes: an enumerated batch's worth of paths sitting behind a pointer
+    /// costs one allocation while an overlay is up, and keeps every `Mode::Browse`
+    /// from carrying that width around for the life of the browser.
+    inputs: Option<Box<Replan>>,
+}
+
+/// The two operations that arrive at the confirm overlay with a destination, and
+/// therefore the only two whose collisions the overwrite toggle can speak about.
+///
+/// A dedicated pair rather than storing a [`fileop::Kind`] and matching on it,
+/// because `Kind` also names rename, create and trash, and reconstructing an
+/// [`fileop::Op`] from it would need an arm for three cases that cannot occur.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Transfer {
+    Copy,
+    Move,
+}
+
+impl Transfer {
+    /// Which transfer a clipboard load asks for: a cut moves, a yank copies.
+    fn of(cut: bool) -> Self {
+        if cut {
+            Transfer::Move
+        } else {
+            Transfer::Copy
+        }
+    }
+
+    fn op(self, sources: Vec<fileop::Source>, dest: PathBuf) -> fileop::Op {
+        match self {
+            Transfer::Copy => fileop::Op::Copy { sources, dest },
+            Transfer::Move => fileop::Op::Move { sources, dest },
+        }
+    }
+}
+
+/// Everything [`fileop::plan`] was handed the first time, kept so the overwrite
+/// toggle can hand it over again unchanged except for the policy.
+///
+/// `cwd` is carried rather than re-read from `App` at toggle time so that
+/// re-planning is a function of this struct alone and can be tested without a
+/// browser. It cannot go stale while the overlay is up in any case: the overlay
+/// is modal, so no key that changes directory can be pressed underneath it.
+struct Replan {
+    transfer: Transfer,
+    sources: Vec<fileop::Source>,
+    dest: PathBuf,
+    /// The UNFILTERED destination listing read at plan time (ADR 0017 D5); see
+    /// [`dest_listing`] for why nothing the browser already holds will do.
+    dest_listing: Vec<String>,
+    missing: Vec<PathBuf>,
+    cwd: PathBuf,
+}
+
+impl Replan {
+    /// Resolve the same batch under `policy`. Pure: no filesystem, no `collect`,
+    /// no clock.
+    ///
+    /// The sources are cloned because [`fileop::Op`] takes them by value and this
+    /// struct has to survive for the next toggle. That is a copy of an already
+    /// enumerated tree once per keypress, which is cheap next to the walk that
+    /// produced it and is the reason `o` never touches the disk.
+    fn plan(&self, policy: fileop::Conflict) -> Result<fileop::Plan, fileop::Refusal> {
+        fileop::plan(
+            self.transfer.op(self.sources.clone(), self.dest.clone()),
+            &fileop::PlanCtx {
+                dest_listing: &self.dest_listing,
+                cwd: &self.cwd,
+                missing: &self.missing,
+                policy,
+            },
+        )
+    }
+}
+
+/// What `y` and `X` put aside for `p` (ADR 0017 D4).
+///
+/// Like the mark set, and for the same reason (D3), this survives a directory
+/// change: yanking here and pasting there is the entire point of having a
+/// clipboard at all. The paths are absolute and are re-collected at paste time,
+/// so entries that vanished in between are pruned and reported rather than
+/// silently dropped.
+struct Clip {
+    /// A cut pastes as a move; a yank pastes as a copy.
+    cut: bool,
+    paths: Vec<PathBuf>,
 }
 
 /// The browser's half of the one operation in flight (ADR 0017 D2).
@@ -536,6 +639,11 @@ struct App {
     // pre-feature build: the mark gutter reserves no width and the status line
     // keeps its key hint, both appearing only once something is actually marked.
     marks: crate::marks::Marks,
+    // What `y` / `X` loaded for `p`, or `None` when nothing is on the clipboard
+    // (ADR 0017 D4). Deliberately NOT cleared on a directory change, exactly as
+    // `marks` is not and for the same reason (D3): yanking in one folder and
+    // pasting in another is the whole workflow the key pair exists to serve.
+    clip: Option<Clip>,
     // The ONE file operation in flight, or `None` (ADR 0017 D2). Exactly one at a
     // time, mirroring how `raster_pending` allows a single live raster worker: a
     // second request while this is `Some` is refused with an honest "busy" status
@@ -598,6 +706,15 @@ enum CharAction {
     /// D4/D7). Bound to `D`. There is no permanent-delete binding at all, here or
     /// anywhere: trash is the only way something leaves a path in sucher.
     Trash,
+    /// Load the selection onto the clipboard to be copied (ADR 0017 D4). Bound to
+    /// `y`.
+    Yank,
+    /// Load the selection onto the clipboard to be moved (ADR 0017 D4). Bound to
+    /// `X`, leaving the lowercase `x` "open in the native app" motion alone.
+    Cut,
+    /// Paste the clipboard into the CURRENT directory, behind the confirm overlay
+    /// (ADR 0017 D4/D5). Bound to `p`.
+    Paste,
     Quit,
 }
 
@@ -643,6 +760,14 @@ fn browse_char(c: char) -> Option<CharAction> {
         // typeahead correct (ADR 0002 D2), since a bound char never starts a name
         // search and `D` would otherwise jump to `Downloads/`.
         'D' => CharAction::Trash,
+        // The clipboard (ADR 0017 D4). `y` and `p` are the two yazi/vim keys the
+        // ADR knowingly spends out of the typeahead alphabet, and `X` is capital
+        // so the lowercase `x` native-open motion survives. Registering all three
+        // here is what keeps typeahead correct (ADR 0002 D2): a bound char never
+        // starts a name search, so `p` cannot become a jump to `Pictures/`.
+        'y' => CharAction::Yank,
+        'X' => CharAction::Cut,
+        'p' => CharAction::Paste,
         // Toggle the help overlay. Bound (not left to typeahead) so `?` never
         // starts a name search; the overlay is dismissed by the next key.
         '?' => CharAction::Help,
@@ -739,6 +864,8 @@ pub fn run(
         // line). The set is filled only from the browse listing, by `Space`, `V`
         // and `Ctrl-a`, and survives every later directory change (D3).
         marks: crate::marks::Marks::new(),
+        // Nothing on the clipboard until `y` or `X` fills it.
+        clip: None,
         // No operation at startup, and none is created until a plan is authorised
         // in the confirm overlay, so a browser that is only ever browsed pays
         // nothing for this feature: `pump_fileop` returns immediately and the
@@ -1195,6 +1322,14 @@ impl App {
             }
         }
 
+        // A cut that has landed leaves a clipboard pointing at paths that are no
+        // longer where it says they are, so it goes; a copy's sources are all
+        // still there and pasting them into three folders in turn is a real
+        // workflow, so it stays. See [`clip_survives`] for the whole rule.
+        if !clip_survives(report.kind) {
+            self.clip = None;
+        }
+
         // Reload so the listing reflects what happened; `load` also refreshes the
         // git gutter and the parent cache, both of which a mutation can invalidate.
         let wanted = self.selected().map(|e| e.name.clone());
@@ -1312,8 +1447,129 @@ impl App {
             },
         );
         match resolved {
-            Ok(plan) => self.show_op(OpView::Confirm(plan)),
+            Ok(plan) => self.show_op(OpView::Confirm(Pending {
+                plan,
+                // Trash has no destination, so there is nothing for the overwrite
+                // toggle to re-plan and `o` stays inert on this overlay.
+                inputs: None,
+            })),
             Err(refusal) => self.status = Some(refusal.to_string()),
+        }
+    }
+
+    /// The `y` and `X` bindings: load the selection onto the clipboard (ADR 0017
+    /// D4). Nothing is read, moved or copied here; this only remembers.
+    ///
+    /// The mark set is deliberately LEFT ALONE, and the opposite choice is the
+    /// tempting one. Marks are the visible record of what a paste is going to act
+    /// on, so clearing them here would leave the user holding a clipboard with no
+    /// gutter to show for it. They clean themselves up at the right moment
+    /// instead: [`App::finish_op`] drops exactly the marks the operation consumed,
+    /// once it has actually happened.
+    fn load_clip(&mut self, cut: bool) {
+        let paths = targets(&self.marks, self.selected().map(|e| e.path.as_path()));
+        if paths.is_empty() {
+            self.status = Some(fileop::Refusal::NothingSelected.to_string());
+            return;
+        }
+        self.status = Some(clip_status(cut, paths.len()));
+        self.clip = Some(Clip { cut, paths });
+    }
+
+    /// The `p` binding: resolve a paste of the clipboard into the CURRENT
+    /// directory and show it for authorisation (ADR 0017 D4/D5). Nothing is
+    /// mutated here; this only decides.
+    fn request_paste(&mut self) {
+        if self.op.is_some() {
+            // ADR 0017 D2: exactly one operation in flight, refused rather than
+            // queued, and said out loud rather than ignored.
+            self.status = Some("busy: an operation is already running".to_string());
+            return;
+        }
+        let Some(clip) = self.clip.as_ref() else {
+            self.status = Some("nothing on the clipboard: [y] copies, [X] cuts".to_string());
+            return;
+        };
+        // Owned so the borrow of `self.clip` ends here and the rest of the method
+        // is free to mutate `self`.
+        let cut = clip.cut;
+        let paths = clip.paths.clone();
+        // The one filesystem question the operation asks before it runs: what is
+        // actually there, and what has already vanished (ADR 0017 D2).
+        let collected = match fileop::collect(&paths) {
+            Ok(collected) => collected,
+            Err(refusal) => {
+                // A refusal is a complete, honest answer rather than an error to
+                // hide, so it goes to the status line verbatim and nothing changes.
+                self.status = Some(refusal.to_string());
+                return;
+            }
+        };
+        if collected.sources.is_empty() {
+            // Every path on the clipboard had already vanished. The planner would
+            // refuse this as "nothing selected", which is true but hides the half
+            // worth knowing, so it is named here instead. The clipboard goes with
+            // it: one that points only at paths which no longer exist would offer
+            // the user a paste that can never do anything.
+            self.clip = None;
+            let gone = mark_count(collected.missing.len());
+            self.status = Some(format!("{gone} already gone, so there is nothing to paste"));
+            return;
+        }
+        let cwd = self.cwd.clone();
+        let inputs = Replan {
+            transfer: Transfer::of(cut),
+            sources: collected.sources,
+            // A paste always lands in the directory the user is standing in, which
+            // is what makes "yank there, walk here, paste" the whole gesture.
+            dest: cwd.clone(),
+            dest_listing: dest_listing(&cwd),
+            // Clipboard entries that had already vanished ride into the plan so the
+            // overlay can show them; never silently dropped (D3).
+            missing: collected.missing,
+            cwd,
+        };
+        // Suffixing is always the policy a plan is first shown under: overwriting
+        // is reachable only through the explicit `o` toggle on the overlay (D5).
+        match inputs.plan(fileop::Conflict::Rename) {
+            Ok(plan) => self.show_op(OpView::Confirm(Pending {
+                plan,
+                inputs: Some(Box::new(inputs)),
+            })),
+            Err(refusal) => self.status = Some(refusal.to_string()),
+        }
+    }
+
+    /// The `o` binding on the confirm overlay: re-plan the same batch under the
+    /// other conflict policy and show what that would do (ADR 0017 D5).
+    ///
+    /// A toggle rather than a one-way switch, so a user who pressed it to see what
+    /// overwriting would cost gets the safe suffixing default back with the same
+    /// key. The recomputation is pure: the sources were enumerated once when the
+    /// overlay opened and are not walked again here.
+    fn toggle_overwrite(&mut self) {
+        let outcome = match &self.mode {
+            Mode::Op(OpView::Confirm(pending)) => pending
+                .inputs
+                .as_ref()
+                // Trash has nothing to overwrite, so `o` is inert there rather than
+                // doing something invisible.
+                .map(|inputs| inputs.plan(flip_policy(pending.plan.policy))),
+            _ => None,
+        };
+        match outcome {
+            Some(Ok(plan)) => {
+                if let Mode::Op(OpView::Confirm(pending)) = &mut self.mode {
+                    // Only the plan changes: the inputs stay so the toggle can be
+                    // pressed again, and again, without re-reading anything.
+                    pending.plan = plan;
+                }
+            }
+            // A batch that plans one way can still be refused the other way (a
+            // suffix search that runs out of names), so the refusal is reported and
+            // the overlay keeps showing the plan the user already has.
+            Some(Err(refusal)) => self.status = Some(refusal.to_string()),
+            None => {}
         }
     }
 
@@ -1357,21 +1613,21 @@ impl App {
                 // Taking the mode by value moves the plan into the executor
                 // without cloning it; the browser returns to the listing at once
                 // so the user can keep navigating while the run streams.
-                if let Mode::Op(OpView::Confirm(plan)) =
+                if let Mode::Op(OpView::Confirm(pending)) =
                     std::mem::replace(&mut self.mode, Mode::Browse)
                 {
-                    self.start_op(plan);
+                    self.start_op(pending.plan);
                 }
             }
             KeyCode::Esc | KeyCode::Char('n') => {
                 self.mode = Mode::Browse;
                 self.status = Some("cancelled".to_string());
             }
-            // `o` (toggle overwrite, re-plan, show the result in the danger
-            // colour) belongs here and is deliberately absent: ADR 0017 D5 gives
-            // it to paste, and trash has no destination and no collisions, so
-            // there is nothing for it to toggle. A key that silently did nothing
-            // would be worse than an unbound one.
+            // Toggle overwriting and show what that would do, in the danger
+            // colour (ADR 0017 D5). Inert on the trash overlay, which has no
+            // destination and so no collision to resolve; the overlay does not
+            // advertise the key there either, so nothing invisible happens.
+            KeyCode::Char('o') => self.toggle_overwrite(),
             _ => {}
         }
         None
@@ -1839,20 +2095,37 @@ impl App {
                     return self.run_char_action(action);
                 }
             }
-            // `Esc` clears a live selection before it quits (ADR 0017 D4). This is
-            // the single guard on the key, and it earns its place: a key that
-            // silently quit the browser while a set of marks was held would throw
-            // away a selection the user had deliberately gathered across folders,
-            // which is worse than the small conditional. With nothing marked the
-            // key quits exactly as it always did. The typeahead branch further up
-            // still claims `Esc` while a name session is live (ADR 0002 D3), so
-            // this arm is only reached when there is no session to cancel.
-            KeyCode::Esc => {
-                if self.marks.is_empty() {
-                    return Some(Action::Quit);
+            // `Esc` backs out exactly one layer per press (ADR 0017 D4, extended
+            // to the clipboard and to a run in flight). The order lives in the
+            // pure [`escape`] ladder; this arm only performs what it decided and
+            // says which layer went, because a key that quietly undid a layer the
+            // user could not see would be the same silent surprise the whole ADR
+            // is written against. The modal surfaces above (an operation overlay,
+            // filter, search, a live typeahead session) each claim `Esc` for their
+            // own layer before this, which is the same rule one level up.
+            KeyCode::Esc => match escape(
+                self.op.is_some(),
+                self.clip.is_some(),
+                !self.marks.is_empty(),
+            ) {
+                Escape::CancelOp => {
+                    if let Some(run) = self.op.as_ref() {
+                        // The worker notices the flag between steps and sends its
+                        // `Done` with the journal of what it actually completed, so
+                        // `finish_op` reports the partial run through the existing
+                        // path. Nothing is torn down here: dropping the `Run` would
+                        // cancel it too, but silently, with the report lost.
+                        run.cancel();
+                    }
+                    self.status = Some("cancelling: it will report what it finished".to_string());
                 }
-                self.marks.clear();
-            }
+                Escape::ClearClip => {
+                    self.clip = None;
+                    self.status = Some("clipboard cleared".to_string());
+                }
+                Escape::ClearMarks => self.marks.clear(),
+                Escape::Quit => return Some(Action::Quit),
+            },
             KeyCode::Down => self.move_sel(1),
             KeyCode::Up => self.move_sel(-1),
             KeyCode::PageDown => self.move_sel(half),
@@ -1948,7 +2221,23 @@ impl App {
             // Resolve the trash operation and show the plan; nothing is mutated
             // until the overlay is authorised (ADR 0017 D5).
             CharAction::Trash => self.request_trash(),
-            CharAction::Quit => return Some(Action::Quit),
+            // The clipboard keys (ADR 0017 D4). Loading it is free and reversible;
+            // pasting goes through the confirm overlay like every other mutation.
+            CharAction::Yank => self.load_clip(false),
+            CharAction::Cut => self.load_clip(true),
+            CharAction::Paste => self.request_paste(),
+            CharAction::Quit => {
+                // Quitting mid-operation would leave a half-copied tree behind and
+                // no report of what happened, because dropping the `Run` trips its
+                // cancel flag on the way out. That is exactly the silent partial
+                // ADR 0009 forbids, so `q` is refused while a run is live and the
+                // refusal names the key that ends it properly.
+                if self.op.is_some() {
+                    self.status = Some("an operation is running: [Esc] cancels it".to_string());
+                    return None;
+                }
+                return Some(Action::Quit);
+            }
         }
         None
     }
@@ -2709,8 +2998,12 @@ impl App {
             // An overlay owns the screen, so the line under it names the keys that
             // answer it rather than repeating state the popup already shows.
             match view {
-                OpView::Confirm(plan) => {
-                    format!(" {}    [Enter]/[y] run  [Esc]/[n] cancel", plan.summary())
+                OpView::Confirm(pending) => {
+                    format!(
+                        " {}    {}",
+                        pending.plan.summary(),
+                        confirm_keys(pending.inputs.is_some(), true)
+                    )
                 }
                 OpView::Failures(report) => {
                     format!(" {}    [any key] close", fail_count(report.failures.len()))
@@ -2743,6 +3036,13 @@ impl App {
             let dirs = self.marks.marks().iter().filter(|m| m.is_dir).count();
             let line = marks_status(self.marks.len(), dirs, self.marks.bytes());
             format!(" {line}")
+        } else if let Some(clip) = &self.clip {
+            // A loaded clipboard survives directory changes too, so it must not be
+            // invisible state either (ADR 0017 D3's reasoning, same set of keys).
+            // It ranks below the mark line because the marks are what the next
+            // `y`/`X`/`D` will act on, while the clipboard is answered by one key
+            // whose name this line carries anyway.
+            format!(" {}", clip_status(clip.cut, clip.paths.len()))
         } else {
             let hidden = if self.show_hidden { "shown" } else { "hidden" };
             // Concise now that `?` opens the full which-key overlay; the dot state
@@ -3623,9 +3923,13 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         row("Space", "mark / unmark, then move down"),
         row("V", "invert marks in this view"),
         row("Ctrl-a", "mark everything in this view"),
-        row("Esc", "clear marks (quits when nothing is marked)"),
+        // One rung of the ladder per press, in the order `escape` decides them, so
+        // the help says what the key does rather than only what it used to do.
+        row("Esc", "back out: run → clipboard → marks → quit"),
         Line::from(""),
         heading(" Act"),
+        row("y / X", "copy / cut the selection to the clipboard"),
+        row("p", "paste here  (shows the plan first; [o] overwrites)"),
         // Named as trash, not delete: sucher has no permanent-delete binding at
         // all, and the help is where that promise has to be legible (ADR 0017 D7).
         row(
@@ -3647,7 +3951,9 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         row("M", "cycle layout: auto → miller → double"),
         Line::from(""),
         heading(" Other"),
-        row("q / Esc", "quit"),
+        // Named apart from `Esc` now that the two differ: `q` is refused outright
+        // while a run is live, rather than quietly cancelling it on the way out.
+        row("q", "quit  (refused while an operation runs)"),
         row("?", "close this help"),
         Line::from(""),
         Line::from(Span::styled(
@@ -3686,9 +3992,13 @@ fn render_op_overlay(f: &mut Frame, area: Rect, view: &OpView) {
     let h = popup.height.saturating_sub(2) as usize;
 
     let (title, lines) = match view {
-        OpView::Confirm(plan) => (
-            format!(" {} · [Enter] run  [Esc] cancel ", kind_title(plan.kind)),
-            confirm_lines(plan, w, h),
+        OpView::Confirm(pending) => (
+            format!(
+                " {} · {} ",
+                kind_title(pending.plan.kind),
+                confirm_keys(pending.inputs.is_some(), false)
+            ),
+            confirm_lines(&pending.plan, w, h),
         ),
         OpView::Failures(report) => (
             format!(
@@ -3739,20 +4049,14 @@ fn confirm_lines(plan: &fileop::Plan, w: usize, h: usize) -> Vec<Line<'static>> 
     if !plan.dest.as_os_str().is_empty() {
         lines.push(styled(format!("  into {}", plan.dest.display()), dim));
     }
-    let renamed = plan.renamed();
-    if renamed > 0 {
+    // What the conflict policy is about to do. Displacing something is the one
+    // outcome here that costs an existing file its place, so it is the one drawn
+    // in the danger colour; the split lives in [`collision_lines`] so the rule is
+    // unit-tested rather than eyeballed against a theme.
+    for (text, alarming) in collision_lines(plan.policy, plan.renamed(), plan.overwrites()) {
         lines.push(styled(
-            format!("  {renamed} suffixed to avoid a collision"),
-            dim,
-        ));
-    }
-    let overwrites = plan.overwrites();
-    if overwrites > 0 {
-        // Displacing something is the one thing here that loses a name, so it is
-        // the one line drawn in the danger colour.
-        lines.push(styled(
-            format!("  {overwrites} will be overwritten"),
-            danger,
+            format!("  {text}"),
+            if alarming { danger } else { dim },
         ));
     }
     // Marks that had already vanished are shown, never silently dropped (D3).
@@ -3960,6 +4264,157 @@ fn targets(marks: &crate::marks::Marks, cursor: Option<&Path>) -> Vec<PathBuf> {
     // No marks and nothing under the cursor is an empty batch, which the planner
     // refuses by name rather than this function guessing at one.
     cursor.map(Path::to_path_buf).into_iter().collect()
+}
+
+/// The UNFILTERED names in `dir`, as the planner must see them (ADR 0017 D5).
+///
+/// One `read_dir`, every name, no filtering, read fresh at plan time. Neither of
+/// the listings the browser already holds will do: `view` hides dotfiles unless
+/// `.` is toggled, and `all` is a snapshot from the last `load` that a `.env`
+/// written a second ago is not in. Planning against either would let a paste land
+/// on top of a file the user cannot see, which is precisely the hole D5 exists to
+/// close.
+///
+/// A directory that cannot be read yields an empty listing, which is the safe
+/// reading rather than a convenient one: every name then looks free, so nothing
+/// is planned as an overwrite, and the executor re-checks each destination
+/// against the real filesystem before it writes (D5). The outcome is a step that
+/// fails honestly, never a silent clobber.
+fn dest_listing(dir: &Path) -> Vec<String> {
+    match fs::read_dir(dir) {
+        Ok(entries) => entries
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// The other conflict policy. `o` toggles rather than switches one way, so a user
+/// who pressed it to see what overwriting would cost gets the suffixing default
+/// back with the same key (ADR 0017 D5).
+fn flip_policy(policy: fileop::Conflict) -> fileop::Conflict {
+    match policy {
+        fileop::Conflict::Rename => fileop::Conflict::Overwrite,
+        fileop::Conflict::Overwrite => fileop::Conflict::Rename,
+    }
+}
+
+/// The keys that answer the confirm overlay.
+///
+/// The overwrite toggle is named only where it can do something: trash has no
+/// destination and so no collision to resolve, and advertising a key that would
+/// then sit inert is worse than not naming it at all. `alternates` spells the
+/// single-letter equivalents, which the status line has the width for and the
+/// popup title does not.
+fn confirm_keys(toggleable: bool, alternates: bool) -> &'static str {
+    match (toggleable, alternates) {
+        (true, true) => "[Enter]/[y] run  [o] overwrite  [Esc]/[n] cancel",
+        (true, false) => "[Enter] run  [o] overwrite  [Esc] cancel",
+        (false, true) => "[Enter]/[y] run  [Esc]/[n] cancel",
+        (false, false) => "[Enter] run  [Esc] cancel",
+    }
+}
+
+/// The confirm overlay's lines about what the conflict policy will do, each with
+/// whether it is alarming enough for the danger colour (ADR 0017 D5).
+///
+/// Under the default suffixing policy this is at most one calm line, and nothing
+/// at all when nothing collided. Under `Overwrite` there is ALWAYS a line, even
+/// when the count is zero: `o` toggles a policy rather than a count, so a press
+/// that changed the policy without changing any number still has to show that it
+/// landed, or the key would look broken. Only the case that actually displaces
+/// something is alarming, and it says where the displaced entry goes, because
+/// ADR 0017 D7 makes that a promise rather than an implementation detail.
+fn collision_lines(
+    policy: fileop::Conflict,
+    renamed: usize,
+    overwrites: usize,
+) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    if renamed > 0 {
+        out.push((format!("{renamed} suffixed to avoid a collision"), false));
+    }
+    if policy == fileop::Conflict::Overwrite {
+        let noun = if overwrites == 1 { "entry" } else { "entries" };
+        out.push(if overwrites == 0 {
+            (
+                "overwrite is on, but nothing here collides".to_string(),
+                false,
+            )
+        } else {
+            (
+                format!("{overwrites} existing {noun} replaced, each trashed first"),
+                true,
+            )
+        });
+    }
+    out
+}
+
+/// What the status line says about a loaded clipboard, and the key that answers
+/// it (ADR 0017 D4). Pure, so the wording is unit-tested.
+fn clip_status(cut: bool, n: usize) -> String {
+    let noun = if n == 1 { "item" } else { "items" };
+    let verb = if cut { "move" } else { "copy" };
+    format!("clipboard: {n} {noun} to {verb} · [p] paste here")
+}
+
+/// Whether the clipboard outlives a finished operation (ADR 0017 D4).
+///
+/// A cut that has run pasted its sources away, so a second paste of the same
+/// clipboard would only collect a list of paths that are no longer there: it
+/// goes. So does a cut that was cancelled part way, whose clipboard would now be
+/// half stale, since a selection that is only partly real is a worse thing to
+/// hand back than none. A copy left every source where it was, and pasting the same
+/// files into three folders in turn is a real workflow, so it stays. Rename,
+/// create and trash never consumed the clipboard in the first place and have no
+/// business emptying it. Keyed on the operation rather than on a flag set at
+/// paste time because move and copy are only ever reached through `p`.
+fn clip_survives(kind: fileop::Kind) -> bool {
+    match kind {
+        fileop::Kind::Move => false,
+        fileop::Kind::Copy | fileop::Kind::Rename | fileop::Kind::Create | fileop::Kind::Trash => {
+            true
+        }
+    }
+}
+
+/// Which layer one press of `Esc` backs out of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Escape {
+    /// An operation is running: cancel it and let it report what it finished.
+    CancelOp,
+    /// Nothing is running but the clipboard is loaded: drop it.
+    ClearClip,
+    /// Nothing is running and the clipboard is empty, but marks are held: clear
+    /// them (ADR 0017 D4).
+    ClearMarks,
+    /// Nothing is held at all, so `Esc` means what it always meant.
+    Quit,
+}
+
+/// The `Esc` precedence ladder: one press backs out exactly one layer, outermost
+/// first (ADR 0017 D4, extended).
+///
+/// The order is the whole of the decision, so it is a pure function rather than a
+/// chain of conditions inside the key handler, and every rung is unit-tested. The
+/// running operation is outermost because it is the only layer that is actively
+/// changing the disk, and because `Run`'s own `Drop` would otherwise cancel it
+/// silently on the way out of the browser, leaving a half-copied tree and no
+/// report: exactly the silent partial ADR 0009 forbids. The clipboard comes
+/// before the marks because it was loaded later, so backing out retraces the
+/// user's own steps.
+fn escape(op_running: bool, has_clip: bool, has_marks: bool) -> Escape {
+    if op_running {
+        Escape::CancelOp
+    } else if has_clip {
+        Escape::ClearClip
+    } else if has_marks {
+        Escape::ClearMarks
+    } else {
+        Escape::Quit
+    }
 }
 
 /// Where the cursor lands after an operation reloaded the listing.
@@ -5123,6 +5578,237 @@ mod tests {
         assert_eq!(reselect(&after, None, None), Some(0));
         // Everything in the folder went: there is nothing to select.
         assert_eq!(reselect(&[], Some("a.txt"), Some(0)), None);
+    }
+
+    /// Every clipboard key must be a BOUND char, so typeahead treats it as a
+    /// motion and never as the first letter of a name search (ADR 0002 D2, ADR
+    /// 0017 D4). `p` is the one that would bite hardest: unbound, it would jump to
+    /// `Pictures/` instead of pasting.
+    #[test]
+    fn clipboard_keys_are_bound_chars_so_typeahead_passes_them_through() {
+        assert!(matches!(browse_char('y'), Some(CharAction::Yank)));
+        assert!(matches!(browse_char('X'), Some(CharAction::Cut)));
+        assert!(matches!(browse_char('p'), Some(CharAction::Paste)));
+        for c in ['y', 'X', 'p'] {
+            assert!(matches!(
+                typeahead::action(false, browse_char(c).is_some()),
+                typeahead::Action::PassThrough
+            ));
+        }
+        // The lowercase native-open motion is untouched: `x` and `X` are two
+        // distinct bindings, not one case-folded one.
+        assert!(matches!(browse_char('x'), Some(CharAction::OpenExternal)));
+        // `Y` (yank the absolute path over OSC 52) is a later step and must not
+        // have been bound by accident along the way.
+        assert!(browse_char('Y').is_none());
+    }
+
+    /// A cut and a yank differ only in which transfer they ask the planner for.
+    #[test]
+    fn a_cut_pastes_as_a_move_and_a_yank_as_a_copy() {
+        assert_eq!(Transfer::of(true), Transfer::Move);
+        assert_eq!(Transfer::of(false), Transfer::Copy);
+        let sources = vec![plan_source("/src/a.txt")];
+        assert!(matches!(
+            Transfer::Copy.op(sources.clone(), PathBuf::from("/dst")),
+            fileop::Op::Copy { .. }
+        ));
+        assert!(matches!(
+            Transfer::Move.op(sources, PathBuf::from("/dst")),
+            fileop::Op::Move { .. }
+        ));
+    }
+
+    /// A source as `collect` would return it for a plain one-byte file. Built by
+    /// hand so the re-plan is exercised without a filesystem.
+    fn plan_source(path: &str) -> fileop::Source {
+        fileop::Source {
+            path: PathBuf::from(path),
+            kind: fileop::NodeKind::File,
+            nodes: Vec::new(),
+            items: 1,
+            bytes: 1,
+        }
+    }
+
+    /// The overwrite toggle is a PURE recomputation over the inputs the overlay
+    /// kept (ADR 0017 D5): the same batch, the same destination listing, the other
+    /// policy. Nothing is walked again, which is why this test needs no temp dir.
+    #[test]
+    fn replanning_reuses_the_collected_sources_under_the_other_policy() {
+        let inputs = Replan {
+            transfer: Transfer::Copy,
+            sources: vec![plan_source("/src/a.txt")],
+            dest: PathBuf::from("/dst"),
+            dest_listing: vec!["a.txt".to_string()],
+            missing: vec![PathBuf::from("/src/gone.txt")],
+            cwd: PathBuf::from("/dst"),
+        };
+
+        // The default: the collision is dodged with a suffix and nothing is lost.
+        let suffixed = inputs.plan(fileop::Conflict::Rename).expect("plans");
+        assert_eq!(suffixed.steps[0].dest, PathBuf::from("/dst/a (2).txt"));
+        assert_eq!(suffixed.overwrites(), 0);
+        assert_eq!(suffixed.policy, fileop::Conflict::Rename);
+
+        // The toggle: the same name, now flagged as displacing what is there.
+        let over = inputs
+            .plan(flip_policy(suffixed.policy))
+            .expect("plans either way");
+        assert_eq!(over.steps[0].dest, PathBuf::from("/dst/a.txt"));
+        assert_eq!(over.overwrites(), 1);
+        assert_eq!(over.policy, fileop::Conflict::Overwrite);
+        // Vanished entries ride along whichever policy is in force (D3).
+        assert_eq!(over.missing, vec![PathBuf::from("/src/gone.txt")]);
+
+        // And back again with the same key, since `o` toggles rather than sets.
+        assert_eq!(
+            flip_policy(fileop::Conflict::Overwrite),
+            fileop::Conflict::Rename
+        );
+        assert_eq!(
+            inputs.plan(flip_policy(over.policy)).expect("plans").steps[0].dest,
+            PathBuf::from("/dst/a (2).txt")
+        );
+    }
+
+    /// Only the outcome that costs an existing file its place is drawn in the
+    /// danger colour, and the overwrite policy always says something so the `o`
+    /// key can never look broken.
+    #[test]
+    fn only_a_real_overwrite_earns_the_danger_colour() {
+        // Suffixing, nothing collided: nothing to say at all.
+        assert!(collision_lines(fileop::Conflict::Rename, 0, 0).is_empty());
+        // Suffixing with collisions: one calm line.
+        assert_eq!(
+            collision_lines(fileop::Conflict::Rename, 2, 0),
+            vec![("2 suffixed to avoid a collision".to_string(), false)]
+        );
+        // Overwriting something: the danger line names the count and where the
+        // displaced entry goes, which ADR 0017 D7 makes a promise rather than a
+        // detail.
+        assert_eq!(
+            collision_lines(fileop::Conflict::Overwrite, 0, 1),
+            vec![(
+                "1 existing entry replaced, each trashed first".to_string(),
+                true
+            )]
+        );
+        assert_eq!(
+            collision_lines(fileop::Conflict::Overwrite, 0, 3)[0].0,
+            "3 existing entries replaced, each trashed first"
+        );
+        // Overwriting with nothing to overwrite still reports the policy, calmly,
+        // so a press of `o` that changed no count still visibly landed.
+        assert_eq!(
+            collision_lines(fileop::Conflict::Overwrite, 0, 0),
+            vec![(
+                "overwrite is on, but nothing here collides".to_string(),
+                false
+            )]
+        );
+        // Both at once: a batch-internal collision is suffixed even while
+        // overwriting is on, so both lines appear, calm one first.
+        let both = collision_lines(fileop::Conflict::Overwrite, 1, 1);
+        assert_eq!(both.len(), 2);
+        assert!(!both[0].1);
+        assert!(both[1].1);
+    }
+
+    /// The overlay names `o` only where it does something. Trash has no
+    /// destination and so no collision to resolve; a key advertised there would
+    /// sit inert, which is worse than one that is not mentioned.
+    #[test]
+    fn the_overwrite_toggle_is_advertised_only_where_it_applies() {
+        assert!(confirm_keys(true, false).contains("[o] overwrite"));
+        assert!(confirm_keys(true, true).contains("[o] overwrite"));
+        assert!(!confirm_keys(false, false).contains("[o]"));
+        assert!(!confirm_keys(false, true).contains("[o]"));
+        // The status line has room to spell the single-letter answers; the popup
+        // title does not, and says so by leaving them out.
+        assert!(confirm_keys(true, true).contains("[y] run"));
+        assert!(!confirm_keys(true, false).contains("[y]"));
+        for keys in [
+            confirm_keys(true, true),
+            confirm_keys(true, false),
+            confirm_keys(false, true),
+            confirm_keys(false, false),
+        ] {
+            assert!(keys.contains("[Enter]"), "{keys}");
+            assert!(keys.contains("[Esc]"), "{keys}");
+        }
+    }
+
+    /// The clipboard line names what is on it and the one key that answers it.
+    #[test]
+    fn clip_status_names_the_operation_and_the_key() {
+        assert_eq!(
+            clip_status(false, 3),
+            "clipboard: 3 items to copy · [p] paste here"
+        );
+        assert_eq!(
+            clip_status(true, 1),
+            "clipboard: 1 item to move · [p] paste here"
+        );
+    }
+
+    /// A copy leaves its sources where they were, so the clipboard is still worth
+    /// something afterwards; a cut does not, so it is dropped (ADR 0017 D4).
+    #[test]
+    fn the_clipboard_survives_a_copy_and_goes_after_a_cut() {
+        assert!(clip_survives(fileop::Kind::Copy));
+        assert!(!clip_survives(fileop::Kind::Move));
+        // The operations that never consumed the clipboard leave it alone: a
+        // trash of unrelated files must not silently empty a loaded clipboard.
+        assert!(clip_survives(fileop::Kind::Trash));
+        assert!(clip_survives(fileop::Kind::Rename));
+        assert!(clip_survives(fileop::Kind::Create));
+    }
+
+    /// `Esc` backs out exactly one layer per press, outermost first. The ordering
+    /// is the whole of the decision, so every rung is pinned here rather than
+    /// eyeballed: a running operation, then the clipboard, then the marks, then
+    /// the browser itself.
+    #[test]
+    fn the_escape_ladder_backs_out_one_layer_per_press() {
+        // A run in flight outranks everything, because quitting or clearing
+        // underneath it would leave a half-done mutation unreported (ADR 0009).
+        assert_eq!(escape(true, true, true), Escape::CancelOp);
+        assert_eq!(escape(true, false, false), Escape::CancelOp);
+        assert_eq!(escape(true, true, false), Escape::CancelOp);
+        assert_eq!(escape(true, false, true), Escape::CancelOp);
+        // Nothing running: the clipboard is the most recent thing loaded, so it
+        // goes before the marks that fed it.
+        assert_eq!(escape(false, true, true), Escape::ClearClip);
+        assert_eq!(escape(false, true, false), Escape::ClearClip);
+        // Only marks left: the pre-clipboard behaviour, unchanged.
+        assert_eq!(escape(false, false, true), Escape::ClearMarks);
+        // Nothing held at all: `Esc` still quits, exactly as it always did.
+        assert_eq!(escape(false, false, false), Escape::Quit);
+
+        // Pressing it repeatedly walks the ladder down one rung at a time and
+        // reaches the quit exactly once, never sooner.
+        let (mut running, mut clip, mut marks) = (true, true, true);
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            let step = escape(running, clip, marks);
+            seen.push(step);
+            match step {
+                Escape::CancelOp => running = false,
+                Escape::ClearClip => clip = false,
+                Escape::ClearMarks => marks = false,
+                Escape::Quit => {}
+            }
+        }
+        assert_eq!(
+            seen,
+            vec![
+                Escape::CancelOp,
+                Escape::ClearClip,
+                Escape::ClearMarks,
+                Escape::Quit
+            ]
+        );
     }
 
     #[test]
