@@ -64,6 +64,7 @@ duckdb = { version = "1", features = ["bundled", "parquet", "json"], optional = 
 # auto-install over the network on first use, breaking sucher's offline guarantee.
 # rusqlite is the SQLite-native engine, fully static and offline (ADR 0016).
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+trash = "5"
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.
@@ -75,3 +76,6 @@ tar = "0.4"
 [[bin]]
 name = "sucher"
 path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3.27.0"

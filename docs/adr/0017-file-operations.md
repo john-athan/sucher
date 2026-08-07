@@ -50,14 +50,30 @@ Following the flat-module convention:
 - **`marks.rs`**: the multi-select set. An ordered set of absolute `PathBuf`
   with `toggle` / `invert` / `all` / `clear` / `contains` / `len` / `total`.
   Pure, no filesystem, fully unit-testable.
-- **`fileop.rs`**: the operation engine, split along the project's usual
-  pure/impure seam.
-  - `plan(op, dest_listing) -> Result<Plan, Refusal>` is **pure**. It takes the
-    intended operation and a listing of the destination, and returns either a
+- **`fileop/`**: the operation engine, split along the project's usual
+  pure/impure seam. It is the one nested module in an otherwise flat `src/`,
+  because it has three genuinely distinct stages that ADR 0012 already
+  anticipates splitting a large concern into: `fileop/plan.rs` (collect and
+  plan), `fileop/exec.rs` (worker, journal, undo), and `fileop/mod.rs` as the
+  front door.
+  - `collect(paths) -> Result<Collected, Refusal>` is the **thin impure stage**.
+    It stats the selected paths, prunes the ones that vanished since they were
+    marked into a reported `missing` list, and walks each source directory into
+    a fully enumerated tree. Every filesystem question the rest of the engine
+    could ask is answered exactly once, here. It is also where the bounds live:
+    a walk past `MAX_TREE_ITEMS` or `MAX_TREE_DEPTH` refuses *before* anything
+    is mutated, which is ADR 0009's "an honest refusal, never a silent partial"
+    applied to mutation. Symlinks are recorded and never followed, at any depth.
+  - `plan(op, ctx) -> Result<Plan, Refusal>` is **pure**. It takes the collected
+    sources plus a snapshot of the destination listing, and returns either a
     fully resolved `Plan` (every source mapped to its final destination name,
     plus item and byte counts) or a `Refusal` naming exactly why. No filesystem,
     no clock, so the whole conflict/refusal matrix is unit-tested without a temp
     directory.
+  - Enumerating up front rather than walking lazily during the copy buys two
+    things beyond testability: progress totals are exact rather than estimated,
+    and the executor replays a decided list instead of rediscovering the tree
+    while it mutates it.
   - `execute(plan) -> Handle` runs on a background thread and streams
     `Msg::{Progress, Done, Failed}` over an `mpsc`, drained by a `pump_fileop()`
     sitting beside `pump_search` and `pump_raster` in `main_loop`, on the same
@@ -144,13 +160,39 @@ which re-plans the whole batch and shows the result in the danger colour.
 This is ADR 0009's principle ("an honest error, never a silent truncation")
 applied to mutation: the user sees the outcome before authorising it.
 
-The planner refuses outright, with a named reason, when asked to:
+Which operations get the overlay follows from what the user has already said.
+Paste and delete act on a set the user assembled earlier, possibly across several
+folders and possibly minutes ago, so the overlay is where they find out what that
+set has become: those always confirm. Rename and create are typed in the moment,
+and the typed name *is* the authorisation, so an extra "are you sure" after it
+would be ceremony rather than information. Their refusals surface in the status
+line instead, which is the same honest answer in the place the user is already
+looking.
 
-- move or copy a directory into its own descendant;
+Two details make that promise hold in practice rather than only on paper:
+
+- The destination listing the planner resolves collisions against is the
+  **unfiltered** directory, hidden entries included. The browser's `view` hides
+  dotfiles unless `.` is toggled, and planning against what happens to be visible
+  would let a rename land on top of a `.env` the user could not see.
+- A snapshot can go stale between the confirm overlay and the write, so the
+  executor **re-checks the destination on the real filesystem** before each step.
+  A destination that appeared in the meantime fails that step honestly and lets
+  the rest of the batch continue, rather than clobbering on the strength of a
+  stale listing.
+
+The engine refuses outright, with a named reason, when asked to:
+
+- move or copy a directory into its own descendant, or onto itself;
+- move a source into the directory it already sits in (a no-op; copying there is
+  a legitimate "duplicate" and resolves through the collision naming instead);
 - rename to an empty name, `.`, `..`, or anything containing a path separator;
+- rename or create onto a name that already exists, which is refused rather than
+  suffixed, because renaming onto an existing entry is a different intent from
+  pasting beside one;
 - operate on an ancestor of the current directory, or on `/`;
-- recurse past a bounded depth or item count (an explicit refusal, never a
-  silent partial copy).
+- recurse past a bounded depth or item count (refused in `collect`, before any
+  mutation: an explicit refusal, never a silent partial copy).
 
 Symlinks are copied **as links**, never followed, which closes symlink loops and
 the "copy escapes the source tree" surprise in one rule.
@@ -178,6 +220,24 @@ Because delete is recoverable, the confirm overlay for `D` is informational
 rather than a scare prompt: it lists what is going to the trash and needs one
 key.
 
+**The rule is total.** Trash is not merely what the `D` key does, it is the only
+way anything ever leaves a path in sucher. Three places would otherwise have
+quietly reintroduced permanent destruction, and all three go through the trash
+instead:
+
+- An **overwrite** (D5) displaces an existing entry. That entry is trashed first,
+  and only then is the replacement written. If it cannot be trashed, the step
+  fails and nothing is written.
+- A **cross-device move** (D6) ends by removing the source after the copy lands.
+  That removal is a trash, not an `unlink`.
+- **Undoing a copy or a create** (D8) removes what sucher itself brought into
+  being. A copied directory may have gained files in the meantime, so undo
+  trashes the created root rather than recursively unlinking a tree the user may
+  have since touched.
+
+The single sentence a user needs to trust is therefore: sucher never destroys
+anything, it only ever moves it, including to the trash.
+
 ### D8: Undo is journal-backed, so it can never lie
 
 `execute` records a `Journal` of the steps that **actually succeeded**. Undo
@@ -204,8 +264,9 @@ rejected.
   changes *where files are*, never *what they contain*. That sentence is
   testable and belongs in the README.
 - The conflict, refusal, and collision-naming matrix is pure and unit-tested with
-  no filesystem. Only the thin executor needs a temp directory, which introduces
-  `tempfile` as the project's first dev-dependency.
+  no filesystem. Only the two impure stages, `collect` and the executor, need a
+  temp directory, which introduces `tempfile` as the project's first
+  dev-dependency.
 - One new runtime dependency (`trash`), subject to the `deny.toml` licence and
   advisory gates. It performs no network I/O, so the offline guarantee holds.
 - `dir.rs` grows by roughly 300 lines of wiring and overlay rendering, and ADR
