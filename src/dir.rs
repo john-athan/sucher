@@ -3443,13 +3443,11 @@ impl App {
             // whose name this line carries anyway.
             format!(" {}", clip_status(clip.cut, clip.paths.len()))
         } else {
-            let hidden = if self.show_hidden { "shown" } else { "hidden" };
             // Concise now that `?` opens the full which-key overlay; the dot state
             // stays inline because it's a toggle whose current value matters at a
             // glance. Everything else (sort, layout, meta) lives in the overlay.
-            format!(
-                " [j/k] move  [Enter] open  [/] filter  [S] search  [.] dot ({hidden})  [?] help"
-            )
+            // Sized to the pane, so the pointer at the end survives a narrow one.
+            format!(" {}", browse_hint(area.width, self.show_hidden))
         };
         // Filter mode borrows the palette's yellow (`doc`, which is exactly the
         // old hardcoded 252,211,77 in sucher-dark) so the mode stays themeable.
@@ -5541,7 +5539,66 @@ fn marks_status(total: usize, dirs: usize, bytes: u64) -> String {
     } else {
         format!("{} + {dirs} {folders}", crate::util::human_size(bytes))
     };
-    format!("{total} marked · {size}")
+    // The verbs ride along with the count, because this line is the moment they
+    // become relevant and the moment the user is looking for them. The idle hint
+    // can only afford to name `Space`, so something has to carry the rest, and a
+    // line that appears exactly when a selection exists is a better teacher than
+    // a static bar: it answers "I have marked things, now what?" in the place the
+    // question is asked. `[p]` is deliberately absent, since nothing is on the
+    // clipboard yet; the clipboard line names it once there is.
+    format!("{total} marked · {size} · [y] copy  [X] cut  [D] trash")
+}
+
+/// The idle browse hint, sized to the pane.
+///
+/// The line has always been a fixed string, which quietly truncated on anything
+/// narrower than about 78 columns, and the segment it cut first was the `[?] help`
+/// at the end: the one pointer to everything the bar has no room for. Adding the
+/// file operations made that worse rather than revealing it, so the line now
+/// drops segments deliberately instead of letting the terminal clip it.
+///
+/// Segments render in a fixed reading order but are dropped by importance, least
+/// important first: the dot toggle goes before search, search before filter, and
+/// the motion and open keys before `[Space] mark`, because those two are
+/// guessable from any file manager (and the arrow keys work anyway) while marking
+/// is the one gesture nothing else in the browser hints at. `[?] help` is never
+/// dropped: whatever else is missing, the way to find it has to survive.
+///
+/// Pure, so the fitting is unit-tested at real terminal widths rather than
+/// eyeballed once at 140 columns.
+fn browse_hint(width: u16, show_hidden: bool) -> String {
+    let dot = if show_hidden {
+        "[.] dot (shown)"
+    } else {
+        "[.] dot (hidden)"
+    };
+    // (segment, drop order). Higher drops first; `[?] help` is never dropped.
+    let mut segs: Vec<(&str, u8)> = vec![
+        ("[j/k] move", 4),
+        ("[Enter] open", 3),
+        ("[Space] mark", 2),
+        ("[/] filter", 5),
+        ("[S] search", 6),
+        (dot, 7),
+        ("[?] help", 0),
+    ];
+    // One leading space is spent by the caller, so the budget is one less than
+    // the pane. A zero-width pane (nothing has been laid out yet) keeps the
+    // pointer rather than returning an empty line.
+    let budget = width.saturating_sub(1) as usize;
+    loop {
+        let line = segs.iter().map(|(s, _)| *s).collect::<Vec<_>>().join("  ");
+        if line.chars().count() <= budget || segs.len() == 1 {
+            return line;
+        }
+        let worst = segs
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, (_, rank))| *rank)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        segs.remove(worst);
+    }
 }
 
 /// Clamp a search-results selection move (ADR 0007 §7): from the current selection,
@@ -6160,16 +6217,58 @@ mod tests {
     /// than folded into a figure that would imply their trees had been walked.
     #[test]
     fn marks_status_never_implies_folder_contents_were_measured() {
+        const KEYS: &str = " · [y] copy  [X] cut  [D] trash";
         // Files only: the plain count and total.
-        assert_eq!(marks_status(3, 0, 1_200_000), "3 marked · 1.1M");
-        assert_eq!(marks_status(1, 0, 0), "1 marked · 0 B");
+        assert_eq!(
+            marks_status(3, 0, 1_200_000),
+            format!("3 marked · 1.1M{KEYS}")
+        );
+        assert_eq!(marks_status(1, 0, 0), format!("1 marked · 0 B{KEYS}"));
         // A mixed selection names the folders separately, so the size is plainly
         // "and these folders on top", not "this is everything".
-        assert_eq!(marks_status(3, 1, 2048), "3 marked · 2.0K + 1 folder");
-        assert_eq!(marks_status(5, 2, 2048), "5 marked · 2.0K + 2 folders");
+        assert_eq!(
+            marks_status(3, 1, 2048),
+            format!("3 marked · 2.0K + 1 folder{KEYS}")
+        );
+        assert_eq!(
+            marks_status(5, 2, 2048),
+            format!("5 marked · 2.0K + 2 folders{KEYS}")
+        );
         // Folders only: no size at all, because `0 B` would be a lie by omission.
-        assert_eq!(marks_status(1, 1, 0), "1 marked · 1 folder");
-        assert_eq!(marks_status(2, 2, 0), "2 marked · 2 folders");
+        assert_eq!(marks_status(1, 1, 0), format!("1 marked · 1 folder{KEYS}"));
+        assert_eq!(marks_status(2, 2, 0), format!("2 marked · 2 folders{KEYS}"));
+    }
+
+    /// The idle hint must fit the pane it is drawn in, and whatever it drops to
+    /// get there, the pointer to the full key list has to survive. That is the
+    /// whole reason the line is computed rather than fixed.
+    #[test]
+    fn the_idle_hint_fits_its_pane_and_never_drops_the_help_pointer() {
+        // Wide enough for everything: the full set, in reading order.
+        let full = browse_hint(200, false);
+        assert_eq!(
+            full,
+            "[j/k] move  [Enter] open  [Space] mark  [/] filter  [S] search  [.] dot (hidden)  [?] help"
+        );
+        // The dot state is still visible at a glance when it is the non-default.
+        assert!(browse_hint(200, true).contains("[.] dot (shown)"));
+
+        // At every plausible width the line fits its budget (the caller spends one
+        // column on the leading space) and still points at the overlay.
+        for w in 10u16..=200 {
+            let hint = browse_hint(w, false);
+            assert!(
+                hint.chars().count() <= (w as usize).saturating_sub(1) || hint == "[?] help",
+                "width {w} overflowed: {hint:?}"
+            );
+            assert!(hint.contains("[?] help"), "width {w} lost the pointer");
+        }
+
+        // Marking is the gesture nothing else hints at, so it outlives the keys a
+        // user can guess from any other file manager.
+        let tight = browse_hint(40, false);
+        assert!(tight.contains("[Space] mark"), "{tight:?}");
+        assert!(!tight.contains("[.] dot"), "{tight:?}");
     }
 
     /// A trash step as the planner resolves it: a source, no destination (ADR

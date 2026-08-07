@@ -6,6 +6,24 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-07
+
+### Changed
+- **The file operations are discoverable from the status bar**, not only from the
+  `?` overlay. Every earlier feature (`/`, `S`, `.`) earned a slot on the idle
+  hint line, and 0.6.0's verbs did not, so the only pointer to them was a key you
+  had to already know to press. The bar now teaches the next step as you take it:
+  idle it names `[Space] mark`, a live selection turns the marked-count line into
+  `3 marked · 1.1M · [y] copy  [X] cut  [D] trash`, and a loaded clipboard already
+  named `[p] paste here`.
+- **The idle hint is sized to the pane.** It was a fixed string that silently
+  truncated below about 78 columns, and the first thing the terminal cut was the
+  trailing `[?] help`: the one pointer to everything the bar had no room for. It
+  now drops segments deliberately, least useful first (the dot toggle, then
+  search, then filter, then the motions), and never drops `[?] help`. `[Space]
+  mark` outlives the motion keys because arrows work anyway and marking is the one
+  gesture nothing else in the browser hints at.
+
 ## [0.6.0] - 2026-08-07
 
 ### Added
