@@ -27,6 +27,7 @@ mod icons;
 mod imgview;
 mod ipynb;
 mod keynote;
+mod lineedit;
 mod markdown;
 mod marks;
 mod media;

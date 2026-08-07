@@ -84,10 +84,20 @@ Following the flat-module convention:
     queued: queued mutation is impossible to reason about while the user is
     simultaneously navigating.
 
-`dir.rs` gains a `Mode::Input(Prompt)` arm (rename / create, using the same text
-buffer idiom as Filter and Search), a `Mode::Confirm(Plan)` arm, an overlay
+`dir.rs` gains a `Mode::Input` arm (rename / create), a `Mode::Op` arm carrying
+either a plan awaiting authorisation or a finished run's failures, an overlay
 renderer built on the existing `centered_rect` + `Clear` popup geometry, a
 one-column mark gutter, and status text. Nothing more.
+
+The prompt does not reuse the filter's buffer, and the reason is worth recording.
+Filter and search are append-only surfaces, which suits a query you retype from
+scratch, but a rename opens pre-filled with an existing name and its whole value
+is editing the middle of it. That needs a cursor, so a small pure `lineedit`
+module provides one. Search cannot adopt it even so: `Right` there means "open
+the selected hit" (ADR 0007), and a horizontal cursor cannot share a key with
+that. The distinction between the two input surfaces is therefore reasoned rather
+than accidental, which is the only thing that stops someone unifying them later
+and quietly breaking search.
 
 *Note:* this pushes `dir.rs` past ~4200 lines and makes ADR 0012 (decompose the
 browser `App`) materially more urgent. It is **not** a prerequisite, since the

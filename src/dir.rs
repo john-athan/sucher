@@ -55,6 +55,69 @@ enum Mode {
     /// arms that could drift apart as the remaining operations land. What differs
     /// between them is what the popup is *for*, which is what [`OpView`] carries.
     Op(OpView),
+    /// An inline prompt for a typed name: rename, or create (ADR 0017 D4).
+    ///
+    /// A text-input surface like [`Mode::Filter`], so typeahead never applies and
+    /// every printable key spells the name. What it does NOT share with the
+    /// filter is an append-only buffer: a rename opens pre-filled with an
+    /// existing name and the edit the user came to make is usually in the middle
+    /// of it, so this one carries a real cursor (see [`crate::lineedit`]).
+    ///
+    /// Deliberately not an [`OpView`]: those two are modal popups drawn over the
+    /// listing that swallow every key and every click, while this is one line at
+    /// the bottom of an otherwise ordinary browse frame. It also never reaches
+    /// the confirm overlay at all, because the name the user just typed IS the
+    /// authorisation (ADR 0017 D5).
+    Input(Prompt),
+}
+
+/// The inline rename/create prompt: what is being asked, and the buffer it is
+/// being typed into.
+struct Prompt {
+    ask: Ask,
+    edit: crate::lineedit::LineEdit,
+}
+
+/// Which question an inline prompt is asking.
+///
+/// Both arms carry the path they resolved when the prompt OPENED rather than
+/// re-reading it on submit. The browse layout stays live underneath, so a click
+/// in the listing can still move the cursor while a name is being typed, and a
+/// rename that quietly retargeted itself to whatever row the cursor ended on
+/// would be the worst kind of surprise this ADR exists to prevent.
+#[derive(Clone)]
+enum Ask {
+    /// Rename this exact path (ADR 0017 D3: exactly one target).
+    Rename { path: PathBuf },
+    /// Create one entry in this directory. A trailing '/' on the typed name
+    /// makes it a directory (ADR 0017 D4).
+    Create { parent: PathBuf },
+}
+
+impl Ask {
+    /// The label the status line leads with, in the same shape as the filter's
+    /// `/` prefix. The two must not look alike: `r` and `a` sit one key apart on
+    /// the keyboard and this label is the only thing on screen that says which
+    /// of the two prompts is open.
+    fn prefix(&self) -> &'static str {
+        match self {
+            Ask::Rename { .. } => "rename: ",
+            Ask::Create { .. } => "new: ",
+        }
+    }
+
+    /// The rules and keys the prompt teaches while it is open.
+    ///
+    /// Create names the trailing-slash rule because the prompt is the ONLY place
+    /// it can be discovered: nothing about an empty field suggests that typing
+    /// `notes/` makes a folder, and a rule nobody can find is a rule nobody has.
+    /// Rename has no such hidden rule to teach, so it names only its two keys.
+    fn hint(&self) -> &'static str {
+        match self {
+            Ask::Rename { .. } => "[Enter] rename  [Esc] cancel",
+            Ask::Create { .. } => "end with / for a folder    [Enter] create  [Esc] cancel",
+        }
+    }
 }
 
 /// Which file-operation overlay is on screen.
@@ -190,6 +253,11 @@ struct InFlight {
     /// Every path this run acts on, plus the marks that had already vanished.
     /// Both are consumed by the operation and both are unmarked when it ends.
     targets: Vec<PathBuf>,
+    /// The name the operation set out to leave behind, when it names exactly one
+    /// (see [`landing_name`]). Decided at authorisation time, while the plan is
+    /// still here to be asked, because the report that comes back names what
+    /// happened and not what the cursor should do about it.
+    landing: Option<String>,
     /// Cumulative counters as last reported by `Msg::Progress`.
     items: usize,
     bytes: u64,
@@ -715,6 +783,13 @@ enum CharAction {
     /// Paste the clipboard into the CURRENT directory, behind the confirm overlay
     /// (ADR 0017 D4/D5). Bound to `p`.
     Paste,
+    /// Rename the one selected entry through the inline prompt (ADR 0017 D4).
+    /// Bound to `r`. No confirm overlay follows: the typed name is the
+    /// authorisation (D5).
+    Rename,
+    /// Create an entry in the current directory through the inline prompt, as a
+    /// directory when the typed name ends in `/` (ADR 0017 D4). Bound to `a`.
+    Create,
     Quit,
 }
 
@@ -768,6 +843,15 @@ fn browse_char(c: char) -> Option<CharAction> {
         'y' => CharAction::Yank,
         'X' => CharAction::Cut,
         'p' => CharAction::Paste,
+        // The two typed-name operations (ADR 0017 D4), the other pair of
+        // lowercase letters the ADR knowingly spends out of the typeahead
+        // alphabet. Registering them here is what keeps typeahead correct (ADR
+        // 0002 D2): a bound char never starts a name search, so `r` cannot
+        // become a jump to `README.md`. `Ctrl-a` still marks everything in the
+        // view, and reaches its own arm in `handle_key` before this map is
+        // consulted, so the bare `a` and the modified one stay distinct.
+        'r' => CharAction::Rename,
+        'a' => CharAction::Create,
         // Toggle the help overlay. Bound (not left to typeahead) so `?` never
         // starts a name search; the overlay is dismissed by the next key.
         '?' => CharAction::Help,
@@ -1332,7 +1416,19 @@ impl App {
 
         // Reload so the listing reflects what happened; `load` also refreshes the
         // git gutter and the parent cache, both of which a mutation can invalidate.
-        let wanted = self.selected().map(|e| e.name.clone());
+        //
+        // What the cursor should land on is what the operation set out to leave
+        // behind, when it named exactly one thing: a rename's new name, a
+        // create's new entry. Asking for the name that was under the cursor
+        // would be asking for a name a rename has just abolished, and `reselect`
+        // would fall back to the row, leaving the cursor beside the file the user
+        // just renamed rather than on it. Everything else keeps the old rule,
+        // because a multi-step paste has no single answer to give (see
+        // [`landing_name`]).
+        let wanted = flight
+            .as_ref()
+            .and_then(|flight| flight.landing.clone())
+            .or_else(|| self.selected().map(|e| e.name.clone()));
         let prev = self.state.selected();
         self.load();
         let names: Vec<&str> = self
@@ -1540,6 +1636,160 @@ impl App {
         }
     }
 
+    /// The `r` binding: open the inline rename prompt on the one selected entry
+    /// (ADR 0017 D4). Nothing is mutated here; this only asks.
+    ///
+    /// The field opens pre-filled with the current name and the cursor parked at
+    /// the end of the stem, so the first character typed replaces the name while
+    /// keeping the extension (see [`stem_end`]). That is what every file manager
+    /// does and it is most of what makes the key worth pressing: a rename that
+    /// opened empty would make the user retype `.tar.gz` every time, and one that
+    /// selected the whole name would make keeping the extension the hard case.
+    fn request_rename(&mut self) {
+        if self.op.is_some() {
+            // ADR 0017 D2: exactly one operation in flight, refused rather than
+            // queued, and said out loud rather than ignored.
+            self.status = Some("busy: an operation is already running".to_string());
+            return;
+        }
+        // Rename needs the KIND as well as the path, because the stem rule turns
+        // on it, and both are already known without touching the disk: a mark
+        // records what it was marked as, and the listing knows what it is
+        // showing. This is [`targets`]' rule with its one documented exception
+        // (ADR 0017 D3): several marks are named rather than guessed between,
+        // since a bulk rename is a different feature and picking one of five
+        // would be picking for the user.
+        let one = if self.marks.is_empty() {
+            self.selected()
+                .map(|e| (e.path.clone(), e.kind == Format::Directory))
+        } else if self.marks.len() == 1 {
+            self.marks
+                .marks()
+                .first()
+                .map(|m| (m.path.clone(), m.is_dir))
+        } else {
+            self.status = Some(format!(
+                "{}: rename acts on one entry, so clear them with [Esc] first",
+                mark_count(self.marks.len())
+            ));
+            return;
+        };
+        let Some((path, is_dir)) = one else {
+            self.status = Some(fileop::Refusal::NothingSelected.to_string());
+            return;
+        };
+        // A path with no final component is the filesystem root, which has no
+        // name to edit; the planner would refuse it anyway, and refusing before
+        // opening a field is the honest order.
+        let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            self.status = Some(fileop::Refusal::FilesystemRoot.to_string());
+            return;
+        };
+        let cursor = stem_end(&name, is_dir);
+        self.status = None; // drop any stale "type: …" hint
+        self.mode = Mode::Input(Prompt {
+            ask: Ask::Rename { path },
+            edit: crate::lineedit::LineEdit::with_text(&name, cursor),
+        });
+    }
+
+    /// The `a` binding: open the inline create prompt for the current directory
+    /// (ADR 0017 D4). Nothing is mutated here; this only asks.
+    ///
+    /// It opens EMPTY, and deliberately so: there is no existing name to start
+    /// from, and any placeholder would have to be deleted before it could be
+    /// useful. The trailing-slash rule is carried by the hint instead, which is
+    /// the only place it can be learned.
+    fn request_create(&mut self) {
+        if self.op.is_some() {
+            // ADR 0017 D2, exactly as above: refused rather than queued.
+            self.status = Some("busy: an operation is already running".to_string());
+            return;
+        }
+        self.status = None; // drop any stale "type: …" hint
+        self.mode = Mode::Input(Prompt {
+            ask: Ask::Create {
+                parent: self.cwd.clone(),
+            },
+            edit: crate::lineedit::LineEdit::new(),
+        });
+    }
+
+    /// Keys while the inline prompt is up (ADR 0017 D4).
+    ///
+    /// A text-input surface, so typeahead never applies and every printable key
+    /// spells the name, exactly as in filter and search mode. `Esc` belongs to
+    /// this layer and is answered here before the [`escape`] ladder underneath
+    /// ever sees it, which is the same rule the filter and the operation overlay
+    /// already follow: a modal layer backs itself out first.
+    fn handle_input_key(&mut self, code: KeyCode) -> Option<Action> {
+        match code {
+            // The typed name is the authorisation, so `Enter` runs it outright
+            // (ADR 0017 D5).
+            KeyCode::Enter => self.submit_prompt(),
+            KeyCode::Esc => {
+                self.mode = Mode::Browse;
+                self.status = Some("cancelled".to_string());
+            }
+            _ => {
+                let Mode::Input(prompt) = &mut self.mode else {
+                    return None;
+                };
+                match code {
+                    KeyCode::Char(c) => prompt.edit.insert(c),
+                    KeyCode::Backspace => prompt.edit.backspace(),
+                    KeyCode::Delete => prompt.edit.delete(),
+                    KeyCode::Left => prompt.edit.left(),
+                    KeyCode::Right => prompt.edit.right(),
+                    KeyCode::Home => prompt.edit.home(),
+                    KeyCode::End => prompt.edit.end(),
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
+    /// `Enter` on the inline prompt: resolve the typed name and, if it resolves,
+    /// run it (ADR 0017 D5).
+    ///
+    /// There is no confirm overlay, and that follows from what the user has
+    /// already said. Paste and trash act on a set assembled earlier, possibly
+    /// across several folders and possibly minutes ago, so the overlay is where
+    /// they find out what that set has become. A rename or a create is typed in
+    /// the moment and the typed name IS the authorisation, so a second "are you
+    /// sure" would be ceremony rather than information.
+    ///
+    /// A refusal therefore surfaces in the status line, and the prompt STAYS OPEN
+    /// with its text and cursor untouched. A refusal here is feedback on the name
+    /// that was just typed, which is precisely when leaving the field is the
+    /// wrong response: answering "that name is taken" by taking the name away
+    /// would make the user retype the whole thing to change one character of it.
+    fn submit_prompt(&mut self) {
+        // Lift the question and the answer out first, so the planning below is
+        // free to borrow the rest of `self`.
+        let Mode::Input(prompt) = &self.mode else {
+            return;
+        };
+        let ask = prompt.ask.clone();
+        let name = prompt.edit.text().to_string();
+        let cwd = self.cwd.clone();
+        let resolved = match &ask {
+            Ask::Rename { path } => rename_plan(path, &name, &cwd),
+            Ask::Create { parent } => create_plan(parent, &name, &cwd),
+        };
+        match resolved {
+            Ok(plan) => {
+                // The prompt has served its purpose the moment the name resolves;
+                // the browser returns to the listing at once so the reload the run
+                // finishes with lands on an ordinary browse frame.
+                self.mode = Mode::Browse;
+                self.start_op(plan);
+            }
+            Err(refusal) => self.status = Some(refusal.to_string()),
+        }
+    }
+
     /// The `o` binding on the confirm overlay: re-plan the same batch under the
     /// other conflict policy and show what that would do (ADR 0017 D5).
     ///
@@ -1587,10 +1837,12 @@ impl App {
             .filter(|p| !p.as_os_str().is_empty())
             .collect();
         targets.extend(plan.missing.iter().cloned());
+        let landing = landing_name(&plan.steps);
         self.op_progress = Some(InFlight {
             label,
             total,
             targets,
+            landing,
             items: 0,
             bytes: 0,
             current: PathBuf::new(),
@@ -1942,6 +2194,13 @@ impl App {
         if matches!(self.mode, Mode::Op(_)) {
             return self.handle_op_key(code);
         }
+        // The inline prompt is the other layer that claims `Esc` before the
+        // ladder underneath (ADR 0017 D4), and it claims every printable key
+        // besides, so it is answered here beside the filter and search surfaces
+        // it belongs with rather than anywhere further down.
+        if matches!(self.mode, Mode::Input(_)) {
+            return self.handle_input_key(code);
+        }
         if let Mode::Filter = self.mode {
             // The filter is a text-input surface; typeahead never applies here
             // (ADR 0002). Every printable key spells the fuzzy query.
@@ -2226,6 +2485,11 @@ impl App {
             CharAction::Yank => self.load_clip(false),
             CharAction::Cut => self.load_clip(true),
             CharAction::Paste => self.request_paste(),
+            // The typed-name operations (ADR 0017 D4). Both only OPEN a prompt
+            // here; nothing is planned until `Enter`, and nothing is mutated
+            // until the plan resolves.
+            CharAction::Rename => self.request_rename(),
+            CharAction::Create => self.request_create(),
             CharAction::Quit => {
                 // Quitting mid-operation would leave a half-copied tree behind and
                 // no report of what happened, because dropping the `Run` trips its
@@ -2985,6 +3249,21 @@ impl App {
     }
 
     fn render_status(&self, f: &mut Frame, area: Rect) {
+        // The inline prompt is the one status line that cannot be a single
+        // uniformly coloured string, because it has to show where the cursor is,
+        // so it returns here with its own spans (see [`prompt_spans`]). Every
+        // other mode shares the one-string path below.
+        if let Mode::Input(prompt) = &self.mode {
+            f.render_widget(
+                Paragraph::new(Line::from(prompt_spans(
+                    prompt.ask.prefix(),
+                    &prompt.edit,
+                    prompt.ask.hint(),
+                ))),
+                area,
+            );
+            return;
+        }
         let txt = if let Mode::Filter = self.mode {
             // Teach the smart-query syntax until the user is already using a
             // predicate, then drop the hint for a cleaner line.
@@ -3060,6 +3339,12 @@ impl App {
             Mode::Filter => theme::palette().doc,
             // Failures borrow the same semantic red the overlay uses.
             Mode::Op(OpView::Failures(_)) => theme::palette().pdf,
+            // Named rather than folded into the others, even though the early
+            // return above means this arm is never reached: the prompt borrows
+            // the filter's yellow because it is the same kind of surface, and
+            // stating that here keeps the per-mode rule intact for whoever adds
+            // the next mode.
+            Mode::Input(_) => theme::palette().doc,
             Mode::Browse | Mode::Search | Mode::Op(OpView::Confirm(_)) => theme::palette().dim,
         };
         f.render_widget(
@@ -3930,6 +4215,11 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         heading(" Act"),
         row("y / X", "copy / cut the selection to the clipboard"),
         row("p", "paste here  (shows the plan first; [o] overwrites)"),
+        // Both say what the prompt does that the key alone cannot show: `r`
+        // opens on the stem so typing keeps the extension, and `a` hides its
+        // whole file-or-folder choice in one trailing character (ADR 0017 D4).
+        row("r", "rename  (opens on the name, keeps the extension)"),
+        row("a", "create  (a trailing / makes a folder)"),
         // Named as trash, not delete: sucher has no permanent-delete binding at
         // all, and the help is where that promise has to be legible (ADR 0017 D7).
         row(
@@ -4288,6 +4578,202 @@ fn dest_listing(dir: &Path) -> Vec<String> {
             .collect(),
         Err(_) => Vec::new(),
     }
+}
+
+/// Where the cursor starts in a rename prompt, counted in CHARACTERS: at the end
+/// of the name's stem, so the first key typed replaces the name and keeps the
+/// extension (ADR 0017 D4).
+///
+/// The split is the same "last extension only" rule the planner's collision
+/// suffixing uses (`foo.tar.gz` becomes `foo.tar (2).gz`), and deliberately so:
+/// the two are the same question asked from opposite ends, and a browser that
+/// protected `.tar.gz` here while the planner protected `.gz` there would teach
+/// the user two contradictory ideas of what an extension is.
+///
+/// Three names have no split to make. A directory has no extension to protect,
+/// so `v1.2` is all stem rather than being cut into `v1` and `2`. A dotfile like
+/// `.gitignore` is all stem too, because the leading dot is not a separator. And
+/// a trailing dot introduces nothing, so `odd.` keeps the whole name.
+///
+/// Counted in characters rather than bytes because that is what
+/// [`crate::lineedit::LineEdit`] takes, and for the reason it takes it: `café.txt`
+/// has a four-character stem and a five-byte one, and a byte index would put the
+/// cursor inside the `é`.
+fn stem_end(name: &str, is_dir: bool) -> usize {
+    if !is_dir {
+        if let Some(dot) = name.rfind('.') {
+            if dot > 0 && dot + 1 < name.len() {
+                return name[..dot].chars().count();
+            }
+        }
+    }
+    name.chars().count()
+}
+
+/// The name the cursor should land on once a finished operation has reloaded the
+/// listing, or `None` when the operation has no single answer to give.
+///
+/// One step with a real destination created or renamed exactly one entry, and
+/// that entry is what the user was looking at when they authorised it: a rename
+/// lands on the new name, a create on the thing just created, a one-file paste on
+/// the copy. Anything else declines rather than guesses. A multi-step paste
+/// brought several entries in at once and choosing among them would be choosing
+/// for the user, and a trash step has no destination at all (ADR 0017 D7), so the
+/// browser keeps the rule it already had: hold the name that was under the
+/// cursor, and failing that the row.
+///
+/// Kept a pure function of the resolved steps rather than a special case threaded
+/// through `finish_op`, so the decision is unit-tested without a filesystem and
+/// `finish_op` stays one rule with one fallback.
+fn landing_name(steps: &[fileop::Step]) -> Option<String> {
+    match steps {
+        [only] => only
+            .dest
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned()),
+        _ => None,
+    }
+}
+
+/// The status-line spans for the inline prompt (ADR 0017 D4).
+///
+/// The same shape and the same colour as the filter's `/…` line, so the two read
+/// as one system, plus the one thing the filter has no need of: a visible cursor.
+/// A field that opens pre-filled with the cursor parked in the middle of a name
+/// is only useful if the user can see where it is, and an invisible cursor in a
+/// field that has one is worse than no cursor at all.
+///
+/// The character under the cursor is drawn reversed, and the end-of-line position
+/// gets a block, because there is no character there to reverse: that is the case
+/// a fresh create prompt is always in, so an empty span would leave the cursor
+/// invisible exactly where it matters most. The block glyph is the one
+/// `render_search_input` already uses for the same job.
+///
+/// Pure, so the whole line is unit-tested without a terminal.
+fn prompt_spans(prefix: &str, edit: &crate::lineedit::LineEdit, hint: &str) -> Vec<Span<'static>> {
+    // The filter's yellow, taken from the palette rather than hardcoded, so the
+    // prompt stays themeable along with every other surface.
+    let doc = theme::palette().doc;
+    let (head, under, tail) = edit.split();
+    vec![
+        Span::styled(format!(" {prefix}{head}"), Style::default().fg(doc)),
+        if under.is_empty() {
+            Span::styled("█", Style::default().fg(doc))
+        } else {
+            Span::styled(
+                under.to_string(),
+                Style::default().fg(doc).add_modifier(Modifier::REVERSED),
+            )
+        },
+        Span::styled(tail.to_string(), Style::default().fg(doc)),
+        Span::styled(format!("    {hint}"), Style::default().fg(doc)),
+    ]
+}
+
+/// Resolve a rename of `path` to `new_name` (ADR 0017 D4/D5).
+///
+/// The destination listing is the UNFILTERED contents of the source's own parent,
+/// read fresh from the filesystem, for the reason spelled out at the
+/// [`dest_listing`] definition and at the `request_trash` construction site:
+/// planning against `self.view` would hide dotfiles and let a rename land on top
+/// of a `.env` the user cannot see.
+fn rename_plan(path: &Path, new_name: &str, cwd: &Path) -> Result<fileop::Plan, fileop::Refusal> {
+    let Some(parent) = path.parent() else {
+        return Err(fileop::Refusal::FilesystemRoot);
+    };
+    let source = rename_source(path)?;
+    let listing = dest_listing(parent);
+    fileop::plan(
+        fileop::Op::Rename {
+            source,
+            new_name: new_name.to_string(),
+        },
+        &fileop::PlanCtx {
+            dest_listing: &listing,
+            cwd,
+            // A rename acts on one path the browser is looking at right now, so
+            // there is no earlier selection that could have gone stale in the
+            // meantime and nothing to report as missing (ADR 0017 D3). A path
+            // that vanished shows up as an `Io` refusal from `rename_source`
+            // instead, which is the more precise answer.
+            missing: &[],
+            // A rename onto an existing name is refused outright rather than
+            // suffixed, so the policy never comes into play; the default is
+            // passed because there is no third value to mean "not applicable".
+            policy: fileop::Conflict::Rename,
+        },
+    )
+}
+
+/// Stat one path into the single-entry [`fileop::Source`] a rename needs.
+///
+/// This deliberately does NOT go through [`fileop::collect`], which every other
+/// operation uses, and the difference is the point rather than an oversight. A
+/// rename is one `fs::rename` on one inode: nothing below the path is read,
+/// written or even opened, so enumerating the subtree would buy nothing and cost
+/// three real things.
+///
+///   * `collect` refuses a walk past `MAX_TREE_ITEMS`, which would turn renaming
+///     a `node_modules` into an error about a limit that has nothing to do with
+///     what was asked. That bound exists to stop a half-finished COPY (ADR 0017
+///     D2); a rename has no partial state to protect against.
+///   * The plan's totals feed the status line, and `rename 40182 items, 1.2G`
+///     would be a plain lie about an operation that moves no bytes at all.
+///     One item and zero bytes is what actually happens.
+///   * On a network mount the walk is the entire cost of the operation, paid
+///     before a prompt the user might still cancel.
+///
+/// The one filesystem question a rename does have to ask is whether the path is
+/// still there, which is exactly what this stat answers. `symlink_metadata` and
+/// not `metadata`, so a symlink is seen as a link rather than as whatever it
+/// points at, the same rule `collect` follows for the same reason (ADR 0017 D5).
+fn rename_source(path: &Path) -> Result<fileop::Source, fileop::Refusal> {
+    let meta = fs::symlink_metadata(path).map_err(|e| fileop::Refusal::Io {
+        path: path.to_path_buf(),
+        msg: e.to_string(),
+    })?;
+    let ft = meta.file_type();
+    let kind = if ft.is_symlink() {
+        fileop::NodeKind::Symlink
+    } else if ft.is_dir() {
+        fileop::NodeKind::Dir
+    } else {
+        fileop::NodeKind::File
+    };
+    Ok(fileop::Source {
+        path: path.to_path_buf(),
+        kind,
+        // A rename relocates the entry itself and never descends, so there is no
+        // subtree for the executor to replay.
+        nodes: Vec::new(),
+        items: 1,
+        bytes: 0,
+    })
+}
+
+/// Resolve a create of `name` in `parent` (ADR 0017 D4/D5). A trailing `/` on the
+/// name asks for a directory, which the planner decides.
+///
+/// Same unfiltered, freshly read destination listing as [`rename_plan`], and for
+/// the same reason: creating `notes.md` beside an invisible `notes.md` has to be
+/// the refusal the user can act on, not a silent collision.
+fn create_plan(parent: &Path, name: &str, cwd: &Path) -> Result<fileop::Plan, fileop::Refusal> {
+    let listing = dest_listing(parent);
+    fileop::plan(
+        fileop::Op::Create {
+            parent: parent.to_path_buf(),
+            name: name.to_string(),
+        },
+        &fileop::PlanCtx {
+            dest_listing: &listing,
+            cwd,
+            // A create has no sources at all, so nothing can have vanished.
+            missing: &[],
+            // Create onto an existing name is refused rather than suffixed, so
+            // as with a rename the policy never applies.
+            policy: fileop::Conflict::Rename,
+        },
+    )
 }
 
 /// The other conflict policy. `o` toggles rather than switches one way, so a user
@@ -5282,9 +5768,12 @@ mod tests {
         // A letter that is still free must keep starting a name search, proving
         // the two new bindings did not quietly swallow the alphabet.
         assert!(browse_char('R').is_none());
-        // `Ctrl-a` is deliberately NOT a `browse_char` binding: a bare `a` stays
-        // free for typeahead, and the handler tests the modifier itself.
-        assert!(browse_char('a').is_none());
+        // `Ctrl-a` is still not a `browse_char` binding, and cannot be: that map
+        // takes a bare character and has no way to say "with Control held", so
+        // `handle_key` tests the modifier itself, above the typeahead block. The
+        // BARE `a` is now the create binding (ADR 0017 D4), which is why the two
+        // can no longer be told apart from this map alone.
+        assert!(matches!(browse_char('a'), Some(CharAction::Create)));
     }
 
     #[test]
@@ -5809,6 +6298,150 @@ mod tests {
                 Escape::Quit
             ]
         );
+    }
+
+    /// The typed-name keys must be BOUND chars, so typeahead treats them as
+    /// motions and never as the first letter of a name search (ADR 0002 D2, ADR
+    /// 0017 D4). Unbound, `r` would jump to `README.md` instead of renaming it.
+    #[test]
+    fn rename_and_create_are_bound_chars_so_typeahead_passes_them_through() {
+        assert!(matches!(browse_char('r'), Some(CharAction::Rename)));
+        assert!(matches!(browse_char('a'), Some(CharAction::Create)));
+        for c in ['r', 'a'] {
+            assert!(matches!(
+                typeahead::action(false, browse_char(c).is_some()),
+                typeahead::Action::PassThrough
+            ));
+        }
+        // The two prompts sit one key apart and their label is the only thing on
+        // screen that says which one is open, so it has to differ.
+        let rename = Ask::Rename {
+            path: PathBuf::from("/d/a.txt"),
+        };
+        let create = Ask::Create {
+            parent: PathBuf::from("/d"),
+        };
+        assert_ne!(rename.prefix(), create.prefix());
+        // The create hint is the ONLY place the trailing-slash rule can be
+        // learned, so it has to carry it (ADR 0017 D4).
+        assert!(create.hint().contains('/'), "{}", create.hint());
+        // Both name the keys that answer them.
+        for ask in [&rename, &create] {
+            assert!(ask.hint().contains("[Enter]"), "{}", ask.hint());
+            assert!(ask.hint().contains("[Esc]"), "{}", ask.hint());
+        }
+    }
+
+    /// The rename prompt opens with the cursor at the end of the stem, so the
+    /// first key typed replaces the name and keeps the extension. The rule must
+    /// agree with the planner's collision suffixing, which splits on the LAST
+    /// dot, or the browser would teach two contradictory ideas of "extension".
+    #[test]
+    fn the_rename_cursor_lands_at_the_end_of_the_stem() {
+        // The ordinary case: typing replaces `notes` and keeps `.md`.
+        assert_eq!(stem_end("notes.md", false), 5);
+        // A dotfile is all stem: the leading dot is not a separator, the same
+        // reading `fileop`'s `suffixed` uses for `.gitignore (2)`.
+        assert_eq!(stem_end(".gitignore", false), 10);
+        // Only the LAST extension is protected, which agrees with the planner's
+        // `foo.tar (2).gz`.
+        assert_eq!(stem_end("foo.tar.gz", false), 7);
+        // A directory has no extension to protect, so the whole name is stem and
+        // `v1.2` is never cut into `v1` and `2`.
+        assert_eq!(stem_end("v1.2", true), 4);
+        // The same name as a FILE does split, so the flag is really doing work.
+        assert_eq!(stem_end("v1.2", false), 2);
+        // A trailing dot introduces no extension.
+        assert_eq!(stem_end("odd.", false), 4);
+        // No dot at all: the cursor is simply at the end.
+        assert_eq!(stem_end("README", false), 6);
+        assert_eq!(stem_end("", false), 0);
+        // Counted in CHARACTERS, not bytes: `café` is four characters and five
+        // bytes, and a byte index here would park the cursor inside the `é`.
+        assert_eq!(stem_end("café.txt", false), 4);
+        assert_eq!(stem_end("🎉.png", false), 1);
+    }
+
+    /// A resolved step with a real destination, as rename, create and paste all
+    /// produce. Built by hand so the landing rule is decided without a filesystem.
+    fn dest_step(src: &str, dest: &str) -> fileop::Step {
+        fileop::Step {
+            src: PathBuf::from(src),
+            dest: PathBuf::from(dest),
+            kind: fileop::NodeKind::File,
+            nodes: Vec::new(),
+            items: 1,
+            bytes: 0,
+            renamed: false,
+            overwrite: false,
+        }
+    }
+
+    /// Where the cursor lands after an operation. A rename is the case that
+    /// forced this: the name that was under the cursor no longer exists, so
+    /// `reselect` alone would fall back to the row and leave the cursor beside
+    /// the file the user just renamed rather than on it.
+    #[test]
+    fn the_landing_name_comes_only_from_a_single_step_with_a_destination() {
+        assert_eq!(
+            landing_name(&[dest_step("/d/old.txt", "/d/new.txt")]),
+            Some("new.txt".to_string())
+        );
+        // A create has no source at all and still names what it made.
+        assert_eq!(
+            landing_name(&[dest_step("", "/d/notes.md")]),
+            Some("notes.md".to_string())
+        );
+        // A multi-step paste brought several entries in at once and has no single
+        // answer, so the pre-existing rule stands: keep the name under the cursor.
+        assert_eq!(
+            landing_name(&[dest_step("/a/one", "/d/one"), dest_step("/b/two", "/d/two")]),
+            None
+        );
+        // Trash has no destination path to land on (ADR 0017 D7), even as one
+        // step, so the row rule keeps covering a delete.
+        assert_eq!(landing_name(&[trash_step("/d/gone.txt", 1, 0)]), None);
+        assert_eq!(landing_name(&[]), None);
+
+        // And it composes with `reselect` exactly as `finish_op` uses it: the new
+        // name wins over the old one, which is gone from the reloaded listing.
+        let after = ["a.txt", "new.txt", "z.txt"];
+        let landing = landing_name(&[dest_step("/d/old.txt", "/d/new.txt")]);
+        assert_eq!(reselect(&after, landing.as_deref(), Some(0)), Some(1));
+    }
+
+    /// The prompt line must SHOW the cursor: a field that opens pre-filled with
+    /// the cursor parked mid-name is useless if the user cannot see where it is.
+    #[test]
+    fn the_prompt_line_shows_the_cursor_wherever_it_sits() {
+        // Mid-name: the character under the cursor is its own span, so it can be
+        // drawn reversed, and the text either side of it is intact.
+        let edit = crate::lineedit::LineEdit::with_text("notes.md", 5);
+        let spans = prompt_spans("rename: ", &edit, "[Esc] cancel");
+        assert_eq!(spans_text(&spans), " rename: notes.md    [Esc] cancel");
+        assert_eq!(spans[1].content, ".");
+
+        // At the end of the line there is no character to reverse, so the cursor
+        // is a block. Without this the cursor would be invisible in exactly the
+        // place a fresh create prompt always puts it.
+        let edit = crate::lineedit::LineEdit::with_text("notes.md", 8);
+        let spans = prompt_spans("rename: ", &edit, "go");
+        assert_eq!(spans_text(&spans), " rename: notes.md█    go");
+        assert_eq!(spans[1].content, "█");
+
+        // The empty create prompt is that same case, and is nothing but a cursor.
+        let empty = crate::lineedit::LineEdit::new();
+        assert_eq!(
+            spans_text(&prompt_spans("new: ", &empty, "go")),
+            " new: █    go"
+        );
+
+        // A multi-byte name splits on the character, never inside it, so the line
+        // renders whole rather than as two broken halves.
+        let edit = crate::lineedit::LineEdit::with_text("café.txt", 3);
+        let spans = prompt_spans("rename: ", &edit, "go");
+        assert_eq!(spans[1].content, "é");
+        assert_eq!(spans_text(&spans), " rename: café.txt    go");
     }
 
     #[test]
