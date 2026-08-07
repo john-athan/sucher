@@ -239,13 +239,44 @@ impl Trash for OsTrash {
     /// plainly why nothing happened, so the user is never left guessing whether
     /// the file was quietly destroyed instead (ADR 0017 D7).
     fn send(&self, path: &Path) -> Result<(), String> {
-        trash::delete(path).map_err(|e| {
+        trash_context().delete(path).map_err(|e| {
             format!(
                 "cannot send {} to the trash ({e}), and sucher never permanently deletes, so nothing was removed",
                 path.display()
             )
         })
     }
+}
+
+/// The configured trash handle.
+///
+/// On macOS this is not a formality. The `trash` crate's default delete method
+/// there drives **Finder over AppleScript**, which needs the "control Finder"
+/// Automation permission. In a terminal that has never been granted it, the call
+/// does not fail: it blocks, waiting on a consent prompt that a non-GUI process
+/// never receives. A smoke test caught exactly that, with `D` sitting at `0/2`
+/// forever, and the consequences compound: the worker is blocked inside the
+/// syscall, so the cancel flag it only checks between steps never gets read, and
+/// `q` refuses to quit while an operation is in flight. A hung trash would have
+/// trapped the user in the browser.
+///
+/// `NsFileManager` is the direct `-[NSFileManager trashItemAtURL:...]` call: no
+/// Finder, no Automation permission, no prompt, and about 40 ms in practice. It
+/// is what "move to trash" means at the API level, so it is also the more honest
+/// of the two.
+///
+/// A context is built per call rather than cached: it is a tiny value, deleting
+/// is already a syscall, and a shared handle would need synchronising across the
+/// worker threads for nothing.
+fn trash_context() -> trash::TrashContext {
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx
 }
 
 /// The rename seam, the second of this module's two substitutable edges.

@@ -138,7 +138,7 @@ Every binding is registered in `browse_char`, the single source of truth (ADR
 | `y` | copy selection to the clipboard |
 | `X` | cut selection to the clipboard |
 | `p` | paste the clipboard into the current directory |
-| `r` | rename (inline prompt, stem preselected) |
+| `r` | rename (inline prompt, cursor between name and extension) |
 | `a` | create; a trailing `/` makes a directory |
 | `D` | delete to trash (confirm overlay) |
 | `U` | undo the last operation |

@@ -4339,9 +4339,9 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         row("y / X", "copy / cut the selection to the clipboard"),
         row("p", "paste here  (shows the plan first; [o] overwrites)"),
         // Both say what the prompt does that the key alone cannot show: `r`
-        // opens on the stem so typing keeps the extension, and `a` hides its
+        // puts the cursor before the extension, and `a` hides its
         // whole file-or-folder choice in one trailing character (ADR 0017 D4).
-        row("r", "rename  (opens on the name, keeps the extension)"),
+        row("r", "rename  (cursor lands before the extension)"),
         row("a", "create  (a trailing / makes a folder)"),
         // Named as trash, not delete: sucher has no permanent-delete binding at
         // all, and the help is where that promise has to be legible (ADR 0017 D7).
@@ -4895,8 +4895,10 @@ fn dest_listing(dir: &Path) -> Vec<String> {
 }
 
 /// Where the cursor starts in a rename prompt, counted in CHARACTERS: at the end
-/// of the name's stem, so the first key typed replaces the name and keeps the
-/// extension (ADR 0017 D4).
+/// of the name's stem, so editing lands on the name and leaves the extension
+/// alone (ADR 0017 D4). The prompt is a cursor rather than a selection, so
+/// typing extends the stem and backspacing eats it; either way `.txt` sits
+/// safely to the right and is never what a stray keystroke destroys.
 ///
 /// The split is the same "last extension only" rule the planner's collision
 /// suffixing uses (`foo.tar.gz` becomes `foo.tar (2).gz`), and deliberately so:
@@ -6935,13 +6937,13 @@ mod tests {
         }
     }
 
-    /// The rename prompt opens with the cursor at the end of the stem, so the
-    /// first key typed replaces the name and keeps the extension. The rule must
-    /// agree with the planner's collision suffixing, which splits on the LAST
-    /// dot, or the browser would teach two contradictory ideas of "extension".
+    /// The rename prompt opens with the cursor at the end of the stem, so every
+    /// edit lands on the name and the extension stays put. The rule must agree
+    /// with the planner's collision suffixing, which splits on the LAST dot, or
+    /// the browser would teach two contradictory ideas of "extension".
     #[test]
     fn the_rename_cursor_lands_at_the_end_of_the_stem() {
-        // The ordinary case: typing replaces `notes` and keeps `.md`.
+        // The ordinary case: the cursor sits after `notes` and before `.md`.
         assert_eq!(stem_end("notes.md", false), 5);
         // A dotfile is all stem: the leading dot is not a separator, the same
         // reading `fileop`'s `suffixed` uses for `.gitignore (2)`.

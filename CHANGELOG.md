@@ -15,10 +15,10 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
   be gathered across several folders and acted on once. With nothing marked every
   verb falls back to the entry under the cursor. `y`/`X` copy/cut to a clipboard
   that also survives navigation, `p` pastes into the current directory, `r`
-  renames (opening pre-filled with the cursor at the end of the stem, so typing
-  keeps the extension), `a` creates (a trailing `/` makes a folder), `D` moves to
-  the trash, `U` undoes, and `Y` yanks absolute paths via **OSC 52** so it works
-  over ssh with no helper binary.
+  renames (opening pre-filled with the cursor between the name and the
+  extension, so editing lands on the name and never on the `.txt`), `a` creates
+  (a trailing `/` makes a folder), `D` moves to the trash, `U` undoes, and `Y`
+  yanks absolute paths via **OSC 52** so it works over ssh with no helper binary.
 
   Every batch **shows its plan before anything happens**: item and byte totals,
   each destination, which names took a ` (2)` suffix to dodge a collision, and

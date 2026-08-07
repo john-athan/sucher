@@ -361,8 +361,9 @@ cursor instead, so the keys work before you have learned marking at all.
 
 `y` copies and `X` cuts to a clipboard that survives navigation; `p` pastes into
 the directory you are standing in. `r` renames, opening pre-filled with the
-cursor at the end of the name so typing replaces it and keeps the extension. `a`
-creates, and a trailing `/` makes a folder instead of a file.
+cursor sitting between the name and the extension, so you can extend the name,
+backspace over it, or move around it with the arrow keys without ever putting
+`.txt` at risk. `a` creates, and a trailing `/` makes a folder instead of a file.
 
 Every batch **shows its plan before anything happens**: how many items and bytes,
 where each one lands, which names got a ` (2)` suffix to dodge a collision, and
