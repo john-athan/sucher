@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-07
+
 ### Added
 - **File operations in the directory browser.** sucher still changes only *where
   files are*, never *what they contain* (no editing, no archive extraction, no
