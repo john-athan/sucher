@@ -126,11 +126,17 @@ enum OpView {
     /// happens, which is the whole of ADR 0017 D5: the user sees the outcome,
     /// including every collision-dodging rename, before a byte moves.
     Confirm(Pending),
-    /// A finished run that did not do everything it set out to. A partial result
-    /// is reported, never swallowed (ADR 0009), so this is deliberately an overlay
-    /// and not a status line: a one-line summary of four failures would be exactly
-    /// the silent truncation that doctrine exists to forbid.
-    Failures(fileop::Report),
+    /// A finished run that had something to say beyond its totals: steps that
+    /// failed, notes that are not failures, or both. A partial result is reported,
+    /// never swallowed (ADR 0009), so this is deliberately an overlay and not a
+    /// status line: a one-line summary of four failures would be exactly the
+    /// silent truncation that doctrine exists to forbid.
+    ///
+    /// Named for the whole report rather than for its failures, because an undo
+    /// reaches here with an empty failure list and one note (ADR 0017 D8): the
+    /// paths only the system trash can bring back. A variant called `Failures`
+    /// would have made that arrival look like an error.
+    Report(fileop::Report),
 }
 
 /// A plan on the confirm overlay, plus what it would take to plan it again.
@@ -263,6 +269,29 @@ struct InFlight {
     bytes: u64,
     /// The path the worker was on when it last reported.
     current: PathBuf,
+}
+
+impl InFlight {
+    /// The four things a run decides for itself, with the three streamed counters
+    /// at the values they hold before a single `Msg::Progress` has arrived.
+    ///
+    /// A constructor rather than two literals, because a forward operation reads
+    /// its four from a [`fileop::Plan`] and an undo reads them from a
+    /// [`fileop::Journal`] (ADR 0017 D8), and the only thing the two shapes have in
+    /// common is what has NOT happened yet. Keeping that zero state in one place is
+    /// what stops the undo path from quietly starting its progress line at a
+    /// different origin than the paste path.
+    fn new(label: String, total: usize, targets: Vec<PathBuf>, landing: Option<String>) -> Self {
+        InFlight {
+            label,
+            total,
+            targets,
+            landing,
+            items: 0,
+            bytes: 0,
+            current: PathBuf::new(),
+        }
+    }
 }
 
 /// Which trailing metadata column the entry list draws (ADR 0005, D2). The
@@ -723,9 +752,9 @@ struct App {
     // and the marks the run will consume. `Some` exactly while `op` is `Some`.
     op_progress: Option<InFlight>,
     // The undo stack (ADR 0017 D8): the journals of completed operations, oldest
-    // first, bounded at `UNDO_DEPTH` by `push_journal`. Only ever appended to for
-    // now; the `U` binding that pops it lands in a later step, which is why this
-    // grows without anything yet reading it.
+    // first, bounded at `UNDO_DEPTH` by `push_journal`. `U` pops the newest and
+    // hands it to the executor; an undo's own journal is empty by construction and
+    // `finish_op` skips pushing an empty one, so undos never stack on undos.
     journal: Vec<fileop::Journal>,
 }
 
@@ -790,6 +819,17 @@ enum CharAction {
     /// Create an entry in the current directory through the inline prompt, as a
     /// directory when the typed name ends in `/` (ADR 0017 D4). Bound to `a`.
     Create,
+    /// Undo the most recent completed operation (ADR 0017 D4/D8). Bound to `U`.
+    /// It pops the newest journal and replays its inverses through the SAME
+    /// executor every forward operation uses, so it is an ordinary run and the
+    /// one-in-flight rule, the progress line and the `Esc` ladder all cover it.
+    Undo,
+    /// Hand the absolute path(s) of the selection to the terminal for the system
+    /// clipboard, over OSC 52 (ADR 0017 D4). Bound to `Y`, leaving the lowercase
+    /// `y` clipboard-for-paste key alone. It mutates nothing, so unlike every
+    /// other key in this group it is neither planned, confirmed, journalled, nor
+    /// refused while an operation is running.
+    YankPath,
     Quit,
 }
 
@@ -852,6 +892,13 @@ fn browse_char(c: char) -> Option<CharAction> {
         // consulted, so the bare `a` and the modified one stay distinct.
         'r' => CharAction::Rename,
         'a' => CharAction::Create,
+        // Undo, and the yank of a path to the system clipboard (ADR 0017 D4).
+        // Both are capitals so the lowercase `u` half-page motion and the `y`
+        // clipboard key survive untouched, and registering them here is what keeps
+        // typeahead correct (ADR 0002 D2): a bound char never starts a name search,
+        // so `U` cannot become a jump to `Users/` nor `Y` one to `Yesterday.md`.
+        'U' => CharAction::Undo,
+        'Y' => CharAction::YankPath,
         // Toggle the help overlay. Bound (not left to typeahead) so `?` never
         // starts a name search; the overlay is dismissed by the next key.
         '?' => CharAction::Help,
@@ -1451,8 +1498,13 @@ impl App {
         // nothing more to say, and a partly failed one leaves the summary behind
         // once its overlay is dismissed, so the outcome does not vanish with the
         // popup that reported it.
-        self.status = Some(op_done_status(report.kind, report.items, report.bytes));
-        if report.failures.is_empty() {
+        self.status = Some(op_done_status(
+            report.kind,
+            report.direction,
+            report.items,
+            report.bytes,
+        ));
+        if !report_speaks(&report) {
             return;
         }
         // A partial result is reported, never swallowed (ADR 0009), so failures get
@@ -1463,7 +1515,7 @@ impl App {
         if matches!(self.mode, Mode::Search) {
             self.exit_search();
         }
-        self.show_op(OpView::Failures(report));
+        self.show_op(OpView::Report(report));
     }
 
     /// Put an operation overlay on screen. The which-key help is dismissed first,
@@ -1838,16 +1890,77 @@ impl App {
             .collect();
         targets.extend(plan.missing.iter().cloned());
         let landing = landing_name(&plan.steps);
-        self.op_progress = Some(InFlight {
-            label,
-            total,
-            targets,
-            landing,
-            items: 0,
-            bytes: 0,
-            current: PathBuf::new(),
+        let flight = InFlight::new(label, total, targets, landing);
+        self.begin_run(fileop::start(plan), flight);
+    }
+
+    /// The `U` binding: replay the newest journal's inverses (ADR 0017 D4/D8).
+    ///
+    /// There is no plan, no confirm overlay and no collect stage, because the
+    /// journal already names every step that actually happened: undo has nothing
+    /// left to decide, which is why it enters the engine at the executor rather
+    /// than at the top. What it is not exempt from is everything that makes a run
+    /// a run, so it goes into the same `op` slot and is drained by the same
+    /// `pump_fileop`, retired by the same `finish_op`, refused while another
+    /// operation is live, and cancelled by the same `Esc`.
+    fn undo_last(&mut self) {
+        if self.op.is_some() {
+            // ADR 0017 D2: exactly one operation in flight, refused rather than
+            // queued, and said out loud rather than ignored. An undo is an ordinary
+            // run and gets no exemption from that rule.
+            self.status = Some("busy: an operation is already running".to_string());
+            return;
+        }
+        let Some(journal) = self.journal.pop() else {
+            self.status = Some("nothing to undo".to_string());
+            return;
+        };
+        // An undo reverses journal steps, not filesystem entries, so its
+        // denominator is the step count: that is the same number `Report::items`
+        // comes back with, and a progress line whose two halves counted different
+        // things would be worse than no progress line.
+        let total = journal.steps.len();
+        let label = undo_label(journal.kind);
+        let landing = undo_landing(&journal.steps);
+        // Nothing to unmark. `finish_op` drops the marks a run consumed, and the
+        // forward operation this undoes already dropped its own; an undo consumes
+        // no selection of its own, so it hands over an empty list rather than
+        // reaching for marks that are not its to clear (ADR 0017 D3).
+        let flight = InFlight::new(label, total, Vec::new(), landing);
+        self.begin_run(fileop::start_undo(journal), flight);
+    }
+
+    /// Take up the one operation slot (ADR 0017 D2), whichever direction the run
+    /// travels. The two fields are set together and only here, so `op_progress` is
+    /// `Some` exactly while `op` is, which is what every reader of the pair assumes.
+    fn begin_run(&mut self, run: fileop::Run, flight: InFlight) {
+        self.op_progress = Some(flight);
+        self.op = Some(run);
+    }
+
+    /// The `Y` binding: hand the selection's ABSOLUTE paths to the terminal for
+    /// the system clipboard, one per line (ADR 0017 D4).
+    ///
+    /// Not an operation, and deliberately not shaped like one: it reads no tree,
+    /// writes no path and journals nothing, so there is no plan to confirm, nothing
+    /// for `U` to take back, and no reason to refuse it while a copy is running.
+    /// It takes the same targets as every verb, though, because "the marks if any,
+    /// otherwise the row under the cursor" is a rule about the selection rather
+    /// than about mutation.
+    fn yank_paths(&mut self) {
+        let paths = targets(&self.marks, self.selected().map(|e| e.path.as_path()));
+        if paths.is_empty() {
+            self.status = Some(fileop::Refusal::NothingSelected.to_string());
+            return;
+        }
+        let text = clipboard_text(&self.cwd, &paths);
+        // The refusal (a selection past the terminal's payload ceiling) is already
+        // a finished sentence naming the size and the cap, so it goes to the status
+        // line verbatim rather than being wrapped in a vaguer one.
+        self.status = Some(match crate::util::copy_to_clipboard(&text) {
+            Ok(()) => yank_status(paths.len()),
+            Err(refusal) => refusal,
         });
-        self.op = Some(fileop::start(plan));
     }
 
     /// Keys while a file-operation overlay is up (ADR 0017 D5). The overlay is
@@ -2490,6 +2603,13 @@ impl App {
             // until the plan resolves.
             CharAction::Rename => self.request_rename(),
             CharAction::Create => self.request_create(),
+            // Undo goes straight to the executor: the journal it pops is already
+            // the decided list of what to reverse, so there is nothing to show for
+            // authorisation the way a plan has (ADR 0017 D8).
+            CharAction::Undo => self.undo_last(),
+            // The one key in this group that changes nothing on disk, so it neither
+            // plans nor confirms nor waits its turn behind a running operation.
+            CharAction::YankPath => self.yank_paths(),
             CharAction::Quit => {
                 // Quitting mid-operation would leave a half-copied tree behind and
                 // no report of what happened, because dropping the `Run` trips its
@@ -3284,8 +3404,8 @@ impl App {
                         confirm_keys(pending.inputs.is_some(), true)
                     )
                 }
-                OpView::Failures(report) => {
-                    format!(" {}    [any key] close", fail_count(report.failures.len()))
+                OpView::Report(report) => {
+                    format!(" {}    [any key] close", report_count(report))
                 }
             }
         } else if let Some(flight) = &self.op_progress {
@@ -3337,8 +3457,11 @@ impl App {
         // to state its colour instead of quietly inheriting `dim`.
         let color = match &self.mode {
             Mode::Filter => theme::palette().doc,
-            // Failures borrow the same semantic red the overlay uses.
-            Mode::Op(OpView::Failures(_)) => theme::palette().pdf,
+            // Failures borrow the same semantic red the overlay uses, and a report
+            // carrying only notes deliberately does not: the red has to mean
+            // something went wrong, and on that report nothing did (ADR 0017 D8).
+            Mode::Op(OpView::Report(report)) if !report.failures.is_empty() => theme::palette().pdf,
+            Mode::Op(OpView::Report(_)) => theme::palette().dim,
             // Named rather than folded into the others, even though the early
             // return above means this arm is never reached: the prompt borrows
             // the filter's yellow because it is the same kind of surface, and
@@ -4226,6 +4349,15 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
             "D",
             "move to trash  (shows the plan first; never permanent)",
         ),
+        // What `U` can and cannot reach, because the one operation it does not put
+        // back is the one users will try it on first (ADR 0017 D8).
+        row(
+            "U",
+            "undo the last operation  (a trashing is Finder's to undo)",
+        ),
+        // The delivery caveat is the description, not a footnote to it: OSC 52 is
+        // fire-and-forget, so the honest thing the help can say is who decides.
+        row("Y", "yank absolute path(s)  (OSC 52; the terminal decides)"),
         Line::from(""),
         heading(" Find"),
         row("/", "filter this folder  (kind: ext: size: modified:)"),
@@ -4290,13 +4422,9 @@ fn render_op_overlay(f: &mut Frame, area: Rect, view: &OpView) {
             ),
             confirm_lines(&pending.plan, w, h),
         ),
-        OpView::Failures(report) => (
-            format!(
-                " {} · {} · [any key] close ",
-                kind_title(report.kind),
-                fail_count(report.failures.len())
-            ),
-            failure_lines(report, w, h),
+        OpView::Report(report) => (
+            format!(" {} · [any key] close ", report_title(report)),
+            report_lines(report, w, h),
         ),
     };
     let block = Block::default()
@@ -4380,11 +4508,44 @@ fn confirm_lines(plan: &fileop::Plan, w: usize, h: usize) -> Vec<Line<'static>> 
     lines
 }
 
-/// The failure overlay's body: what the run managed, then what it did not, each
-/// with the executor's own one-line reason (ADR 0009). Sized by the same
-/// [`fit_rows`] rule as the confirm overlay, so a long failure list says how many
-/// it is not showing rather than ending without warning.
-fn failure_lines(report: &fileop::Report, w: usize, h: usize) -> Vec<Line<'static>> {
+/// Whether a finished run has anything to say beyond its one-line totals, and so
+/// whether the report overlay opens at all (ADR 0009, ADR 0017 D8).
+///
+/// Failures are the obvious half. Notes are the half that is easy to lose: an undo
+/// that reversed everything it could still has to tell the user which paths only
+/// the system trash can restore, and a run whose failure list happens to be empty
+/// would otherwise swallow that note entirely. Pure, so the condition is asserted
+/// rather than trusted to a negation buried in `finish_op`.
+fn report_speaks(report: &fileop::Report) -> bool {
+    !report.failures.is_empty() || !report.notes.is_empty()
+}
+
+/// The report overlay's rows: every failure, then every note, each flagged as
+/// alarming or not.
+///
+/// The flag rather than a [`Color`] for the same reason [`collision_lines`] uses
+/// one: the split between what went wrong and what is merely worth knowing is a
+/// rule about the content, so it is decided here and unit-tested, and only the
+/// renderer knows which two colours the theme spends on it.
+///
+/// Failures come first, and that ordering is the whole reason the executor keeps
+/// the two lists apart (ADR 0017 D8). A user scanning a red list for what broke
+/// must not have to read past advice to find it, and when the popup is too short
+/// for everything it is the advice that gets counted away rather than a failure.
+fn report_rows(report: &fileop::Report) -> Vec<(String, bool)> {
+    report
+        .failures
+        .iter()
+        .map(|failure| (failure.msg.clone(), true))
+        .chain(report.notes.iter().map(|note| (note.clone(), false)))
+        .collect()
+}
+
+/// The report overlay's body: what the run managed, then what it did not and what
+/// it wants the user to know. Sized by the same [`fit_rows`] rule as the confirm
+/// overlay, so a long list says how many it is not showing rather than ending
+/// without warning.
+fn report_lines(report: &fileop::Report, w: usize, h: usize) -> Vec<Line<'static>> {
     let accent = theme::palette().accent;
     let dim = theme::palette().dim;
     let danger = theme::palette().pdf;
@@ -4393,7 +4554,7 @@ fn failure_lines(report: &fileop::Report, w: usize, h: usize) -> Vec<Line<'stati
             truncate(
                 &format!(
                     "  {}",
-                    op_done_status(report.kind, report.items, report.bytes)
+                    op_done_status(report.kind, report.direction, report.items, report.bytes)
                 ),
                 w,
             ),
@@ -4401,11 +4562,15 @@ fn failure_lines(report: &fileop::Report, w: usize, h: usize) -> Vec<Line<'stati
         )),
         Line::from(""),
     ];
-    let (shown, hidden) = fit_rows(report.failures.len(), h.saturating_sub(lines.len()));
-    for failure in report.failures.iter().take(shown) {
+    let rows = report_rows(report);
+    let (shown, hidden) = fit_rows(rows.len(), h.saturating_sub(lines.len()));
+    for (text, alarming) in rows.iter().take(shown) {
         lines.push(Line::from(Span::styled(
-            truncate(&format!("  {}", failure.msg), w),
-            Style::default().fg(danger),
+            truncate(&format!("  {text}"), w),
+            // A note takes the ordinary informational colour of a hint, never the
+            // danger colour: the red list has to mean "this went wrong" and nothing
+            // else, or it stops meaning anything.
+            Style::default().fg(if *alarming { danger } else { dim }),
         )));
     }
     if hidden > 0 {
@@ -4479,7 +4644,7 @@ fn kind_title(kind: fileop::Kind) -> &'static str {
     }
 }
 
-/// The past-tense verb for a finished operation.
+/// The past-tense verb for a finished forward operation.
 fn done_verb(kind: fileop::Kind) -> &'static str {
     match kind {
         fileop::Kind::Copy => "copied",
@@ -4490,25 +4655,125 @@ fn done_verb(kind: fileop::Kind) -> &'static str {
     }
 }
 
+/// The name of the operation an undo reversed, as a noun.
+///
+/// A noun rather than [`done_verb`]'s past tense because an undo's sentence is
+/// about the operation and not about the undo: "undid the move" names the thing
+/// taken back, where "undid moved" would name nothing at all. `Kind` deliberately
+/// has no undo arm of its own (see [`fileop::Direction`]), so this is where the
+/// browser composes the two halves the engine hands it.
+fn undone_noun(kind: fileop::Kind) -> &'static str {
+    match kind {
+        fileop::Kind::Copy => "copy",
+        fileop::Kind::Move => "move",
+        fileop::Kind::Rename => "rename",
+        fileop::Kind::Create => "creation",
+        fileop::Kind::Trash => "trashing",
+    }
+}
+
 /// The status line a finished run leaves behind, e.g.
-/// `trashed 3 items, 1.2K · restore from the system trash`.
+/// `trashed 3 items, 1.2K · restore from the system trash`, or
+/// `undid the move of 3 items` when the run travelled the other way.
+///
+/// The direction is not decoration. `Kind` alone says which operation the report
+/// is about, and an undo's report carries the kind of the operation it REVERSED
+/// (ADR 0017 D8), so composing the sentence from the kind by itself would have the
+/// status line announce a move at the exact moment one was taken back. Both halves
+/// therefore go into the wording, which is the reason [`fileop::Direction`] travels
+/// beside the kind rather than being folded into it.
+///
+/// The trash hint rides on the forward direction only. On the way out it is the
+/// one thing the user needs (sucher does not restore from the trash in process, so
+/// the line points at Finder rather than implying `U` will do it), and on the way
+/// back the undo's own note says the same thing about named paths, far better than
+/// a generic clause could.
 ///
 /// Sizes go through [`crate::util::human_size`], the formatter the listing's size
 /// column uses, so the two never disagree about what a megabyte looks like. Pure,
 /// so the wording is unit-tested.
-fn op_done_status(kind: fileop::Kind, items: usize, bytes: u64) -> String {
+fn op_done_status(
+    kind: fileop::Kind,
+    direction: fileop::Direction,
+    items: usize,
+    bytes: u64,
+) -> String {
     let noun = if items == 1 { "item" } else { "items" };
-    let mut out = format!("{} {items} {noun}", done_verb(kind));
+    let mut out = match direction {
+        fileop::Direction::Forward => format!("{} {items} {noun}", done_verb(kind)),
+        fileop::Direction::Undo => format!("undid the {} of {items} {noun}", undone_noun(kind)),
+    };
     if bytes > 0 {
         out.push_str(&format!(", {}", crate::util::human_size(bytes)));
     }
-    if kind == fileop::Kind::Trash {
+    if kind == fileop::Kind::Trash && direction == fileop::Direction::Forward {
         // ADR 0017 D8: sucher does not restore from the trash in process, so the
         // line points at the surface that does instead of implying `U` will. A
         // half-supported undo is worse than an honest pointer to Finder.
         out.push_str(" · restore from the system trash");
     }
     out
+}
+
+/// The report overlay's title: which run this is, and how much it has to say.
+///
+/// It names the direction for the same reason [`op_done_status`] does, since a
+/// popup headed `Move` over a body that says an undo happened would contradict
+/// itself in two adjacent rows. And it counts notes when there are no failures,
+/// because an undo arrives here with an empty failure list and `0 steps failed`
+/// would be a strange thing to head a popup that reports nothing having failed.
+/// Pure, so both readings are unit-tested.
+fn report_title(report: &fileop::Report) -> String {
+    let what = match report.direction {
+        fileop::Direction::Forward => kind_title(report.kind).to_string(),
+        fileop::Direction::Undo => format!("Undo {}", undone_noun(report.kind)),
+    };
+    format!("{what} · {}", report_count(report))
+}
+
+/// How much a report has to say, in the one phrase both the overlay title and the
+/// status line under it use, so the two can never disagree about the same popup.
+///
+/// Failures are counted whenever there are any, because they are what the user
+/// most needs the size of. With none, the notes are counted instead: an undo
+/// reports here with an empty failure list, and heading its popup `0 steps failed`
+/// would describe the absence of the thing that did not happen.
+fn report_count(report: &fileop::Report) -> String {
+    if report.failures.is_empty() {
+        note_count(report.notes.len())
+    } else {
+        fail_count(report.failures.len())
+    }
+}
+
+/// The status line while an undo runs: `undo the move · 2/3 · notes.md`.
+///
+/// A forward run takes this label from its plan's own summary, so the line names
+/// the operation the user authorised word for word. An undo has no plan to quote,
+/// so it names the operation it is reversing instead, which is the nearest thing
+/// to the same promise.
+fn undo_label(kind: fileop::Kind) -> String {
+    format!("undo the {}", undone_noun(kind))
+}
+
+/// Where the cursor lands after an undo, when the journal names exactly one thing
+/// to land on.
+///
+/// The mirror of [`landing_name`], and it exists for the reason that one does: an
+/// undone rename abolishes the name the cursor is sitting on, so asking for the
+/// old selection would leave the cursor beside the entry the user just restored
+/// rather than on it. Only a restored path can be landed on. A journal step that
+/// undo REMOVES (a copy or a create being taken away) leaves nothing to select, and
+/// a trashed path is not restored in process at all (ADR 0017 D8), so both yield
+/// `None` and the caller falls back to keeping the row. Pure, so every arm is
+/// unit-tested.
+fn undo_landing(steps: &[fileop::Undoable]) -> Option<String> {
+    match steps {
+        [fileop::Undoable::Moved { from, .. }] => {
+            from.file_name().map(|n| n.to_string_lossy().into_owned())
+        }
+        _ => None,
+    }
 }
 
 /// The status line while an operation runs, e.g. `trash 3 items · 2/3 · notes.md`.
@@ -4537,6 +4802,55 @@ fn fail_count(n: usize) -> String {
 fn mark_count(n: usize) -> String {
     let noun = if n == 1 { "mark" } else { "marks" };
     format!("{n} {noun}")
+}
+
+/// `1 note` / `3 notes`, for the report overlay's title when nothing failed.
+fn note_count(n: usize) -> String {
+    let noun = if n == 1 { "note" } else { "notes" };
+    format!("{n} {noun}")
+}
+
+/// The text `Y` hands the terminal: one absolute path per line (ADR 0017 D4).
+///
+/// Newline-separated because that is what every shell, editor and file dialog on
+/// the other end of a paste already treats as a list of paths, so a multi-mark
+/// yank arrives as several arguments rather than as one impossible filename.
+///
+/// The browser's paths are absolute in practice, since `run` canonicalises the
+/// starting directory and every entry is a child of it, but `base` closes the one
+/// door left open (a start path that could not be canonicalised) without asking
+/// the filesystem. Resolving them with `canonicalize` would be worse than doing
+/// nothing: it follows symlinks, so yanking a link would paste its target, which
+/// is not the path the user is pointing at. Pure, so the joining is unit-tested.
+fn clipboard_text(base: &Path, paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|p| {
+            if p.is_absolute() {
+                p.display().to_string()
+            } else {
+                base.join(p).display().to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// What `Y` says once the sequence is out of the door (ADR 0017 D4).
+///
+/// It reports **what sucher did**, not what the clipboard now holds, and the
+/// distinction is the whole point. OSC 52 has no reply: the terminal is free to
+/// ignore it, many do by default, and tmux needs `set -g set-clipboard on` before
+/// it will pass one on. `copy_to_clipboard`'s `Ok` therefore means the bytes were
+/// written and flushed and nothing more, so a message reading "copied to
+/// clipboard" would be a claim sucher is in no position to make: the user would
+/// paste, get their old clipboard back, and have been told otherwise. Naming the
+/// mechanism and where the decision actually sits is both honest and the fastest
+/// route to the tmux setting when nothing arrives. Pure, so the wording is
+/// unit-tested.
+fn yank_status(n: usize) -> String {
+    let noun = if n == 1 { "path" } else { "paths" };
+    format!("sent {n} {noun} to the terminal via OSC 52 · the terminal decides whether the clipboard takes it")
 }
 
 /// The paths an operation acts on: the mark set when it is non-empty, otherwise
@@ -5954,6 +6268,292 @@ mod tests {
         assert_eq!(stack[UNDO_DEPTH - 1], journal(119));
     }
 
+    /// A finished run as the executor hands it over, built by hand so the whole
+    /// report surface is tested without a filesystem, a trash, or a thread.
+    fn report(
+        kind: fileop::Kind,
+        direction: fileop::Direction,
+        failures: &[&str],
+        notes: &[&str],
+    ) -> fileop::Report {
+        fileop::Report {
+            kind,
+            direction,
+            items: 1,
+            bytes: 0,
+            failures: failures
+                .iter()
+                .map(|msg| fileop::Failure {
+                    path: PathBuf::from("/somewhere"),
+                    msg: (*msg).to_string(),
+                })
+                .collect(),
+            notes: notes.iter().map(|n| (*n).to_string()).collect(),
+            // Empty exactly as an undo's is, which is what keeps `finish_op` from
+            // pushing an undo onto the stack it was popped from (ADR 0017 D8).
+            journal: fileop::Journal {
+                kind,
+                steps: Vec::new(),
+            },
+        }
+    }
+
+    /// `U` and `Y` must be BOUND chars, so typeahead treats them as motions and
+    /// never as the first letter of a name search (ADR 0002 D2, ADR 0017 D4).
+    /// Unbound, `U` would jump to `Users/` rather than undoing anything.
+    #[test]
+    fn undo_and_yank_path_are_bound_chars_so_typeahead_passes_them_through() {
+        assert!(matches!(browse_char('U'), Some(CharAction::Undo)));
+        assert!(matches!(browse_char('Y'), Some(CharAction::YankPath)));
+        for c in ['U', 'Y'] {
+            assert!(matches!(
+                typeahead::action(false, browse_char(c).is_some()),
+                typeahead::Action::PassThrough
+            ));
+        }
+        // Both are capitals precisely so their lowercase motions survive: `u` is
+        // still half a page up and `y` is still the clipboard-for-paste key.
+        assert!(matches!(browse_char('u'), Some(CharAction::HalfUp)));
+        assert!(matches!(browse_char('y'), Some(CharAction::Yank)));
+    }
+
+    /// A run's sentence is composed from BOTH halves the engine reports, because an
+    /// undo's report carries the kind of the operation it reversed (ADR 0017 D8):
+    /// on `Kind` alone, undoing a move would announce a move.
+    #[test]
+    fn the_done_status_names_the_direction_the_run_travelled() {
+        let fwd = fileop::Direction::Forward;
+        let undo = fileop::Direction::Undo;
+        // Every kind, both ways. The forward column is the pre-undo wording,
+        // unchanged, so nothing about a paste reads differently now.
+        let cases = [
+            (fileop::Kind::Copy, fwd, "copied 2 items"),
+            (fileop::Kind::Copy, undo, "undid the copy of 2 items"),
+            (fileop::Kind::Move, fwd, "moved 2 items"),
+            (fileop::Kind::Move, undo, "undid the move of 2 items"),
+            (fileop::Kind::Rename, fwd, "renamed 2 items"),
+            (fileop::Kind::Rename, undo, "undid the rename of 2 items"),
+            (fileop::Kind::Create, fwd, "created 2 items"),
+            (fileop::Kind::Create, undo, "undid the creation of 2 items"),
+            (
+                fileop::Kind::Trash,
+                fwd,
+                "trashed 2 items · restore from the system trash",
+            ),
+            (fileop::Kind::Trash, undo, "undid the trashing of 2 items"),
+        ];
+        for (kind, direction, expected) in cases {
+            assert_eq!(op_done_status(kind, direction, 2, 0), expected);
+        }
+        // The trash hint is a forward-only clause: on the way back the undo's own
+        // note names the paths, which says it better than a generic sentence can.
+        assert!(!op_done_status(fileop::Kind::Trash, undo, 0, 0).contains("restore from"));
+        // Singular and the size clause survive the new arm untouched.
+        assert_eq!(
+            op_done_status(fileop::Kind::Rename, undo, 1, 0),
+            "undid the rename of 1 item"
+        );
+        assert_eq!(
+            op_done_status(fileop::Kind::Move, undo, 1, 1024),
+            "undid the move of 1 item, 1.0K"
+        );
+    }
+
+    /// The progress line an undo watches names the operation being reversed, since
+    /// an undo has no plan whose summary it could quote.
+    #[test]
+    fn the_undo_progress_label_names_the_operation_being_reversed() {
+        assert_eq!(undo_label(fileop::Kind::Move), "undo the move");
+        assert_eq!(undo_label(fileop::Kind::Create), "undo the creation");
+        assert_eq!(
+            op_progress_status(&undo_label(fileop::Kind::Move), 1, 3, Path::new("/a/b.txt")),
+            "undo the move · 1/3 · b.txt"
+        );
+    }
+
+    /// A report with notes and no failures must still reach the user (ADR 0017 D8).
+    /// The old condition asked only about failures, so a successful undo carrying
+    /// the one note it exists to deliver would have said nothing at all.
+    #[test]
+    fn a_report_with_only_notes_still_opens_the_overlay() {
+        let quiet = report(fileop::Kind::Copy, fileop::Direction::Forward, &[], &[]);
+        assert!(!report_speaks(&quiet), "a clean run has nothing to add");
+
+        let noted = report(
+            fileop::Kind::Trash,
+            fileop::Direction::Undo,
+            &[],
+            &["/a.txt went to the system trash"],
+        );
+        assert!(report_speaks(&noted));
+
+        let failed = report(
+            fileop::Kind::Copy,
+            fileop::Direction::Forward,
+            &["cannot copy /a.txt"],
+            &[],
+        );
+        assert!(report_speaks(&failed));
+        // Both at once is the partial undo, and it says both.
+        let both = report(
+            fileop::Kind::Move,
+            fileop::Direction::Undo,
+            &["cannot put /a.txt back"],
+            &["/b.txt went to the system trash"],
+        );
+        assert!(report_speaks(&both));
+    }
+
+    /// Advice must never be mixed into the red list, which is the whole reason the
+    /// engine keeps notes and failures apart (ADR 0017 D8).
+    #[test]
+    fn notes_render_beside_failures_and_never_in_the_danger_colour() {
+        let both = report(
+            fileop::Kind::Move,
+            fileop::Direction::Undo,
+            &["cannot put /a.txt back"],
+            &["/b.txt went to the system trash"],
+        );
+        // Failures first, so a short popup counts away advice rather than a failure.
+        assert_eq!(
+            report_rows(&both),
+            vec![
+                ("cannot put /a.txt back".to_string(), true),
+                ("/b.txt went to the system trash".to_string(), false),
+            ]
+        );
+
+        let danger = theme::palette().pdf;
+        let dim = theme::palette().dim;
+        assert_ne!(danger, dim, "the two readings must be distinguishable");
+        let lines = report_lines(&both, 80, 10);
+        // Row 0 is the summary and row 1 is blank, so the two list rows follow.
+        let fg = |i: usize| lines[i].spans[0].style.fg;
+        assert_eq!(fg(2), Some(danger), "a failure keeps the danger colour");
+        assert_eq!(fg(3), Some(dim), "a note takes the informational one");
+        // The summary above them is the direction-aware sentence, not a kind-only
+        // one that would claim a move had just happened.
+        assert!(lines[0].spans[0].content.contains("undid the move"));
+    }
+
+    /// The popup's own heading has to agree with its body: an undo is titled as an
+    /// undo, and a report with nothing failed is not headed `0 steps failed`.
+    #[test]
+    fn the_report_title_names_the_direction_and_counts_what_it_has() {
+        let undone = report(
+            fileop::Kind::Trash,
+            fileop::Direction::Undo,
+            &[],
+            &["/a.txt went to the system trash"],
+        );
+        assert_eq!(report_title(&undone), "Undo trashing · 1 note");
+        assert_eq!(report_count(&undone), "1 note");
+
+        // A forward run keeps its old title word for word.
+        let failed = report(
+            fileop::Kind::Trash,
+            fileop::Direction::Forward,
+            &["no trash here", "nor here"],
+            &[],
+        );
+        assert_eq!(report_title(&failed), "Move to trash · 2 steps failed");
+        // With both, the failures are what the title sizes: they are what the user
+        // needs the count of.
+        let both = report(
+            fileop::Kind::Move,
+            fileop::Direction::Undo,
+            &["cannot put /a.txt back"],
+            &["/b.txt went to the system trash"],
+        );
+        assert_eq!(report_title(&both), "Undo move · 1 step failed");
+    }
+
+    /// Where the cursor lands after an undo: on the entry that came back, when the
+    /// journal names exactly one, and otherwise nowhere in particular.
+    #[test]
+    fn an_undo_lands_the_cursor_only_on_something_it_restored() {
+        // The case that matters: an undone rename puts the old name back, and the
+        // name the cursor is sitting on is the one the undo just abolished.
+        assert_eq!(
+            undo_landing(&[fileop::Undoable::Moved {
+                from: PathBuf::from("/here/before.txt"),
+                to: PathBuf::from("/here/after.txt"),
+            }]),
+            Some("before.txt".to_string())
+        );
+        // A copy or a create being taken away leaves nothing to select.
+        assert_eq!(
+            undo_landing(&[fileop::Undoable::Created {
+                path: PathBuf::from("/here/made.txt"),
+            }]),
+            None
+        );
+        // A trashed path is not restored in process at all (ADR 0017 D8).
+        assert_eq!(
+            undo_landing(&[fileop::Undoable::Trashed {
+                path: PathBuf::from("/here/gone.txt"),
+            }]),
+            None
+        );
+        // Several steps have no single answer, exactly as `landing_name` has none
+        // for a multi-step paste.
+        assert_eq!(
+            undo_landing(&[
+                fileop::Undoable::Moved {
+                    from: PathBuf::from("/a"),
+                    to: PathBuf::from("/b"),
+                },
+                fileop::Undoable::Moved {
+                    from: PathBuf::from("/c"),
+                    to: PathBuf::from("/d"),
+                },
+            ]),
+            None
+        );
+        assert_eq!(undo_landing(&[]), None);
+    }
+
+    /// `Y` sends absolute paths, one per line, and says only what sucher actually
+    /// did with them (ADR 0017 D4).
+    #[test]
+    fn a_yank_sends_absolute_lines_and_claims_nothing_about_the_clipboard() {
+        let base = Path::new("/home/j/src");
+        assert_eq!(
+            clipboard_text(base, &[PathBuf::from("/a/one.txt")]),
+            "/a/one.txt"
+        );
+        // Several marks arrive as several lines, which is what a paste target on
+        // the far end reads as a list rather than as one impossible filename.
+        assert_eq!(
+            clipboard_text(
+                base,
+                &[PathBuf::from("/a/one.txt"), PathBuf::from("/b/two.txt")]
+            ),
+            "/a/one.txt\n/b/two.txt"
+        );
+        // A relative path is anchored rather than sent as it stands: the promise is
+        // an absolute path, and half of one pastes into the wrong directory.
+        assert_eq!(
+            clipboard_text(base, &[PathBuf::from("rel.txt")]),
+            "/home/j/src/rel.txt"
+        );
+        assert_eq!(clipboard_text(base, &[]), "");
+
+        // OSC 52 is fire-and-forget, so the message reports what was sent and who
+        // decides what becomes of it. Anything claiming the clipboard changed would
+        // be a promise `copy_to_clipboard`'s `Ok` does not make.
+        let one = yank_status(1);
+        assert_eq!(
+            one,
+            "sent 1 path to the terminal via OSC 52 · the terminal decides whether the clipboard takes it"
+        );
+        assert!(yank_status(3).starts_with("sent 3 paths"));
+        assert!(
+            !one.contains("copied") && !one.contains("clipboard now"),
+            "the status must not claim the clipboard changed: {one}"
+        );
+    }
+
     /// A truncated list must never read as a complete one (ADR 0017 D5): the row
     /// that says how many are missing comes out of the same budget.
     #[test]
@@ -6018,17 +6618,21 @@ mod tests {
     /// itself when nothing failed.
     #[test]
     fn operation_status_lines_read_as_sentences() {
+        let forward = fileop::Direction::Forward;
         // ADR 0017 D8: trash points at the system trash rather than implying `U`
         // will bring it back.
         assert_eq!(
-            op_done_status(fileop::Kind::Trash, 3, 2048),
+            op_done_status(fileop::Kind::Trash, forward, 3, 2048),
             "trashed 3 items, 2.0K · restore from the system trash"
         );
         // One item is singular, and a run with no payload bytes drops the size
         // clause instead of printing a `0 B` that says nothing.
-        assert_eq!(op_done_status(fileop::Kind::Create, 1, 0), "created 1 item");
         assert_eq!(
-            op_done_status(fileop::Kind::Copy, 2, 1024),
+            op_done_status(fileop::Kind::Create, forward, 1, 0),
+            "created 1 item"
+        );
+        assert_eq!(
+            op_done_status(fileop::Kind::Copy, forward, 2, 1024),
             "copied 2 items, 1.0K"
         );
 
@@ -6048,6 +6652,8 @@ mod tests {
         assert_eq!(fail_count(4), "4 steps failed");
         assert_eq!(mark_count(1), "1 mark");
         assert_eq!(mark_count(2), "2 marks");
+        assert_eq!(note_count(1), "1 note");
+        assert_eq!(note_count(2), "2 notes");
     }
 
     /// After an operation reloads the listing the cursor keeps its name where it
@@ -6087,9 +6693,6 @@ mod tests {
         // The lowercase native-open motion is untouched: `x` and `X` are two
         // distinct bindings, not one case-folded one.
         assert!(matches!(browse_char('x'), Some(CharAction::OpenExternal)));
-        // `Y` (yank the absolute path over OSC 52) is a later step and must not
-        // have been bound by accident along the way.
-        assert!(browse_char('Y').is_none());
     }
 
     /// A cut and a yank differ only in which transfer they ask the planner for.

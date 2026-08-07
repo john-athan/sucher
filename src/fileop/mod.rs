@@ -8,6 +8,8 @@
 //! ```text
 //!   collect  ->  plan  ->  execute
 //!   (impure)    (pure)     (impure)
+//!                             ^
+//!   journal  ---------------  |  execute_undo
 //! ```
 //!
 //!   * [`collect`] is the one place that looks at the filesystem before an
@@ -21,6 +23,16 @@
 //!   * `execute` (in `exec`) replays a plan on a background thread and streams
 //!     progress, having no decisions left to make.
 //!
+//! Undo is a fourth thing, and it enters at the executor rather than at the top:
+//! it has no paths to collect and nothing to decide, because the [`Journal`] a
+//! finished run left behind already names every step that actually happened
+//! (ADR 0017 D8). [`start_undo`] therefore feeds that journal to the *same*
+//! worker, streaming the same [`Msg`] and ending in the same [`Report`] as a
+//! forward run. That is not tidiness: reversing a cross-device move copies a
+//! whole tree home, so an undo run inline from the key handler would freeze the
+//! browser for as long as the original move took, and the browser would need a
+//! second message pump beside the one it already has.
+//!
 //! The pure seam exists because the difficult part of a file manager is the
 //! decision matrix, not the syscall: name collisions, a destination nested
 //! inside its own source, the user standing in the directory being moved. With
@@ -32,24 +44,27 @@
 //! never a silent partial. A tree past [`MAX_TREE_ITEMS`] or [`MAX_TREE_DEPTH`]
 //! is refused *before* anything is mutated rather than copied halfway.
 
-// The browser wiring (marks, overlays, the message pump) lands in a later phase,
-// so the public surface here is not called from the rest of the crate yet.
-#![allow(dead_code)]
-
 mod exec;
 mod plan;
 
 // The front door: the browser reaches the whole engine through `fileop::`, not
-// through its two private halves. Several of these are only used once the
-// browser wiring lands, hence the allow.
-#[allow(unused_imports)]
+// through its two private halves.
 pub use plan::{plan, Conflict, Kind, Node, NodeKind, Op, Plan, PlanCtx, Refusal, Source, Step};
-// The executor's surface. The `Trash` seam itself stays private to `exec`: the
-// browser asks for an operation, it does not get to choose where deleted things
-// go, which is what keeps ADR 0017 D7 a property of the engine rather than a
+// The executor's surface. Both directions leave through the same door and hand
+// back the same [`Run`], so the browser drives an undo with the pump it already
+// wrote for a paste.
+//
+// The `Trash` and `Rename` seams themselves stay private to `exec`: the browser
+// asks for an operation, it does not get to choose where deleted things go,
+// which is what keeps ADR 0017 D7 a property of the engine rather than a
 // convention the callers have to remember.
-#[allow(unused_imports)]
-pub use exec::{start, undo, Failure, Journal, Msg, Report, Run, UndoReport, Undoable};
+// `Failure` is named only by the browser's tests, which build one to check how a
+// report renders; the browser itself reads `Report::failures` and its fields
+// without ever spelling the type. So the export is real but unused outside test
+// builds, and the narrow `cfg_attr` says exactly that, the same way `format.rs`
+// scopes its allow to the builds where the item genuinely has no caller.
+#[cfg_attr(not(test), allow(unused_imports))]
+pub use exec::{start, start_undo, Direction, Failure, Journal, Msg, Report, Run, Undoable};
 
 use std::ffi::OsString;
 use std::fs::{self, Metadata};
@@ -210,10 +225,14 @@ impl Walk {
             let child_rel = rel.join(&name);
             let size = size_of(&meta, kind);
             *bytes += size;
+            // The node records what a thing is and where it sits, not how big it
+            // is: the executor learns each file's real size from the copy itself,
+            // and the plan's total is already summed into `Source::bytes` here.
+            // Carrying a per-node size as well would be a second number for the
+            // same fact, free to drift and read by nobody.
             nodes.push(Node {
                 rel: child_rel.clone(),
                 kind,
-                size,
             });
             // Only a real directory is descended into. A symlink to a directory
             // is recorded as a link and left alone, which closes symlink loops
@@ -335,14 +354,14 @@ mod tests {
         // The root itself plus its six descendants.
         assert_eq!(source.items, 7);
         assert_eq!(source.bytes, 15);
-        // Directories carry no payload of their own.
+        // Directories carry no payload of their own, which is why the 15 bytes
+        // above are exactly the four files and nothing else.
         let b = source
             .nodes
             .iter()
             .find(|n| n.rel == Path::new("b"))
             .expect("b is enumerated");
         assert_eq!(b.kind, NodeKind::Dir);
-        assert_eq!(b.size, 0);
     }
 
     #[test]

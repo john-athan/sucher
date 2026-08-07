@@ -53,9 +53,6 @@ pub enum NodeKind {
 pub struct Node {
     pub rel: PathBuf,
     pub kind: NodeKind,
-    /// Payload bytes. A directory carries 0: its on-disk length is bookkeeping,
-    /// not content, and the browser's size column already reads it that way.
-    pub size: u64,
 }
 
 /// One top-level selected path, with its subtree fully enumerated.
@@ -625,19 +622,22 @@ mod tests {
 
     /// A source as `collect` would return it for a directory holding `nodes`.
     fn dir(path: &str, nodes: &[(&str, NodeKind, u64)]) -> Source {
+        // The per-node sizes are summed here rather than stored on the nodes,
+        // which is exactly what `collect` does: the total is the fact the plan
+        // needs, and a node only says what it is and where it sits.
+        let bytes = nodes.iter().map(|(_, _, size)| *size).sum();
         let nodes: Vec<Node> = nodes
             .iter()
-            .map(|(rel, kind, size)| Node {
+            .map(|(rel, kind, _)| Node {
                 rel: PathBuf::from(rel),
                 kind: *kind,
-                size: *size,
             })
             .collect();
         Source {
             path: PathBuf::from(path),
             kind: NodeKind::Dir,
             items: 1 + nodes.len(),
-            bytes: nodes.iter().map(|n| n.size).sum(),
+            bytes,
             nodes,
         }
     }

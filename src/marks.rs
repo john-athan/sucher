@@ -11,10 +11,6 @@
 //! the whole of it unit-testable without a temp directory. Everything that
 //! actually touches the disk lives in `fileop`.
 
-// The browser wiring (mark gutter, `Space`/`V`/`Ctrl-a`/`Esc` bindings) lands in
-// a later phase of ADR 0017, so these items have no in-crate caller yet.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

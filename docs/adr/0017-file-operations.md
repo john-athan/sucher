@@ -280,6 +280,22 @@ If the copy home does not complete whole, the destination is left untouched and
 said so, since losing the surviving copy to a partial restore is the one outcome
 undo must never produce.
 
+Undo runs through the **same executor as every forward operation**, on a
+background thread, streaming progress and finishing with the same report the
+browser already knows how to display. Two reasons, and the second is the one that
+settles it. A second, synchronous undo path would be a parallel pipeline for the
+same kind of work, which is the sort of near-duplicate that drifts. And undoing a
+cross-device move copies a whole tree, so running it from the key handler would
+freeze the browser for exactly as long as the original move took: "the common
+case is fast" is the argument ADR 0009 already rejected when it bounded the
+decoders rather than trusting typical input.
+
+A report therefore carries informational **notes** beside its failures, because
+undo has something to say that is neither: which paths only the system trash can
+restore. Keeping those out of the failure list matters, since a user reading a
+red list must not find advice mixed into it. An undo's own journal is empty, so
+undoing an undo is not a thing that can accumulate.
+
 One residue is accepted rather than hidden: the forward cross-device move trashed
 the original, so after an undo the user has their tree restored *and* a stale
 copy of it sitting in the system trash. That is recoverable clutter, not data

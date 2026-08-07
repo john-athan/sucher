@@ -17,6 +17,17 @@
 //! trips a shared cancel flag, exactly as `search::Search` does, so a run cannot
 //! outlive the screen that asked for it.
 //!
+//! [`start_undo`] is the same door for the other direction, and running undo
+//! through it rather than calling it inline is a correctness decision, not
+//! symmetry for its own sake. Reversing a cross-device move copies the whole
+//! tree home, so an undo invoked from the key handler would freeze the UI for
+//! exactly as long as the original move took. "The common case is fast" is the
+//! argument ADR 0009 rejected when it bounded the decoders instead of trusting
+//! typical inputs, and it is rejected here for the same reason. Both directions
+//! therefore stream the same messages and end in the same [`Report`], so the
+//! browser has one pipeline for every mutation rather than a second, differently
+//! shaped one for `U`.
+//!
 //! ## Obligation one: nothing is destroyed
 //! ADR 0017 D7 says delete means trash, and that rule is total. It reaches two
 //! places beyond the `D` binding the ADR text describes:
@@ -53,9 +64,14 @@
 //! fails for exactly the reason the forward one did. Undo transplants back
 //! instead, through the same tree copy the forward move used, so the round trip
 //! is lossless rather than undo being unavailable on the main road.
-
-// The browser wiring (marks, overlays, the message pump) lands in a later phase.
-#![allow(dead_code)]
+//!
+//! ## Obligation three: an undo is a run, and says so
+//! An undo reports through [`Report`] like everything else, with two readings
+//! that only apply to it. Its `journal` is always empty, because an undo
+//! produces nothing to undo again. And the paths it could not restore because
+//! only the system trash holds them are [`Report::notes`], not [`Failure`]s:
+//! nothing went wrong there, and a user scanning a red list for what broke must
+//! not have to read past advice to find it.
 
 use super::collect;
 use super::plan::{Kind, Node, NodeKind, Plan, Step};
@@ -95,17 +111,57 @@ pub enum Msg {
     Done(Report),
 }
 
-/// What one run did. Sent as the final message and kept by the browser so `U`
-/// has something to undo.
+/// What one run did, forward or backward. Sent as the final message and kept by
+/// the browser so `U` has something to undo.
 #[derive(Debug)]
 pub struct Report {
+    /// Which operation this report is about. For an undo it is the kind of the
+    /// operation being reversed, which is why [`Report::direction`] exists
+    /// beside it rather than instead of it.
     pub kind: Kind,
+    pub direction: Direction,
+    /// Filesystem entries touched, except on an undo, where it is the number of
+    /// journal steps actually reversed. That is what the user is owed after
+    /// pressing `U`: a cross-device restore carries a whole tree home, and
+    /// reporting ten thousand items would describe the labour rather than the
+    /// outcome, which was to put one move back.
     pub items: usize,
+    /// Payload bytes moved. An undo counts only what it copied with its own
+    /// hands, because the journal records paths and not sizes (ADR 0017 D8), so
+    /// a restore performed by a rename honestly has nothing to add here.
     pub bytes: u64,
     /// Steps that failed, each with an honest one-line reason. A non-empty
     /// failure list is reported to the user, never swallowed (ADR 0009).
     pub failures: Vec<Failure>,
+    /// Things worth knowing that are not failures, shown beside the failure list
+    /// and never inside it. The separation is the point: a user reading a red
+    /// list of what went wrong must not have to sort advice out of it. Forward
+    /// operations leave this empty, so nothing about them changes.
+    pub notes: Vec<String>,
+    /// What this run did, for `U` to reverse. **Always empty on an undo**, since
+    /// an undo produces nothing to undo again; `dir.rs` skips pushing an empty
+    /// journal onto the bounded stack, and that is what stops `U` from stacking
+    /// undos of undos (ADR 0017 D8).
     pub journal: Journal,
+}
+
+/// Which way a run travelled.
+///
+/// [`Kind`] answers "which operation", and it lives in `plan` because it names
+/// what a [`Plan`] describes; an undo has no plan, so `Kind` cannot be taught to
+/// say "undo of a move" without every match on it growing an arm that means
+/// something of a different order. The direction therefore travels beside the
+/// kind and the browser composes the sentence from both: `Undo` plus
+/// [`Kind::Move`] reads "undid the move of 3 items", where `kind` alone would
+/// have the status line claim a move had just happened when one had just been
+/// taken back.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// A planned operation, replayed by [`execute`].
+    #[default]
+    Forward,
+    /// A journal replayed in reverse by [`execute_undo`].
+    Undo,
 }
 
 /// One thing that did not happen, and the sentence explaining why.
@@ -135,16 +191,6 @@ pub enum Undoable {
     /// Sent to the OS trash. Not undoable in process; recorded so undo can say
     /// so instead of pretending (ADR 0017 D8).
     Trashed { path: PathBuf },
-}
-
-/// What [`undo`] managed. `trashed` is not a failure: it is the honest pointer
-/// to Finder, the XDG trash, or the recycle bin as the restore surface.
-#[derive(Debug, Default)]
-pub struct UndoReport {
-    pub undone: usize,
-    pub failures: Vec<Failure>,
-    /// Paths that only the system trash can restore.
-    pub trashed: Vec<PathBuf>,
 }
 
 /// A live operation. Owns the receiver plus the cancel handle; dropping it (or
@@ -229,6 +275,22 @@ pub fn start(plan: Plan) -> Run {
     Run { rx, cancel }
 }
 
+/// Start replaying `journal`'s inverses on a background thread, returning
+/// immediately. The mirror of [`start`], down to the [`Run`] it hands back.
+///
+/// The journal is taken by value because the worker outlives the caller's frame,
+/// and because a journal that has been undone has no second use: the browser
+/// pops it off the stack to get here (ADR 0017 D8).
+pub fn start_undo(journal: Journal) -> Run {
+    let (tx, rx) = mpsc::channel();
+    let cancel = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&cancel);
+    std::thread::spawn(move || {
+        execute_undo(journal, &OsTrash, os_rename, &tx, &flag);
+    });
+    Run { rx, cancel }
+}
+
 /// The body of the worker, with the two seams and the channel passed in so the
 /// tests can drive it synchronously against a recorder.
 ///
@@ -237,7 +299,7 @@ pub fn start(plan: Plan) -> Run {
 /// abandon the other three files the user asked for.
 fn execute(plan: Plan, trash: &dyn Trash, rename: Rename, tx: &Sender<Msg>, cancel: &AtomicBool) {
     let Plan { kind, steps, .. } = plan;
-    let mut ex = Exec::new(kind, trash, rename, tx, cancel);
+    let mut ex = Exec::new(kind, Direction::Forward, trash, rename, tx, cancel);
     for step in steps {
         // Checked between steps, so a cancelled run leaves a journal of exactly
         // what completed rather than a half-written entry.
@@ -265,24 +327,100 @@ fn execute(plan: Plan, trash: &dyn Trash, rename: Rename, tx: &Sender<Msg>, canc
     ex.finish();
 }
 
-/// The mutable state of one run: the counters the progress messages carry, the
-/// failures collected so far, and the journal being written as things happen.
+/// The undo counterpart of [`execute`], with the same two seams and the same
+/// channel, so an undo is driven by the tests exactly as a forward run is.
+///
+/// Steps run newest first, and the reverse order is what makes an overwrite undo
+/// correctly: the copy that displaced something is taken away before the
+/// displaced entry is reported, so the user is told about the trash after the
+/// thing sitting on top of it is gone.
+///
+/// Each arm reports its own failures rather than returning them, because unlike
+/// a forward step the path to blame differs by case: a refused restore is the
+/// destination's fault, an occupied original is the source's.
+fn execute_undo(
+    journal: Journal,
+    trash: &dyn Trash,
+    rename: Rename,
+    tx: &Sender<Msg>,
+    cancel: &AtomicBool,
+) {
+    let Journal { kind, steps } = journal;
+    let mut ex = Exec::new(kind, Direction::Undo, trash, rename, tx, cancel);
+    // Gathered here rather than on `Exec` because it is folded into exactly one
+    // note at the end and a forward run would otherwise carry a field that is
+    // always empty.
+    let mut trash_only: Vec<PathBuf> = Vec::new();
+    for step in steps.iter().rev() {
+        // Checked between steps exactly as the forward run does, so cancelling
+        // an undo stops it where it stands and still reports what it managed.
+        if ex.cancelled() {
+            break;
+        }
+        match step {
+            Undoable::Moved { from, to } => ex.restore(from, to),
+            // Trashed, never unlinked: a copied directory may have gained files
+            // since it landed, and a recursive unlink of a tree the user has
+            // touched is the surprise this project refuses to ship.
+            Undoable::Created { path } => ex.remove(path),
+            // Not restorable in process, and not attempted: `trash`'s restore
+            // API is not available on every platform, and a half-supported undo
+            // is worse than an honest pointer to Finder (ADR 0017 D8).
+            Undoable::Trashed { path } => trash_only.push(path.clone()),
+        }
+    }
+    if !trash_only.is_empty() {
+        ex.note(trash_only_note(&trash_only));
+    }
+    // `ex.journal` is deliberately never appended to on this path. An undo
+    // produces nothing to undo again, and `dir.rs` skips pushing an empty
+    // journal, so this omission is what stops `U` from stacking undos of undos
+    // (ADR 0017 D8). It is stated here rather than left to fall out of the fact
+    // that no arm above happens to record anything.
+    ex.finish();
+}
+
+/// The one note an undo can produce: the paths it deliberately did not restore.
+///
+/// It names them rather than counting them, because "2 paths are in the trash"
+/// leaves the user to work out which two, and it says where they come back from,
+/// because the honest pointer to Finder is the whole substitute for the in-process
+/// restore ADR 0017 D8 declines to attempt.
+fn trash_only_note(paths: &[PathBuf]) -> String {
+    let named: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    format!(
+        "{} went to the system trash, and that is where {} come back from: sucher does not restore from it",
+        named.join(", "),
+        if paths.len() == 1 { "it does" } else { "they do" }
+    )
+}
+
+/// The mutable state of one run in either direction: the counters the progress
+/// messages carry, the failures and notes collected so far, and the journal being
+/// written as things happen.
+///
+/// One accumulator serves both directions on purpose. An undo that assembled its
+/// own shape and translated it into a [`Report`] at the end would be the second
+/// pipeline this module exists to not have.
 struct Exec<'a> {
     trash: &'a dyn Trash,
     rename: Rename,
     tx: &'a Sender<Msg>,
     cancel: &'a AtomicBool,
+    direction: Direction,
     items: usize,
     bytes: u64,
     current: PathBuf,
     last: Instant,
     failures: Vec<Failure>,
+    notes: Vec<String>,
     journal: Journal,
 }
 
 impl<'a> Exec<'a> {
     fn new(
         kind: Kind,
+        direction: Direction,
         trash: &'a dyn Trash,
         rename: Rename,
         tx: &'a Sender<Msg>,
@@ -293,11 +431,13 @@ impl<'a> Exec<'a> {
             rename,
             tx,
             cancel,
+            direction,
             items: 0,
             bytes: 0,
             current: PathBuf::new(),
             last: Instant::now(),
             failures: Vec::new(),
+            notes: Vec::new(),
             journal: Journal {
                 kind,
                 steps: Vec::new(),
@@ -310,6 +450,12 @@ impl<'a> Exec<'a> {
             path: path.to_path_buf(),
             msg,
         });
+    }
+
+    /// Record something the user should know that is not something that went
+    /// wrong. Kept apart from [`Exec::fail`] all the way to the overlay.
+    fn note(&mut self, text: String) {
+        self.notes.push(text);
     }
 
     /// Account for one entry and let the throttle decide whether to say so.
@@ -339,9 +485,11 @@ impl<'a> Exec<'a> {
         let kind = self.journal.kind;
         let _ = self.tx.send(Msg::Done(Report {
             kind,
+            direction: self.direction,
             items: self.items,
             bytes: self.bytes,
             failures: self.failures,
+            notes: self.notes,
             journal: self.journal,
         }));
     }
@@ -485,6 +633,133 @@ impl<'a> Exec<'a> {
         self.tick(&step.src, step.items, step.bytes);
         Ok(())
     }
+
+    /// The inverse of [`Undoable::Moved`]: put `to` back at `from`.
+    fn restore(&mut self, from: &Path, to: &Path) {
+        // Something took the original name back while the operation was on
+        // screen. Say so rather than clobbering it, which would make undo itself
+        // the destructive act.
+        if fs::symlink_metadata(from).is_ok() {
+            let msg = format!(
+                "{} exists again, so {} was left where it is",
+                from.display(),
+                to.display()
+            );
+            self.fail(from, msg);
+            return;
+        }
+        match (self.rename)(to, from) {
+            // One journal step reversed, and no bytes to claim: a rename moves a
+            // whole subtree without reading one.
+            Ok(()) => self.tick(from, 1, 0),
+            // The forward move already fell back to a transplant for this exact
+            // reason, so the way back has to as well.
+            Err(e) if is_cross_device(&e) => self.carry_back(to, from),
+            Err(e) => {
+                let msg = format!(
+                    "cannot put {} back to {}: {e}",
+                    to.display(),
+                    from.display()
+                );
+                self.fail(to, msg);
+            }
+        }
+    }
+
+    /// The inverse of [`Undoable::Created`]: take away what sucher itself brought
+    /// into being, by trashing it rather than unlinking it (ADR 0017 D7).
+    fn remove(&mut self, path: &Path) {
+        let sent = self.trash.send(path);
+        match sent {
+            Ok(()) => self.tick(path, 1, 0),
+            Err(msg) => self.fail(path, msg),
+        }
+    }
+
+    /// Undo a cross-device move by running ADR 0017 D6's transplant backwards:
+    /// enumerate what is at `to`, copy it to `from`, then trash `to`.
+    ///
+    /// Without this, undo would be unavailable on exactly the mounts D6 was
+    /// written for. On an S3, GCS or rclone FUSE mount every move is a
+    /// cross-device move, so the reverse `fs::rename` fails for the very reason
+    /// the forward one did, and the user would be left with the file at `to` and
+    /// the original in the trash. Undo is the safety net for the operation most
+    /// likely to have been a mistake, so it cannot be missing from the main road.
+    ///
+    /// `collect` does the enumeration, the same stage the forward move used, so
+    /// undo inherits its bounds and its refusal to follow symlinks rather than
+    /// growing a second walker that could drift out of agreement with the first.
+    fn carry_back(&mut self, to: &Path, from: &Path) {
+        let source = match collect(std::slice::from_ref(&to.to_path_buf())) {
+            Ok(found) => match found.sources.into_iter().next() {
+                Some(source) => source,
+                // `collect` reports a vanished path as missing rather than as an
+                // error, so an empty source list means there is nothing left
+                // there.
+                None => {
+                    let msg = format!(
+                        "{} is no longer there, so there is nothing to put back",
+                        to.display()
+                    );
+                    self.fail(to, msg);
+                    return;
+                }
+            },
+            Err(refusal) => {
+                let msg = format!("cannot read {} to put it back: {refusal}", to.display());
+                self.fail(to, msg);
+                return;
+            }
+        };
+
+        let carried = copy_tree(
+            source.kind,
+            to,
+            from,
+            &source.nodes,
+            &mut CarryBack(&mut *self),
+        );
+        match carried {
+            Ok(true) => {}
+            // The same rule as the forward move, in the other direction: losing
+            // the surviving copy to a partial duplicate is the one outcome undo
+            // must never produce, so `to` is left exactly where it is. The
+            // entries that did not land have already reported themselves through
+            // the sink; this line says what their sum means.
+            Ok(false) => {
+                let msg = format!(
+                    "{} did not copy back whole, so {} was left alone",
+                    from.display(),
+                    to.display()
+                );
+                self.fail(from, msg);
+                return;
+            }
+            Err(msg) => {
+                self.fail(from, msg);
+                return;
+            }
+        }
+
+        // The restore succeeded the moment the tree landed back at `from`. What
+        // happens to the leftover copy cannot retract that, so it is counted here
+        // and any trouble with the copy is reported separately below.
+        self.tick(from, 1, 0);
+        let removed = self.trash.send(to);
+        if let Err(msg) = removed {
+            let msg = format!(
+                "{} was restored, but the copy left at {} could not be removed: {msg}",
+                from.display(),
+                to.display()
+            );
+            self.fail(to, msg);
+        }
+        // Deliberately not a note. The notes list means "only the system trash
+        // can bring this back", which is a thing to tell the user about. The copy
+        // trashed here is the duplicate the undo exists to remove, and pointing
+        // the user at Finder to restore it would invite them to undo their own
+        // undo.
+    }
 }
 
 /// Where a tree copy reports what it did.
@@ -516,6 +791,34 @@ impl TreeSink for Exec<'_> {
 
     fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
+    }
+}
+
+/// The sink undo's reverse transplant reports through.
+///
+/// It borrows the run rather than accumulating on its own, which is what puts a
+/// carry back on the same footing as a forward copy: the progress line moves
+/// while a large tree is coming home, and the cancel flag is honoured *inside*
+/// the tree rather than only between journal steps. Both matter for the same
+/// reason the transplant exists at all, since on a FUSE mount the tree being
+/// carried back may be the whole operation and `Esc` has to be able to reach it.
+///
+/// `landed` deliberately does not count items. An undo's [`Report::items`] is
+/// the number of journal steps it reversed, and folding one transplant's ten
+/// thousand entries into it would report the labour instead of the outcome.
+struct CarryBack<'a, 'e>(&'e mut Exec<'a>);
+
+impl TreeSink for CarryBack<'_, '_> {
+    fn landed(&mut self, path: &Path, bytes: u64) {
+        self.0.tick(path, 0, bytes);
+    }
+
+    fn failed(&mut self, path: &Path, msg: String) {
+        self.0.fail(path, msg);
+    }
+
+    fn cancelled(&self) -> bool {
+        self.0.cancelled()
     }
 }
 
@@ -670,177 +973,6 @@ fn raw_cross_device(_e: &io::Error) -> bool {
     false
 }
 
-/// Replay a journal's inverses, newest first (ADR 0017 D8).
-pub fn undo(journal: &Journal) -> UndoReport {
-    undo_with(journal, &OsTrash, os_rename)
-}
-
-/// The body of [`undo`] with both seams passed in, so the tests can assert what
-/// was handed to the trash without anything landing in the developer's own, and
-/// can reach the cross-device path that a single temp directory cannot produce.
-///
-/// Reverse order is what makes an overwrite undo correctly: the copy that
-/// displaced something is taken away before the displaced entry is reported, so
-/// the user is told about the trash after the thing on top of it is gone.
-fn undo_with(journal: &Journal, trash: &dyn Trash, rename: Rename) -> UndoReport {
-    let mut report = UndoReport::default();
-    for step in journal.steps.iter().rev() {
-        match step {
-            Undoable::Moved { from, to } => {
-                // Something took the original name back while the operation was
-                // on screen. Say so rather than clobbering it, which would make
-                // undo itself the destructive act.
-                if fs::symlink_metadata(from).is_ok() {
-                    report.failures.push(Failure {
-                        path: from.clone(),
-                        msg: format!(
-                            "{} exists again, so {} was left where it is",
-                            from.display(),
-                            to.display()
-                        ),
-                    });
-                    continue;
-                }
-                match rename(to, from) {
-                    Ok(()) => report.undone += 1,
-                    // The forward move already fell back to a transplant for
-                    // this exact reason, so the way back has to as well.
-                    Err(e) if is_cross_device(&e) => carry_back(to, from, trash, &mut report),
-                    Err(e) => report.failures.push(Failure {
-                        path: to.clone(),
-                        msg: format!(
-                            "cannot put {} back to {}: {e}",
-                            to.display(),
-                            from.display()
-                        ),
-                    }),
-                }
-            }
-            // Trashed, never unlinked: a copied directory may have gained files
-            // since it landed, and a recursive unlink of a tree the user has
-            // touched is the surprise this project refuses to ship.
-            Undoable::Created { path } => match trash.send(path) {
-                Ok(()) => report.undone += 1,
-                Err(msg) => report.failures.push(Failure {
-                    path: path.clone(),
-                    msg,
-                }),
-            },
-            // Not restorable in process, and not attempted: `trash`'s restore
-            // API is not available on every platform, and a half-supported undo
-            // is worse than an honest pointer to Finder (ADR 0017 D8).
-            Undoable::Trashed { path } => report.trashed.push(path.clone()),
-        }
-    }
-    report
-}
-
-/// The sink undo's reverse transplant reports through. There is no progress
-/// channel to feed and nothing to cancel, so all it keeps is the per-entry
-/// failures that make an incomplete copy back reportable.
-#[derive(Default)]
-struct Carried {
-    failures: Vec<Failure>,
-}
-
-impl TreeSink for Carried {
-    fn landed(&mut self, _path: &Path, _bytes: u64) {}
-
-    fn failed(&mut self, path: &Path, msg: String) {
-        self.failures.push(Failure {
-            path: path.to_path_buf(),
-            msg,
-        });
-    }
-}
-
-/// Undo a cross-device move by running ADR 0017 D6's transplant backwards:
-/// enumerate what is at `to`, copy it to `from`, then trash `to`.
-///
-/// Without this, undo would be unavailable on exactly the mounts D6 was written
-/// for. On an S3, GCS or rclone FUSE mount every move is a cross-device move, so
-/// the reverse `fs::rename` fails for the very reason the forward one did, and
-/// the user would be left with the file at `to` and the original in the trash.
-/// Undo is the safety net for the operation most likely to have been a mistake,
-/// so it cannot be missing from the main road.
-///
-/// `collect` does the enumeration, the same stage the forward move used, so undo
-/// inherits its bounds and its refusal to follow symlinks rather than growing a
-/// second walker that could drift out of agreement with the first.
-fn carry_back(to: &Path, from: &Path, trash: &dyn Trash, report: &mut UndoReport) {
-    let source = match collect(std::slice::from_ref(&to.to_path_buf())) {
-        Ok(found) => match found.sources.into_iter().next() {
-            Some(source) => source,
-            // `collect` reports a vanished path as missing rather than as an
-            // error, so an empty source list means there is nothing left there.
-            None => {
-                report.failures.push(Failure {
-                    path: to.to_path_buf(),
-                    msg: format!(
-                        "{} is no longer there, so there is nothing to put back",
-                        to.display()
-                    ),
-                });
-                return;
-            }
-        },
-        Err(refusal) => {
-            report.failures.push(Failure {
-                path: to.to_path_buf(),
-                msg: format!("cannot read {} to put it back: {refusal}", to.display()),
-            });
-            return;
-        }
-    };
-
-    let mut carried = Carried::default();
-    match copy_tree(source.kind, to, from, &source.nodes, &mut carried) {
-        Ok(true) => {}
-        // The same rule as the forward move, in the other direction: losing the
-        // surviving copy to a partial duplicate is the one outcome undo must
-        // never produce, so `to` is left exactly where it is.
-        Ok(false) => {
-            report.failures.push(Failure {
-                path: from.to_path_buf(),
-                msg: format!(
-                    "{} did not copy back whole, so {} was left alone",
-                    from.display(),
-                    to.display()
-                ),
-            });
-            report.failures.append(&mut carried.failures);
-            return;
-        }
-        Err(msg) => {
-            report.failures.push(Failure {
-                path: from.to_path_buf(),
-                msg,
-            });
-            return;
-        }
-    }
-
-    // The restore succeeded the moment the tree landed back at `from`. What
-    // happens to the leftover copy cannot retract that, so it is counted here
-    // and any trouble with the copy is reported separately below.
-    report.undone += 1;
-    if let Err(msg) = trash.send(to) {
-        report.failures.push(Failure {
-            path: to.to_path_buf(),
-            msg: format!(
-                "{} was restored, but the copy left at {} could not be removed: {msg}",
-                from.display(),
-                to.display()
-            ),
-        });
-    }
-    // Deliberately not added to `report.trashed`. That list means "only the
-    // system trash can bring this back", which is a thing to tell the user
-    // about. The copy trashed here is the duplicate the undo exists to remove,
-    // and pointing the user at Finder to restore it would invite them to undo
-    // their own undo.
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -940,12 +1072,9 @@ mod tests {
         Err(io::Error::from(io::ErrorKind::PermissionDenied))
     }
 
-    /// Run a plan synchronously against a substituted trash, then drain the
-    /// channel exactly as the UI loop would.
-    fn drive_with(plan: Plan, trash: &dyn Trash, rename: Rename, cancel: &AtomicBool) -> Driven {
-        let (tx, rx) = mpsc::channel();
-        execute(plan, trash, rename, &tx, cancel);
-        drop(tx);
+    /// Drain a finished worker's channel exactly as the UI loop would. Shared by
+    /// both directions, because both directions send the same messages.
+    fn drained(rx: Receiver<Msg>) -> Driven {
         let mut progress = Vec::new();
         let mut report = None;
         for msg in rx.try_iter() {
@@ -964,6 +1093,15 @@ mod tests {
         }
     }
 
+    /// Run a plan synchronously against a substituted trash, then drain the
+    /// channel exactly as the UI loop would.
+    fn drive_with(plan: Plan, trash: &dyn Trash, rename: Rename, cancel: &AtomicBool) -> Driven {
+        let (tx, rx) = mpsc::channel();
+        execute(plan, trash, rename, &tx, cancel);
+        drop(tx);
+        drained(rx)
+    }
+
     fn drive(plan: Plan, trash: &dyn Trash, cancel: &AtomicBool) -> Driven {
         drive_with(plan, trash, os_rename, cancel)
     }
@@ -972,10 +1110,30 @@ mod tests {
         drive(plan, trash, &AtomicBool::new(false))
     }
 
+    /// The undo mirror of [`drive_with`], and the only way the tests reach an
+    /// undo now that it runs on the very same worker as a forward operation.
+    fn drive_undo(
+        journal: Journal,
+        trash: &dyn Trash,
+        rename: Rename,
+        cancel: &AtomicBool,
+    ) -> Driven {
+        let (tx, rx) = mpsc::channel();
+        execute_undo(journal, trash, rename, &tx, cancel);
+        drop(tx);
+        drained(rx)
+    }
+
+    /// Undo with a chosen rename and nothing cancelling it.
+    fn undone_with(journal: Journal, trash: &dyn Trash, rename: Rename) -> Driven {
+        drive_undo(journal, trash, rename, &AtomicBool::new(false))
+    }
+
     /// Undo against a substituted trash and the real rename, which is what every
-    /// same-device case wants.
-    fn undone(journal: &Journal, trash: &dyn Trash) -> UndoReport {
-        undo_with(journal, trash, os_rename)
+    /// same-device case wants. Narrowed to the report, because these cases are
+    /// about the outcome rather than about the stream that carried it.
+    fn undone(journal: Journal, trash: &dyn Trash) -> Report {
+        undone_with(journal, trash, os_rename).report
     }
 
     fn write(path: &Path, body: &str) {
@@ -1042,6 +1200,10 @@ mod tests {
 
         assert_eq!(read(&dst.join("a.txt")), "hello");
         assert!(out.report.failures.is_empty(), "{:?}", out.report.failures);
+        // A forward run leaves `notes` empty, so nothing about it changed when
+        // undo joined the same pipeline.
+        assert!(out.report.notes.is_empty());
+        assert_eq!(out.report.direction, Direction::Forward);
         assert_eq!(out.report.items, 1);
         assert_eq!(out.report.bytes, 5);
         assert_eq!(
@@ -1358,9 +1520,9 @@ mod tests {
             }],
         };
         let rec = Recorder::new();
-        let report = undone(&journal, &rec);
+        let report = undone(journal, &rec);
 
-        assert_eq!(report.undone, 1);
+        assert_eq!(report.items, 1);
         assert!(report.failures.is_empty(), "{:?}", report.failures);
         assert_eq!(read(&from), "moved");
         assert!(!to.exists());
@@ -1381,9 +1543,9 @@ mod tests {
                 to: to.clone(),
             }],
         };
-        let report = undone(&journal, &Recorder::new());
+        let report = undone(journal, &Recorder::new());
 
-        assert_eq!(report.undone, 0);
+        assert_eq!(report.items, 0);
         assert_eq!(report.failures.len(), 1);
         assert_eq!(report.failures[0].path, from);
         assert_eq!(read(&from), "someone else got here first");
@@ -1401,12 +1563,12 @@ mod tests {
             steps: vec![Undoable::Created { path: made.clone() }],
         };
         let rec = Recorder::new();
-        let report = undone(&journal, &rec);
+        let report = undone(journal, &rec);
 
-        assert_eq!(report.undone, 1);
+        assert_eq!(report.items, 1);
         // Trashed, never recursively unlinked: the tree may have gained files.
         assert_eq!(rec.paths(), vec![made]);
-        assert!(report.trashed.is_empty());
+        assert!(report.notes.is_empty(), "nothing here is trash-only");
     }
 
     #[test]
@@ -1419,13 +1581,21 @@ mod tests {
             steps: vec![Undoable::Trashed { path: gone.clone() }],
         };
         let rec = Recorder::new();
-        let report = undone(&journal, &rec);
+        let report = undone(journal, &rec);
 
         // ADR 0017 D8: the system trash is the restore surface, and undo says so
         // instead of claiming an undo it cannot perform.
-        assert_eq!(report.undone, 0);
+        assert_eq!(report.items, 0);
+        // A pointer to Finder is advice, not something that went wrong, so it
+        // travels as a note and the failure list stays clean.
         assert!(report.failures.is_empty());
-        assert_eq!(report.trashed, vec![gone]);
+        assert_eq!(report.notes.len(), 1, "{:?}", report.notes);
+        assert!(
+            report.notes[0].contains(&gone.display().to_string())
+                && report.notes[0].contains("system trash"),
+            "the note neither names the path nor says where it comes back from: {}",
+            report.notes[0]
+        );
         assert!(rec.paths().is_empty());
     }
 
@@ -1448,13 +1618,14 @@ mod tests {
             ],
         };
         let rec = Recorder::new();
-        let report = undone(&journal, &rec);
+        let report = undone(journal, &rec);
 
         // The copy is trashed first, and only then is the displaced entry
         // reported as trash-only. Reverse order is what makes that true.
         assert_eq!(rec.paths(), vec![created]);
-        assert_eq!(report.trashed, vec![displaced]);
-        assert_eq!(report.undone, 1);
+        assert_eq!(report.notes.len(), 1);
+        assert!(report.notes[0].contains(&displaced.display().to_string()));
+        assert_eq!(report.items, 1);
     }
 
     #[test]
@@ -1578,12 +1749,18 @@ mod tests {
             }],
         };
         let rec = Recorder::new();
-        let report = undo_with(&journal, &rec, always_cross_device);
+        let out = undone_with(journal, &rec, always_cross_device);
+        let report = &out.report;
 
         // ADR 0017 D6 runs backwards: the reverse rename cannot work for exactly
         // the reason the forward one could not, so undo transplants instead.
         assert!(report.failures.is_empty(), "{:?}", report.failures);
-        assert_eq!(report.undone, 1);
+        // One journal step reversed, not one per entry carried home: the tree is
+        // the labour, the move is the outcome.
+        assert_eq!(report.items, 1);
+        // The entries came home through the progress stream on the way, so a
+        // long carry back is watchable rather than a frozen frame.
+        assert_eq!(report.bytes, 5);
         assert_eq!(read(&from.join("a.txt")), "aa");
         assert_eq!(read(&from.join("sub/b.txt")), "bbb");
         // The round trip is lossless, links included (ADR 0017 D5).
@@ -1603,7 +1780,7 @@ mod tests {
         assert_eq!(rec.paths(), vec![to]);
         // Nothing here is trash-only: the user has their tree back at `from`,
         // and pointing them at Finder for the duplicate would mislead.
-        assert!(report.trashed.is_empty());
+        assert!(report.notes.is_empty());
     }
 
     #[test]
@@ -1622,11 +1799,11 @@ mod tests {
             }],
         };
         let rec = Recorder::new();
-        let report = undo_with(&journal, &rec, always_cross_device);
+        let report = undone_with(journal, &rec, always_cross_device).report;
 
         // The occupancy guard runs before the rename is even attempted, so the
         // fallback cannot be a way around it.
-        assert_eq!(report.undone, 0);
+        assert_eq!(report.items, 0);
         assert_eq!(report.failures.len(), 1);
         assert_eq!(report.failures[0].path, from);
         assert_eq!(read(&from.join("a.txt")), "someone else got here first");
@@ -1657,11 +1834,11 @@ mod tests {
             }],
         };
         let rec = Recorder::new();
-        let report = undo_with(&journal, &rec, always_cross_device);
+        let report = undone_with(journal, &rec, always_cross_device).report;
         unseal(&to);
         unseal(&from);
 
-        assert_eq!(report.undone, 0, "an incomplete restore is not a restore");
+        assert_eq!(report.items, 0, "an incomplete restore is not a restore");
         assert!(
             report
                 .failures
@@ -1692,11 +1869,11 @@ mod tests {
             }],
         };
         let rec = Recorder::failing();
-        let report = undo_with(&journal, &rec, always_cross_device);
+        let report = undone_with(journal, &rec, always_cross_device).report;
 
         // The user's file is back where it belongs, so the restore succeeded.
         // The leftover duplicate is reported rather than counted against it.
-        assert_eq!(report.undone, 1);
+        assert_eq!(report.items, 1);
         assert_eq!(read(&from), "moved");
         assert_eq!(report.failures.len(), 1);
         assert_eq!(report.failures[0].path, to);
@@ -1719,14 +1896,168 @@ mod tests {
             }],
         };
         let rec = Recorder::new();
-        let report = undo_with(&journal, &rec, always_denied);
+        let report = undone_with(journal, &rec, always_denied).report;
 
         // The fallback is not a catch-all: a permission refusal must surface as
         // itself, not turn into a copy plus a trashed original.
-        assert_eq!(report.undone, 0);
+        assert_eq!(report.items, 0);
         assert_eq!(report.failures.len(), 1);
         assert!(!from.exists(), "nothing was copied back");
         assert_eq!(read(&to), "moved");
         assert!(rec.paths().is_empty());
+    }
+
+    /// Poll a live [`Run`] the way the browser's pump does, until its one
+    /// [`Msg::Done`] arrives. Bounded, so a worker that never finishes fails the
+    /// test rather than hanging the suite.
+    fn awaited(run: Run) -> Report {
+        for _ in 0..2_000 {
+            for msg in run.drain() {
+                if let Msg::Done(report) = msg {
+                    return report;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        panic!("the worker never sent Done");
+    }
+
+    #[test]
+    fn start_undo_streams_a_done_that_names_what_it_reversed() {
+        let tmp = TempDir::new().expect("tempdir");
+        let from = tmp.path().join("src/a.txt");
+        let to = tmp.path().join("dst/a.txt");
+        write(&to, "moved");
+        fs::create_dir_all(from.parent().expect("parent")).expect("src");
+
+        // A `Moved` step only: this is the one test that goes through the real
+        // [`OsTrash`], and no test may put a fixture in the developer's Finder
+        // trash, so nothing here is allowed to reach the trash seam.
+        let journal = Journal {
+            kind: Kind::Move,
+            steps: vec![Undoable::Moved {
+                from: from.clone(),
+                to: to.clone(),
+            }],
+        };
+        let report = awaited(start_undo(journal));
+
+        // One pipeline for every mutation: the same channel, the same single
+        // `Done`, the same `Report` the browser already folds after a paste.
+        assert_eq!(report.direction, Direction::Undo);
+        // The kind is the operation that was reversed, which is what lets the
+        // status line say "undid the move" rather than "moved".
+        assert_eq!(report.kind, Kind::Move);
+        assert_eq!(report.items, 1, "one journal step was put back");
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(report.notes.is_empty());
+        assert_eq!(read(&from), "moved");
+        assert!(!to.exists());
+    }
+
+    #[test]
+    fn an_undo_reports_an_empty_journal_so_u_cannot_stack_undos() {
+        let tmp = TempDir::new().expect("tempdir");
+        let from = tmp.path().join("src/a.txt");
+        let to = tmp.path().join("dst/a.txt");
+        let made = tmp.path().join("dst/made.txt");
+        let gone = tmp.path().join("dst/gone.txt");
+        write(&to, "moved");
+        write(&made, "created");
+        fs::create_dir_all(from.parent().expect("parent")).expect("src");
+
+        let journal = Journal {
+            kind: Kind::Move,
+            steps: vec![
+                Undoable::Moved {
+                    from: from.clone(),
+                    to: to.clone(),
+                },
+                Undoable::Created { path: made },
+                Undoable::Trashed { path: gone },
+            ],
+        };
+        let rec = Recorder::new();
+        let report = undone(journal, &rec);
+
+        // Every arm of the undo did something, and not one of them recorded a
+        // step. ADR 0017 D8: an undo produces nothing to undo again, and the
+        // empty journal is what `dir.rs` declines to push onto the stack.
+        assert_eq!(report.items, 2);
+        assert!(
+            report.journal.steps.is_empty(),
+            "an undo left something for `U` to undo: {:?}",
+            report.journal.steps
+        );
+        // The journal still carries the kind, because an empty journal is still
+        // a journal of a move.
+        assert_eq!(report.journal.kind, Kind::Move);
+    }
+
+    #[test]
+    fn a_trash_only_path_arrives_as_a_note_and_never_joins_the_failures() {
+        let tmp = TempDir::new().expect("tempdir");
+        let made = tmp.path().join("copied.txt");
+        let gone = tmp.path().join("gone.txt");
+        write(&made, "created");
+
+        let journal = Journal {
+            kind: Kind::Copy,
+            steps: vec![
+                Undoable::Trashed { path: gone.clone() },
+                Undoable::Created { path: made.clone() },
+            ],
+        };
+        // The trash refuses, so this undo has a genuine failure to report as
+        // well as a note. Keeping both in one run is the point: the note must
+        // not blend into the red list beside it.
+        let report = undone(journal, &Recorder::failing());
+
+        assert_eq!(report.failures.len(), 1, "{:?}", report.failures);
+        assert_eq!(report.failures[0].path, made);
+        assert_eq!(report.notes.len(), 1, "{:?}", report.notes);
+        assert!(report.notes[0].contains(&gone.display().to_string()));
+        assert!(
+            !report
+                .failures
+                .iter()
+                .any(|f| f.msg.contains(&gone.display().to_string())),
+            "the trash-only path leaked into the failures: {:?}",
+            report.failures
+        );
+        // Nothing was reversed: the one reversible step could not be taken.
+        assert_eq!(report.items, 0);
+    }
+
+    #[test]
+    fn cancelling_an_undo_stops_it_and_reports_what_it_managed() {
+        let tmp = TempDir::new().expect("tempdir");
+        let a = tmp.path().join("a.txt");
+        let b = tmp.path().join("b.txt");
+        let c = tmp.path().join("c.txt");
+        write(&a, "a");
+        write(&b, "b");
+        write(&c, "c");
+
+        let journal = Journal {
+            kind: Kind::Copy,
+            steps: vec![
+                Undoable::Created { path: a.clone() },
+                Undoable::Created { path: b.clone() },
+                Undoable::Created { path: c.clone() },
+            ],
+        };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let rec = Recorder::tripping(Arc::clone(&cancel));
+        let out = drive_undo(journal, &rec, os_rename, &cancel);
+
+        // Newest first, so `c` is the one that got away before `Esc` landed.
+        assert_eq!(rec.paths(), vec![c], "stopped after the first step");
+        assert_eq!(out.report.items, 1, "an undo reports what it managed");
+        assert!(a.exists() && b.exists(), "the rest was left alone");
+        assert!(out.report.journal.steps.is_empty());
+        // A final unthrottled Progress still precedes Done, so a cancelled undo
+        // leaves the status line on its real total rather than mid-count.
+        assert_eq!(out.progress.last().map(|p| p.0), Some(1));
     }
 }

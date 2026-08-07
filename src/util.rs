@@ -3,7 +3,7 @@
 // implementation rather than per-module copies that could drift.
 
 use quick_xml::events::{BytesRef, BytesText};
-use std::io::{self, ErrorKind, Read};
+use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime};
@@ -211,6 +211,136 @@ pub fn is_safe_url(url: &str) -> bool {
     }
     let lower = url.to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+}
+
+/// Hard cap on the bytes of text sucher will hand to the terminal for the system
+/// clipboard (ADR 0017 D4). Terminals bound the length of an OSC 52 payload and
+/// the ceiling is neither standardised nor discoverable: figures around 100 KB
+/// are common and several implementations are far stricter, so the only safe
+/// posture is to stay well under the smallest figure anyone reports. 64 KiB of
+/// text becomes ~87 KB once base64 has expanded it by 4/3, which still sits
+/// under the common ~100 KB figure, and it is three orders of magnitude more
+/// than the feature actually needs: a `Y` on a thousand marked entries with
+/// 64-character absolute paths is ~64 KB. Past the cap the yank is refused with
+/// a named error and nothing is written, because a truncated payload would put
+/// half a path on the clipboard and the user would paste it without noticing.
+/// That is ADR 0009's "an honest error, never a silent truncation" pointed
+/// outward.
+pub const MAX_CLIPBOARD_BYTES: usize = 64 * 1024;
+
+/// Ask the terminal to put `text` on the **system** clipboard using OSC 52, the
+/// escape sequence a terminal answers on the user's behalf (ADR 0017 D4). This
+/// is the outbound sibling of [`open_in_native_app`]: both reach an OS facility
+/// on the strength of something the user just did, and both are deliberately
+/// separate entry points rather than one general "talk to the outside" helper
+/// (ADR 0014). OSC 52 is used in preference to a clipboard crate because it
+/// costs no dependency and, being a sequence the *terminal* interprets, it puts
+/// the text on the clipboard of the machine the human is sitting at even when
+/// sucher itself is running over ssh, which is the same reasoning that put the
+/// kitty graphics and text-sizing protocols in this tool.
+///
+/// **`Ok` does not mean the clipboard changed.** OSC 52 is fire-and-forget: the
+/// sequence has no reply, and a terminal is free to ignore it, as many do by
+/// default for the obvious reason that a program which can write the clipboard
+/// silently is a program that can overwrite whatever was on it (tmux needs
+/// `set -g set-clipboard on`, and some terminals require a setting or refuse
+/// outright). `Ok(())` therefore means exactly "the sequence was written to
+/// stdout and flushed", and callers must not phrase their status message as a
+/// confirmation. Wording that stays honest: `yanked 3 paths via OSC 52` or
+/// `sent 3 paths to the terminal clipboard`, never `copied to clipboard`.
+///
+/// Text over [`MAX_CLIPBOARD_BYTES`] is refused rather than truncated; see that
+/// constant for why the cap exists and where it sits.
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    let seq = osc52_sequence(text)?;
+    // Straight to stdout with an explicit flush, and *not* through
+    // `crossterm::execute!` as the mouse-capture guard in `dir.rs` does. That
+    // macro exists to render crossterm's typed commands (`EnableMouseCapture`
+    // and friends) into whatever the platform needs; OSC 52 has no such command,
+    // so going through it would mean wrapping our own literal bytes in
+    // `style::Print` and gaining nothing but indirection over the bytes we most
+    // want to read at the call site. The file's other raw sequences (the OSC 11
+    // background query in `config.rs`, the OSC 66 sizing probe in `plain.rs`)
+    // already write themselves this way, so this matches the house pattern for
+    // "a sequence crossterm has no name for".
+    //
+    // The flush is not tidiness. The browser calls this from inside a ratatui
+    // alternate screen with raw mode on, and returns to a draw loop that may not
+    // touch stdout for a while; a sequence still sitting in the buffer has done
+    // nothing at all, and the status line would already be claiming otherwise.
+    let mut out = io::stdout().lock();
+    out.write_all(&seq).map_err(|e| e.to_string())?;
+    out.flush().map_err(|e| e.to_string())
+}
+
+/// Build the exact OSC 52 byte sequence for `text`, or refuse it for being past
+/// [`MAX_CLIPBOARD_BYTES`]. Split out from [`copy_to_clipboard`] so that
+/// everything decided (the framing, the selection, the encoding, the size
+/// refusal) is pure and asserted on byte-for-byte in tests, leaving only the
+/// write itself impure and therefore untested rather than untestable.
+///
+/// The shape is `ESC ] 52 ; c ; <base64> BEL`. The `c` field names the target
+/// selection, and `c` is *clipboard*: the one a plain paste (Cmd/Ctrl-V) reads.
+/// The alternatives (`p` primary, `s` select, `0`-`7` cut buffers) are X11-era
+/// selections that most users never paste from and that macOS has no notion of,
+/// so for "the user pressed yank and expects to paste it anywhere", `c` is the
+/// only selection that means what they meant.
+///
+/// Nothing from `text` can escape the sequence, and that is a property of the
+/// encoding rather than an assumption about the input: base64 emits only
+/// `A-Za-z0-9+/=`, so a path containing an ESC, a BEL, an ST, or an entire
+/// forged OSC command survives as ordinary alphabet characters and cannot
+/// terminate this sequence early or start a new one. Sucher therefore never has
+/// to sanitise a filename on the way out.
+fn osc52_sequence(text: &str) -> Result<Vec<u8>, String> {
+    if text.len() > MAX_CLIPBOARD_BYTES {
+        return Err(format!(
+            "selection is {}, past the {} the terminal clipboard accepts",
+            human_size(text.len() as u64),
+            human_size(MAX_CLIPBOARD_BYTES as u64)
+        ));
+    }
+    let mut seq = Vec::with_capacity(text.len().div_ceil(3) * 4 + 8);
+    seq.extend_from_slice(b"\x1b]52;c;");
+    seq.extend_from_slice(base64_encode(text.as_bytes()).as_bytes());
+    // BEL terminates the string. ST (`ESC \`) is the other legal terminator, but
+    // BEL is the one every OSC 52 implementation accepts, and it is what the
+    // rest of sucher's OSC traffic uses (`config.rs`'s OSC 11 query).
+    seq.push(0x07);
+    Ok(seq)
+}
+
+/// Encode `bytes` as standard base64 (RFC 4648: the `A-Za-z0-9+/` alphabet with
+/// `=` padding). Written out rather than taken from a crate, because thirty
+/// lines of arithmetic is not worth a dependency in a tool that ships its own
+/// offline guarantee; `ipynb.rs` already carries the decoding direction for the
+/// same reason. PURE, and unit-tested against the RFC's vectors.
+///
+/// It encodes **bytes**, never chars: input arrives as `&[u8]`, so a caller
+/// passing `text.as_bytes()` gets its UTF-8 encoded a byte at a time, which is
+/// what a terminal on the far end of an ssh session will decode back.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        // Pack up to three bytes into a 24-bit register, zero-filling whatever a
+        // short final chunk is missing, then read it back out as four 6-bit
+        // groups. The zero fill is why a truncated group still lands on a real
+        // alphabet character; the padding below is what records how much of it
+        // was real.
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(chunk.get(1).copied().unwrap_or(0)) << 8)
+            | u32::from(chunk.get(2).copied().unwrap_or(0));
+        let sextet = |shift: u32| ALPHABET[(n >> shift) as usize & 63] as char;
+        out.push(sextet(18));
+        out.push(sextet(12));
+        // One `=` for a two-byte tail, two for a one-byte tail: the padding says
+        // how many whole bytes the last group carried, so a decoder recovers the
+        // exact length instead of inventing a trailing zero.
+        out.push(if chunk.len() > 1 { sextet(6) } else { '=' });
+        out.push(if chunk.len() > 2 { sextet(0) } else { '=' });
+    }
+    out
 }
 
 /// Extract embedded raster images living under `dir_prefix` (e.g. `word/media/`
@@ -488,6 +618,103 @@ mod tests {
         cmd.arg("30");
         let err = run_with_timeout(cmd, Duration::from_millis(100)).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn base64_encodes_the_rfc4648_vectors() {
+        // The canonical progression from RFC 4648 section 10: it walks every
+        // tail length twice over, so a shift or an off-by-one in the packing
+        // shows up here before it reaches a clipboard.
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        assert_eq!(base64_encode(b"Man"), "TWFu");
+    }
+
+    #[test]
+    fn base64_pads_by_input_length_mod_three() {
+        // len % 3 == 0: no padding, and the output is exactly 4/3 the input.
+        assert_eq!(base64_encode(b"abcdef"), "YWJjZGVm");
+        // len % 3 == 2: one `=`.
+        assert_eq!(base64_encode(b"abcde"), "YWJjZGU=");
+        // len % 3 == 1: two `=`.
+        assert_eq!(base64_encode(b"abcd"), "YWJjZA==");
+        // In every case the length is a multiple of four, which is what a
+        // terminal's decoder expects to receive.
+        for n in 0..32usize {
+            let input = vec![b'x'; n];
+            assert_eq!(base64_encode(&input).len() % 4, 0, "n = {n}");
+        }
+    }
+
+    #[test]
+    fn base64_encodes_bytes_not_chars() {
+        // Bytes above 0x7F must go through as bytes. `ä` is U+00E4, two UTF-8
+        // bytes (C3 A4); encoding the *char* would produce something else
+        // entirely, so this pins the byte-oriented reading.
+        assert_eq!(base64_encode("ä".as_bytes()), "w6Q=");
+        assert_eq!(base64_encode("€".as_bytes()), "4oKs");
+        // The top of the alphabet (`+` at 62, `/` at 63) is only reachable with
+        // high bytes, so this also proves both are emitted.
+        assert_eq!(base64_encode(&[0xff, 0xfe, 0xfd]), "//79");
+        assert_eq!(base64_encode(&[0xfb, 0xef, 0xbe]), "++++");
+        assert_eq!(base64_encode(&[0x00, 0x00, 0x00]), "AAAA");
+    }
+
+    #[test]
+    fn osc52_sequence_frames_the_payload_exactly() {
+        // Introducer, the `c` (clipboard) selection, the base64, then BEL.
+        assert_eq!(osc52_sequence("hi").unwrap(), b"\x1b]52;c;aGk=\x07");
+        assert_eq!(
+            osc52_sequence("/tmp/a.pdf").unwrap(),
+            b"\x1b]52;c;L3RtcC9hLnBkZg==\x07"
+        );
+        // Empty text is legal: it is the sequence that clears the clipboard, and
+        // refusing it here would be a rule the terminal does not have.
+        assert_eq!(osc52_sequence("").unwrap(), b"\x1b]52;c;\x07");
+    }
+
+    #[test]
+    fn osc52_sequence_cannot_be_broken_out_of() {
+        // A filename may legally contain an ESC, a BEL, or a whole forged OSC
+        // command. Base64 renders all of it as alphabet characters, so the
+        // finished sequence holds exactly one ESC (the introducer) and one BEL
+        // (the terminator), both at the ends.
+        let hostile = "\x1b]52;c;ZXZpbA==\x07\x1b[2J";
+        let seq = osc52_sequence(hostile).unwrap();
+        assert_eq!(seq.iter().filter(|&&b| b == 0x1b).count(), 1);
+        assert_eq!(seq.iter().filter(|&&b| b == 0x07).count(), 1);
+        assert_eq!(seq[0], 0x1b);
+        assert_eq!(seq[seq.len() - 1], 0x07);
+        assert!(seq[7..seq.len() - 1]
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/' || *b == b'='));
+    }
+
+    #[test]
+    fn osc52_sequence_refuses_rather_than_truncates_past_the_cap() {
+        // Exactly at the cap is accepted, so the documented number is the number.
+        let at_cap = "a".repeat(MAX_CLIPBOARD_BYTES);
+        assert!(osc52_sequence(&at_cap).is_ok());
+        // One byte over is refused outright, and the error names the size, so
+        // the caller can say what happened instead of silently yanking a prefix.
+        let over = "a".repeat(MAX_CLIPBOARD_BYTES + 1);
+        let err = osc52_sequence(&over).unwrap_err();
+        assert!(err.contains("64.0K"), "error should name the cap: {err}");
+    }
+
+    #[test]
+    fn osc52_cap_counts_bytes_so_multibyte_text_cannot_slip_past() {
+        // `text.len()` is bytes, not chars: a string of 2-byte characters that
+        // is only half the cap in `chars()` is still over it in bytes, which is
+        // the measure the terminal's limit is expressed in.
+        let multibyte = "ä".repeat(MAX_CLIPBOARD_BYTES / 2 + 1);
+        assert!(multibyte.chars().count() < MAX_CLIPBOARD_BYTES);
+        assert!(osc52_sequence(&multibyte).is_err());
     }
 
     #[test]
