@@ -19,17 +19,15 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 399 |
+| MIT License | 356 |
 | Apache License 2.0 | 19 |
 | BSD 3-Clause "New" or "Revised" License | 8 |
 | BSD 2-Clause "Simplified" License | 4 |
 | ISC License | 4 |
 | zlib License | 4 |
 | MIT No Attribution | 2 |
-| Creative Commons Zero v1.0 Universal | 1 |
 | Community Data License Agreement Permissive 2.0 | 1 |
 | Mozilla Public License 2.0 | 1 |
-| University of Illinois/NCSA Open Source License | 1 |
 | Unicode License v3 | 1 |
 | bzip2 and libbzip2 License v1.0.6 | 1 |
 
@@ -1739,135 +1737,6 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ```
 
-### Creative Commons Zero v1.0 Universal
-
-Used by `tiny-keccak 2.0.2`
-
-```
-Creative Commons Legal Code
-
-CC0 1.0 Universal
-
-    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
-    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
-    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
-    INFORMATION ON AN "AS-IS" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
-    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
-    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
-    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
-    HEREUNDER.
-
-Statement of Purpose
-
-The laws of most jurisdictions throughout the world automatically confer
-exclusive Copyright and Related Rights (defined below) upon the creator
-and subsequent owner(s) (each and all, an "owner") of an original work of
-authorship and/or a database (each, a "Work").
-
-Certain owners wish to permanently relinquish those rights to a Work for
-the purpose of contributing to a commons of creative, cultural and
-scientific works ("Commons") that the public can reliably and without fear
-of later claims of infringement build upon, modify, incorporate in other
-works, reuse and redistribute as freely as possible in any form whatsoever
-and for any purposes, including without limitation commercial purposes.
-These owners may contribute to the Commons to promote the ideal of a free
-culture and the further production of creative, cultural and scientific
-works, or to gain reputation or greater distribution for their Work in
-part through the use and efforts of others.
-
-For these and/or other purposes and motivations, and without any
-expectation of additional consideration or compensation, the person
-associating CC0 with a Work (the "Affirmer"), to the extent that he or she
-is an owner of Copyright and Related Rights in the Work, voluntarily
-elects to apply CC0 to the Work and publicly distribute the Work under its
-terms, with knowledge of his or her Copyright and Related Rights in the
-Work and the meaning and intended legal effect of CC0 on those rights.
-
-1. Copyright and Related Rights. A Work made available under CC0 may be
-protected by copyright and related or neighboring rights ("Copyright and
-Related Rights"). Copyright and Related Rights include, but are not
-limited to, the following:
-
-  i. the right to reproduce, adapt, distribute, perform, display,
-     communicate, and translate a Work;
- ii. moral rights retained by the original author(s) and/or performer(s);
-iii. publicity and privacy rights pertaining to a person's image or
-     likeness depicted in a Work;
- iv. rights protecting against unfair competition in regards to a Work,
-     subject to the limitations in paragraph 4(a), below;
-  v. rights protecting the extraction, dissemination, use and reuse of data
-     in a Work;
- vi. database rights (such as those arising under Directive 96/9/EC of the
-     European Parliament and of the Council of 11 March 1996 on the legal
-     protection of databases, and under any national implementation
-     thereof, including any amended or successor version of such
-     directive); and
-vii. other similar, equivalent or corresponding rights throughout the
-     world based on applicable law or treaty, and any national
-     implementations thereof.
-
-2. Waiver. To the greatest extent permitted by, but not in contravention
-of, applicable law, Affirmer hereby overtly, fully, permanently,
-irrevocably and unconditionally waives, abandons, and surrenders all of
-Affirmer's Copyright and Related Rights and associated claims and causes
-of action, whether now known or unknown (including existing as well as
-future claims and causes of action), in the Work (i) in all territories
-worldwide, (ii) for the maximum duration provided by applicable law or
-treaty (including future time extensions), (iii) in any current or future
-medium and for any number of copies, and (iv) for any purpose whatsoever,
-including without limitation commercial, advertising or promotional
-purposes (the "Waiver"). Affirmer makes the Waiver for the benefit of each
-member of the public at large and to the detriment of Affirmer's heirs and
-successors, fully intending that such Waiver shall not be subject to
-revocation, rescission, cancellation, termination, or any other legal or
-equitable action to disrupt the quiet enjoyment of the Work by the public
-as contemplated by Affirmer's express Statement of Purpose.
-
-3. Public License Fallback. Should any part of the Waiver for any reason
-be judged legally invalid or ineffective under applicable law, then the
-Waiver shall be preserved to the maximum extent permitted taking into
-account Affirmer's express Statement of Purpose. In addition, to the
-extent the Waiver is so judged Affirmer hereby grants to each affected
-person a royalty-free, non transferable, non sublicensable, non exclusive,
-irrevocable and unconditional license to exercise Affirmer's Copyright and
-Related Rights in the Work (i) in all territories worldwide, (ii) for the
-maximum duration provided by applicable law or treaty (including future
-time extensions), (iii) in any current or future medium and for any number
-of copies, and (iv) for any purpose whatsoever, including without
-limitation commercial, advertising or promotional purposes (the
-"License"). The License shall be deemed effective as of the date CC0 was
-applied by Affirmer to the Work. Should any part of the License for any
-reason be judged legally invalid or ineffective under applicable law, such
-partial invalidity or ineffectiveness shall not invalidate the remainder
-of the License, and in such case Affirmer hereby affirms that he or she
-will not (i) exercise any of his or her remaining Copyright and Related
-Rights in the Work or (ii) assert any associated claims and causes of
-action with respect to the Work, in either case contrary to Affirmer's
-express Statement of Purpose.
-
-4. Limitations and Disclaimers.
-
- a. No trademark or patent rights held by Affirmer are waived, abandoned,
-    surrendered, licensed or otherwise affected by this document.
- b. Affirmer offers the Work as-is and makes no representations or
-    warranties of any kind concerning the Work, express, implied,
-    statutory or otherwise, including without limitation warranties of
-    title, merchantability, fitness for a particular purpose, non
-    infringement, or the absence of latent or other defects, accuracy, or
-    the present or absence of errors, whether or not discoverable, all to
-    the greatest extent permissible under applicable law.
- c. Affirmer disclaims responsibility for clearing rights of other persons
-    that may apply to the Work or any use thereof, including without
-    limitation any person's Copyright and Related Rights in the Work.
-    Further, Affirmer disclaims responsibility for obtaining any necessary
-    consents, permissions or other rights required for any use of the
-    Work.
- d. Affirmer understands and acknowledges that Creative Commons is not a
-    party to this document and has no duty or obligation with respect to
-    this CC0 or use of the Work.
-
-```
-
 ### Community Data License Agreement Permissive 2.0
 
 Used by `webpki-roots 1.0.9`
@@ -2058,7 +1927,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `libfuzzer-sys 0.4.13`, `rayon-core 1.13.0`, `rayon 1.12.0`
+Used by `rayon-core 1.13.0`, `rayon 1.12.0`
 
 ```
 Copyright (c) 2010 The Rust Project Developers
@@ -2157,7 +2026,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `cc 1.2.65`, `cfg-if 1.0.4`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `jobserver 0.1.34`, `js-sys 0.3.103`, `pkg-config 0.3.33`, `wasm-bindgen-futures 0.4.76`, `wasm-bindgen-macro-support 0.2.126`, `wasm-bindgen-macro 0.2.126`, `wasm-bindgen-shared 0.2.126`, `wasm-bindgen 0.2.126`, `web-sys 0.3.103`
+Used by `cc 1.2.65`, `cfg-if 1.0.4`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `jobserver 0.1.34`, `pkg-config 0.3.33`
 
 ```
 Copyright (c) 2014 Alex Crichton
@@ -2832,41 +2701,7 @@ THE SOFTWARE.
 
 ### MIT License
 
-Used by `futures-core 0.3.32`, `futures-task 0.3.32`, `futures-util 0.3.32`
-
-```
-Copyright (c) 2016 Alex Crichton
-Copyright (c) 2017 The Tokio Authors
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
-### MIT License
-
-Used by `const-random-macro 0.1.16`, `const-random 0.1.18`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`
+Used by `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`
 
 ```
 Copyright (c) 2016 Amanieu d'Antras
@@ -3393,36 +3228,6 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `redox_syscall 0.5.18`
-
-```
-Copyright (c) 2017 Redox OS Developers
-
-MIT License
-
-Permission is hereby granted, free of charge, to any person obtaining
-a copy of this software and associated documentation files (the
-"Software"), to deal in the Software without restriction, including
-without limitation the rights to use, copy, modify, merge, publish,
-distribute, sublicense, and/or sell copies of the Software, and to
-permit persons to whom the Software is furnished to do so, subject to
-the following conditions:
-
-The above copyright notice and this permission notice shall be
-included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-```
-
-### MIT License
-
 Used by `stable_deref_trait 1.2.1`
 
 ```
@@ -3658,66 +3463,6 @@ Used by `autocfg 1.5.1`
 
 ```
 Copyright (c) 2018 Josh Stone
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
-### MIT License
-
-Used by `console_log 1.1.0`
-
-```
-Copyright (c) 2018 Matthew Nicholson
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
-### MIT License
-
-Used by `console_error_panic_hook 0.1.7`
-
-```
-Copyright (c) 2018 Nick Fitzgerald
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -4136,39 +3881,6 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `slab 0.4.12`
-
-```
-Copyright (c) 2019 Carl Lerche
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
-### MIT License
-
 Used by `font-types 0.12.2`, `read-fonts 0.41.0`, `skrifa 0.44.0`
 
 ```
@@ -4296,7 +4008,7 @@ THE SOFTWARE.
 
 ### MIT License
 
-Used by `iana-time-zone-haiku 0.1.2`, `iana-time-zone 0.1.65`
+Used by `iana-time-zone 0.1.65`
 
 ```
 Copyright (c) 2020 Andrew D. Straw
@@ -5228,7 +4940,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `rand 0.8.6`, `rand 0.9.4`, `rand_chacha 0.3.1`, `rand_chacha 0.9.0`, `rand_core 0.6.4`, `rand_core 0.9.5`
+Used by `rand 0.8.6`, `rand 0.9.4`, `rand_chacha 0.3.1`, `rand_core 0.6.4`, `rand_core 0.9.5`
 
 ```
 Copyright 2018 Developers of the Rand project
@@ -5629,7 +5341,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `arg_enum_proc_macro 0.3.4`, `interpolate_name 0.2.4`
+Used by `arg_enum_proc_macro 0.3.4`
 
 ```
 MIT License
@@ -5844,41 +5556,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-```
-
-### MIT License
-
-Used by `arbitrary 1.4.2`, `derive_arbitrary 1.4.2`
-
-```
-MIT License
-
-Copyright (c) 2019 Manish Goregaokar
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
 
 ```
 
@@ -6267,35 +5944,6 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `libredox 0.1.18`
-
-```
-MIT License
-
-Copyright (c) 2023 4lDO2
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
-### MIT License
-
 Used by `safe_arch 0.9.3`
 
 ```
@@ -6348,35 +5996,6 @@ Used by `line-clipping 0.3.7`
 MIT License
 
 Copyright (c) 2024 Josh McKinney
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
-### MIT License
-
-Used by `sqlite-wasm-rs 0.5.5`
-
-```
-MIT License
-
-Copyright (c) 2024 Spxg
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -6457,7 +6076,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `base64-simd 0.8.0`, `chrono 0.4.45`, `duckdb 1.10505.0`, `icy_sixel 0.5.0`, `libm 0.2.16`, `objc2-encode 4.1.0`, `objc2-foundation 0.3.2`, `objc2 0.6.4`, `pdfium-render 0.9.3`, `profiling-procmacros 1.0.18`, `profiling 1.0.18`, `quantette 0.5.1`, `r-efi 5.3.0`, `r-efi 6.0.0`, `rsqlite-vfs 0.1.1`, `simd_helpers 0.1.0`, `siphasher 1.0.3`, `vsimd 0.8.0`, `wide 0.8.3`, `winapi-i686-pc-windows-gnu 0.4.0`, `winapi-x86_64-pc-windows-gnu 0.4.0`, `windows-core 0.56.0`, `windows-core 0.58.0`, `windows-implement 0.56.0`, `windows-implement 0.58.0`, `windows-interface 0.56.0`, `windows-interface 0.58.0`, `windows-link 0.2.1`, `windows-result 0.1.2`, `windows-result 0.2.0`, `windows-strings 0.1.0`, `windows-sys 0.52.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows 0.56.0`, `windows 0.58.0`, `windows_aarch64_gnullvm 0.52.6`, `windows_aarch64_msvc 0.52.6`, `windows_i686_gnu 0.52.6`, `windows_i686_gnullvm 0.52.6`, `windows_i686_msvc 0.52.6`, `windows_x86_64_gnu 0.52.6`, `windows_x86_64_gnullvm 0.52.6`, `windows_x86_64_msvc 0.52.6`, `zune-inflate 0.2.54`
+Used by `base64-simd 0.8.0`, `chrono 0.4.45`, `duckdb 1.10505.0`, `icy_sixel 0.5.0`, `libm 0.2.16`, `objc2-encode 4.1.0`, `objc2-foundation 0.3.2`, `objc2 0.6.4`, `pdfium-render 0.9.3`, `profiling-procmacros 1.0.18`, `profiling 1.0.18`, `quantette 0.5.1`, `simd_helpers 0.1.0`, `siphasher 1.0.3`, `vsimd 0.8.0`, `wide 0.8.3`, `windows-core 0.56.0`, `windows-core 0.58.0`, `windows-implement 0.56.0`, `windows-implement 0.58.0`, `windows-interface 0.56.0`, `windows-interface 0.58.0`, `windows-link 0.2.1`, `windows-result 0.1.2`, `windows-result 0.2.0`, `windows-strings 0.1.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows 0.56.0`, `windows 0.58.0`, `windows_x86_64_gnu 0.52.6`, `windows_x86_64_msvc 0.52.6`, `zune-inflate 0.2.54`
 
 ```
 MIT License
@@ -6726,7 +6345,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `adler2 2.0.1`, `anyhow 1.0.103`, `fast-float2 0.2.3`, `fastrand 2.4.1`, `indoc 2.0.7`, `itoa 1.0.18`, `lexical-core 1.0.6`, `lexical-parse-float 1.0.6`, `lexical-parse-integer 1.0.6`, `lexical-util 1.0.7`, `lexical-write-float 1.0.6`, `lexical-write-integer 1.0.6`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `once_cell 1.21.4`, `paste 1.0.15`, `pastey 0.1.1`, `pin-project-lite 0.2.17`, `proc-macro2 1.0.106`, `quote 1.0.46`, `ref-cast-impl 1.0.25`, `ref-cast 1.0.25`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `serde_json 1.0.151`, `syn 2.0.118`, `syn 3.0.0`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror 1.0.69`, `thiserror 2.0.18`, `typed-path 0.12.3`, `unicode-ident 1.0.24`, `utf8-zero 0.8.1`, `wasi 0.11.1+wasi-snapshot-preview1`, `wasip2 1.0.4+wasi-0.2.12`, `wit-bindgen 0.57.1`, `zmij 1.0.21`
+Used by `adler2 2.0.1`, `anyhow 1.0.103`, `fast-float2 0.2.3`, `fastrand 2.4.1`, `indoc 2.0.7`, `itoa 1.0.18`, `lexical-core 1.0.6`, `lexical-parse-float 1.0.6`, `lexical-parse-integer 1.0.6`, `lexical-util 1.0.7`, `lexical-write-float 1.0.6`, `lexical-write-integer 1.0.6`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `once_cell 1.21.4`, `paste 1.0.15`, `pastey 0.1.1`, `proc-macro2 1.0.106`, `quote 1.0.46`, `ref-cast-impl 1.0.25`, `ref-cast 1.0.25`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `serde_json 1.0.151`, `syn 2.0.118`, `syn 3.0.0`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror 1.0.69`, `thiserror 2.0.18`, `typed-path 0.12.3`, `unicode-ident 1.0.24`, `utf8-zero 0.8.1`, `zmij 1.0.21`
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -6883,34 +6502,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-```
-
-### MIT License
-
-Used by `android_system_properties 0.1.5`
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2013 Nicolas Silva
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software is furnished to do so,
-subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ```
 
@@ -7505,36 +7096,6 @@ THE SOFTWARE.
 
 ### MIT License
 
-Used by `redox_users 0.5.2`
-
-```
-The MIT License (MIT)
-
-Copyright (c) 2017 Jose Narvaez
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
-```
-
-### MIT License
-
 Used by `simplecss 0.2.2`, `unicode-vo 0.1.0`
 
 ```
@@ -7831,35 +7392,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-
-```
-
-### MIT License
-
-Used by `crunchy 0.2.4`
-
-```
-The MIT License (MIT)
-
-Copyright 2017-2023 Eira Fransham.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
 
 ```
 
@@ -8437,29 +7969,6 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
   This Source Code Form is "Incompatible With Secondary Licenses", as
   defined by the Mozilla Public License, v. 2.0.
-
-```
-
-### University of Illinois/NCSA Open Source License
-
-Used by `libfuzzer-sys 0.4.13`
-
-```
-University of Illinois/NCSA Open Source License
-
-Copyright (c) <Year> <Owner Organization Name>. All rights reserved.
-
-Developed by: <Name of Development Group> <Name of Institution> <URL for Development Group/Institution>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal with the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-     * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimers.
-
-     * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimers in the documentation and/or other materials provided with the distribution.
-
-     * Neither the names of <Name of Development Group, Name of Institution>, nor the names of its contributors may be used to endorse or promote products derived from this Software without specific prior written permission.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE SOFTWARE.
 
 ```
 

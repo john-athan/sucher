@@ -1,6 +1,18 @@
 # cargo-about: which licenses may appear in the notices we ship.
 # Mirrors deny.toml's allow list. deny.toml is the gate; this file is the
 # paperwork that gate makes possible.
+# Pin the platforms, or the notices depend on who ran the generator: without
+# this cargo-about resolves for the host only, so a macOS run and the Linux CI
+# run disagree by whichever crates are target gated, and the staleness check is
+# red forever through no fault of the tree.
+targets = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+]
+
 accepted = [
     "MIT",
     "MIT-0",
