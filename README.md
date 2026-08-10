@@ -172,7 +172,15 @@ to the text viewer).
 
 ## Install
 
-Requires a recent **Rust** toolchain.
+On macOS and Linux, via Homebrew. It builds from source on your machine and
+pulls in `ffmpeg` and `poppler`, so video and the PDF fallback work without a
+second step:
+
+```sh
+brew install john-athan/tap/sucher
+```
+
+Otherwise a recent **Rust** toolchain is all it takes.
 
 ```sh
 # Quickest — installs the `sucher` binary into ~/.cargo/bin:
