@@ -34,7 +34,7 @@ zip = "8"
 quick-xml = "0.41"
 flate2 = "1"
 tar = "0.4"
-resvg = "0.47"
+resvg = "0.48"
 toml = "1.1"
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
