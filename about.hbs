@@ -1,0 +1,36 @@
+# Third-party licenses
+
+The sucher release binary links its Rust dependencies statically, so the shipped
+artifact contains their code and carries their notice requirements. This file is
+that notice. Most entries are MIT and appear once per crate because MIT requires
+each copyright line to travel with the code.
+
+Regenerate with:
+
+    cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md
+    perl -pi -e 's/\r\n/\n/g' THIRD_PARTY_LICENSES.md
+
+The second line matters: some upstream texts carry CRLF, and without it the
+CI staleness check compares line endings forever. Do not edit by hand. Which licenses may appear here is set in `about.toml` and enforced
+in CI by `deny.toml`. Material that is in the repository rather than in the
+dependency graph is listed in `THIRD_PARTY.md`.
+
+## Overview
+
+| License | Crates |
+| --- | --- |
+{{#each overview}}| {{{name}}} | {{count}} |
+{{/each}}
+
+## Full texts
+
+{{#each licenses}}
+### {{{name}}}
+
+Used by {{#each used_by}}`{{crate.name}} {{crate.version}}`{{#unless @last}}, {{/unless}}{{/each}}
+
+```
+{{{text}}}
+```
+
+{{/each}}
