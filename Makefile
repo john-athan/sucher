@@ -7,7 +7,7 @@ CARGO_BIN := $(HOME)/.cargo/bin
 # `SUCHER_PDFIUM_LIB` at it; set `SUCHER_PDFIUM_NO_EMBED=1` to skip embedding
 # entirely (PDFs then use the poppler fallback).
 
-.PHONY: build install link uninstall run
+.PHONY: build install link uninstall run notices
 
 build:
 	cargo build --release
@@ -29,3 +29,13 @@ uninstall:
 
 run:
 	cargo run -- samples/sample.md
+
+# Regenerate the dependency notices that ship with the release binary.
+# The normalisation is load bearing: upstream license texts carry CRLF, trailing
+# spaces and stray blank lines, and not identically on every machine that
+# extracts them, so without it the CI staleness check compares whitespace
+# forever. A notice has to carry the text, not its incidental spacing.
+notices:
+	cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md
+	@perl -0777 -pi -e 's/\r\n/\n/g; s/[ \t]+$$//mg; s/\n{3,}/\n\n/g' THIRD_PARTY_LICENSES.md
+	@echo "notices: THIRD_PARTY_LICENSES.md regenerated"

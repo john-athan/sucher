@@ -5,13 +5,10 @@ artifact contains their code and carries their notice requirements. This file is
 that notice. Most entries are MIT and appear once per crate because MIT requires
 each copyright line to travel with the code.
 
-Regenerate with:
-
-    cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md
-    perl -pi -e 's/\r\n/\n/g' THIRD_PARTY_LICENSES.md
-
-The second line matters: some upstream texts carry CRLF, and without it the
-CI staleness check compares line endings forever. Do not edit by hand. Which licenses may appear here is set in `about.toml` and enforced
+Regenerate with `make notices`. The whitespace normalisation in that target is
+not cosmetic: upstream texts carry CRLF, trailing spaces and stray blank lines,
+and not identically on every machine, so without it the CI staleness check
+compares spacing forever. Do not edit by hand. Which licenses may appear here is set in `about.toml` and enforced
 in CI by `deny.toml`. Material that is in the repository rather than in the
 dependency graph is listed in `THIRD_PARTY.md`.
 
