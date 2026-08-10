@@ -65,6 +65,8 @@ jobs:
           if ! git diff --quiet -- THIRD_PARTY_LICENSES.md; then
             echo "THIRD_PARTY_LICENSES.md is out of date. Regenerate it with:"
             echo "  cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md"
-            git diff --stat -- THIRD_PARTY_LICENSES.md
+            echo "  perl -pi -e 's/\r\n/\n/g' THIRD_PARTY_LICENSES.md"
+            echo
+            git diff -- THIRD_PARTY_LICENSES.md | head -60
             exit 1
           fi
