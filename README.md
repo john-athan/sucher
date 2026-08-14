@@ -316,6 +316,7 @@ s <dir>  /  s       # directory browser (bare `s` = current dir)
 s --plain <file>    # one-shot styled dump to stdout (`-p` for short)
 s <file> | less     # piped: text dump
 s --help            # the one-line usage summary (`-h`)
+s --version         # version, and whether this build has `data` (`-V`)
 ```
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·

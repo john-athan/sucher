@@ -63,6 +63,20 @@ fn main() -> ExitCode {
     code
 }
 
+/// The `--version` line: the package version plus whether this binary was built
+/// with the `data` feature. The feature is named because it decides whether
+/// Parquet/JSONL/SQLite/DuckDB open in the grid at all (ADR 0016), so two
+/// binaries carrying the same number can still disagree about what a file *is*,
+/// which is exactly the question someone runs `--version` to settle.
+fn version_line() -> String {
+    let features = if cfg!(feature = "data") {
+        "data"
+    } else {
+        "no data"
+    };
+    format!("sucher {} ({features})", env!("CARGO_PKG_VERSION"))
+}
+
 fn run() -> ExitCode {
     let mut plain_flag = false;
     let mut path: Option<String> = None;
@@ -88,9 +102,13 @@ fn run() -> ExitCode {
             "--no-mouse" => cli_no_mouse = true,
             "--no-animate" => cli_no_animate = true,
             "-h" | "--help" => {
-                eprintln!(
-                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [--no-git] [--no-mouse] [--no-animate] [file|dir]"
+                println!(
+                    "usage: sucher [--plain] [--theme NAME] [--icons unicode|nerd|none] [--layout auto|miller|double] [--no-git] [--no-mouse] [--no-animate] [--version] [file|dir]"
                 );
+                return ExitCode::SUCCESS;
+            }
+            "-V" | "--version" => {
+                println!("{}", version_line());
                 return ExitCode::SUCCESS;
             }
             _ => path = Some(arg),
@@ -466,5 +484,25 @@ pub fn open_interactive(path: &str) {
     };
     if let Err(e) = r {
         eprintln!("sucher: {e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The version line carries the real package version, so it can never drift
+    /// from `Cargo.toml`, and names the build's data support either way.
+    #[test]
+    fn version_line_reports_version_and_data_support() {
+        let line = version_line();
+        assert!(line.starts_with("sucher "), "{line}");
+        assert!(line.contains(env!("CARGO_PKG_VERSION")), "{line}");
+        let expected = if cfg!(feature = "data") {
+            "(data)"
+        } else {
+            "(no data)"
+        };
+        assert!(line.ends_with(expected), "{line}");
     }
 }

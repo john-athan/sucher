@@ -6,6 +6,27 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-08-14
+
+### Added
+- **`--version` (`-V`)**, which the binary had never had. It prints the package
+  version and, in brackets, whether this build carries the `data` feature: two
+  binaries with the same number disagree about whether a `.parquet` opens in the
+  grid or falls back to the hexdump, so the number alone could not answer the
+  question people ask a version flag.
+
+### Changed
+- **`--help` prints to stdout**, not stderr, so `s --help | less` shows the usage
+  line instead of swallowing it.
+- **The README says what the code does.** `cargo install sucher` was missing from
+  the Install section although the crate has been published since 0.6.0 and the
+  rest of the page already assumed it; `--no-mouse`, `--no-animate`, `-p` and
+  `-h` were undocumented, as were the `SUCHER_LAYOUT` / `SUCHER_GIT` /
+  `SUCHER_MOUSE` / `SUCHER_ANIMATE` variables the precedence rule promised; the
+  module map had fallen nine files behind `src/`; and 0.6.2's licensing work had
+  no pointer from Development. The binary sizes are now measured rather than
+  estimated (~75 MB with `data`, ~29 MB without, on macOS arm64).
+
 ## [0.6.2] - 2026-08-10
 
 No change to the program. This release exists so that what ships alongside it is
