@@ -13,9 +13,9 @@ exclude = ["assets/", ".github/", "docs/", "Makefile"]
 
 [features]
 # `data` (default-on) is the DuckDB-backed data-file family — Parquet, JSONL,
-# SQLite, DuckDB (ADR 0016). It bundles DuckDB (a C++ build; ~30 MB of binary),
-# so `cargo install --no-default-features` yields the lean ~26 MB viewer without
-# it. `cargo install sucher` gets it.
+# SQLite, DuckDB (ADR 0016). It bundles DuckDB (a C++ build; ~46 MB of binary),
+# so `cargo install sucher --no-default-features` yields the lean ~29 MB viewer
+# without it. `cargo install sucher` gets it.
 default = ["data"]
 data = ["dep:duckdb", "dep:rusqlite"]
 

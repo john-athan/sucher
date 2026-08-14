@@ -97,7 +97,7 @@ real pixels where one is available.
 | Data — SQLite | `.sqlite` `.sqlite3` `.db` `.db3` | [`rusqlite`](https://crates.io/crates/rusqlite) bundled libsqlite (read-only); each table a sheet |
 | Data — DuckDB | `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
 | PDF | `.pdf` | [pdfium](https://crates.io/crates/pdfium-render) (Chrome's engine) → graphics, poppler `pdftocairo` fallback |
-| Image | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.tiff` `.ico` | [`image`](https://crates.io/crates/image) → graphics |
+| Image | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.tiff` `.tif` `.ico` | [`image`](https://crates.io/crates/image) → graphics |
 | SVG | `.svg` | [`resvg`](https://crates.io/crates/resvg) rasteriser → picture above scrolling source |
 | Video | `.mp4` `.mov` `.mkv` `.webm` `.avi` `.m4v` | streaming `ffmpeg` pipe → graphics |
 | Word | `.docx` | unzip + streaming XML → markdown renderer |
@@ -165,9 +165,10 @@ sucher's local-viewer identity.
 Data files sit behind the **default-on `data` Cargo feature**, so
 `cargo install sucher` includes them out of the box. DuckDB is compiled from
 vendored source and statically bundled — self-contained, with no build-time
-download and no runtime network — which puts the release binary at **~65 MB**.
-If you don't need it, `cargo install --no-default-features` builds the lean
-~26 MB binary without DuckDB (Parquet then falls back to the hexdump and JSONL
+download and no runtime network, which puts the release binary at **~75 MB**
+(measured on macOS arm64; the figure moves with target and toolchain). If you
+don't need it, `cargo install sucher --no-default-features` builds the lean
+~29 MB binary without DuckDB (Parquet then falls back to the hexdump and JSONL
 to the text viewer).
 
 ## Install
@@ -183,7 +184,10 @@ brew install john-athan/tap/sucher
 Otherwise a recent **Rust** toolchain is all it takes.
 
 ```sh
-# Quickest — installs the `sucher` binary into ~/.cargo/bin:
+# From crates.io, into ~/.cargo/bin:
+cargo install sucher
+
+# Or track the repository instead of the last published release:
 cargo install --git https://github.com/john-athan/sucher
 ```
 
@@ -233,7 +237,25 @@ s --theme catppuccin-mocha --icons nerd ~/projects
 SUCHER_THEME=gruvbox-dark SUCHER_ICONS=none s
 s --layout miller ~/projects        # force three columns
 s --no-git .                        # hide the git gutter
+s --no-mouse .                      # leave the terminal's own text selection alone
+s --no-animate .                    # no folder fade, no zoom
 ```
+
+Every key has both a flag and an environment variable:
+
+| Key | Flag | Environment variable | Values |
+|-----|------|----------------------|--------|
+| Theme | `--theme NAME` | `SUCHER_THEME` | `auto` or a built-in name |
+| Icons | `--icons MODE` | `SUCHER_ICONS` | `unicode`, `nerd`, `none` |
+| Layout | `--layout MODE` | `SUCHER_LAYOUT` | `auto`, `miller`, `double` |
+| Git gutter | `--no-git` | `SUCHER_GIT` | `1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off` |
+| Mouse | `--no-mouse` | `SUCHER_MOUSE` | same spellings |
+| Animations | `--no-animate` | `SUCHER_ANIMATE` | same spellings |
+
+The three `--no-*` flags only ever turn a thing off; use the environment
+variable or the config file to turn one back on. An unrecognised boolean
+spelling is ignored rather than fatal, so a typo falls through to the config
+file or the default instead of silently disabling the feature.
 
 Config file at `$XDG_CONFIG_HOME/sucher/config.toml` (else
 `~/.config/sucher/config.toml`); a missing or malformed file is ignored, never
@@ -291,8 +313,9 @@ selection = "#26324a"
 ```sh
 s <file>            # interactive viewer (TTY)
 s <dir>  /  s       # directory browser (bare `s` = current dir)
-s --plain <file>    # one-shot styled dump to stdout
+s --plain <file>    # one-shot styled dump to stdout (`-p` for short)
 s <file> | less     # piped: text dump
+s --help            # the one-line usage summary (`-h`)
 ```
 
 **Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
@@ -481,9 +504,12 @@ main.rs        dispatch by format; TTY → TUI, pipe → text dump
 format.rs      single classification registry (one source of truth)
 dir.rs         directory browser (list + live preview), opens files via main
 search.rs      recursive/streaming/content-aware search engine (ignore + grep)
+query.rs       the smart-query parser both `/` and `S` share (terms + predicates)
+typeahead.rs   timed type-to-select session, so a bound key stays a motion
 marks.rs       the browser's global multi-select set (pure, no filesystem)
 fileop/        file operations: collect (bounded walk) -> plan (pure) -> execute
 lineedit.rs    single-line buffer with a cursor, for the rename/create prompt
+git.rs         gutter + HEAD readout: two `git` calls, pure mapping around them
 markdown.rs    parse → logical lines + TOC + links; width-aware wrap/layout
 tui.rs         markdown TUI (scroll / TOC / search / links)
 text.rs        source/plain-text TUI (highlight, no wrap, pan + search)
@@ -505,6 +531,12 @@ keynote.rs     .key → embedded QuickLook preview image
 archive.rs     zip/tar/gz table-of-contents lister
 hex.rs         canonical hexdump viewer for binary files
 media.rs       shared graphics pane (ratatui-image protocol probe + render)
+config.rs      flag -> env -> file -> default resolution, into one `Config`
+theme.rs       the palettes: one source of truth for every viewer's colours
+highlight.rs   dependency-free tokenizer the text viewer colours through theme
+icons.rs       per-extension glyphs and tints, layered above `Format`
+anim.rs        wall-clock animation core (fade, zoom), framerate-independent
+util.rs        shared formatting helpers (sizes, times, the metadata line)
 ```
 
 Design notes:
@@ -551,15 +583,34 @@ Design notes:
 
 ```sh
 make build      # cargo build --release
+make install    # build, install `sucher`, symlink `s`
 make run        # cargo run -- samples/sample.md
+make notices    # regenerate THIRD_PARTY_LICENSES.md (needs `cargo about`)
 cargo test      # unit tests (markdown layout, docx conversion, xlsx search)
 ```
 
-A large-workbook benchmark is included but ignored by default:
+Two files record what came from elsewhere, and CI keeps both honest.
+[`THIRD_PARTY.md`](THIRD_PARTY.md) lists the material carried into this
+repository by hand (three of the four palettes, the Nerd Font code points, the
+spinner). [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) is generated by
+`make notices` for the dependencies the release binary links statically; a CI job
+regenerates it and fails when the committed copy has drifted, so a dependency
+bump cannot drop a copyright line unnoticed. On tag,
+`scripts/provenance-check.py` searches GitHub for the most distinctive
+identifiers added since the last release and fails on a copyleft match that
+`THIRD_PARTY.md` doesn't already explain.
+
+Large-file benchmarks are included but ignored by default:
 
 ```sh
 SUCHER_BIG=/path/to/big.xlsx cargo test --release big_xlsx -- --ignored --nocapture
+SUCHER_BIG_PARQUET=/path/to/big.parquet cargo test --release big_parquet -- --ignored --nocapture
 ```
+
+Two more environment variables help when something looks wrong rather than when
+it works: `SUCHER_ANIM_STATS=1` prints each animation's achieved frame rate on
+exit, and `SUCHER_NO_SIZING=1` forces `--plain` output to skip the kitty
+text-sizing protocol.
 
 ## Limitations
 
@@ -581,9 +632,10 @@ SUCHER_BIG=/path/to/big.xlsx cargo test --release big_xlsx -- --ignored --nocapt
   *file* reader isn't in the bundled build and would need a network extension, so
   it's deliberately excluded (Parquet covers the columnar need). A `find`/search
   over a data file follows the query's scan order, not a stable row order.
-- The release binary is **~65 MB** because DuckDB is compiled in and statically
-  bundled; build the lean ~26 MB binary with `cargo install --no-default-features`
-  (dropping the `data` feature and Parquet/JSONL/SQLite/DuckDB support).
+- The release binary is **~75 MB** because DuckDB is compiled in and statically
+  bundled; build the lean ~29 MB binary with
+  `cargo install sucher --no-default-features` (dropping the `data` feature and
+  Parquet/JSONL/SQLite/DuckDB support).
 - File operations act on **whole paths only**. There is no editing, no archive
   extraction, no writing to a spreadsheet or database, no permission changes, no
   bulk rename through an editor, and no symlink creation on paste. Operations are
