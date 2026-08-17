@@ -2182,7 +2182,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `libsqlite3-sys 0.38.1`, `rusqlite 0.40.1`
+Used by `libsqlite3-sys 0.38.2`, `rusqlite 0.40.2`
 
 ```
 Copyright (c) 2014 The rusqlite developers
@@ -6038,7 +6038,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `sucher 0.6.2`
+Used by `sucher 0.6.3`
 
 ```
 MIT License
