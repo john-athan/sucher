@@ -15,6 +15,7 @@ use serde::Deserialize;
 use std::io::{IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// The resolved configuration the app runs with. The theme is already a
@@ -429,6 +430,27 @@ fn scale_component(g: &str) -> Option<u8> {
     let v = u32::from_str_radix(g, 16).ok()?;
     let max = (1u32 << (4 * g.len())) - 1;
     Some((v * 255 / max) as u8)
+}
+
+/// The process-global mouse-capture toggle (ADR 0005, D2). Set once at startup
+/// from the resolved config and read via [`mouse_enabled`], mirroring
+/// `anim::enabled()`. The browser opens viewers *in-process*, and those viewers
+/// never see a [`Config`], so a global is the only way `--no-mouse` reaches
+/// them. Threading the setting through every viewer's `run` signature instead
+/// would put one fact in many places, which is what ADR 0001 exists to prevent.
+static MOUSE_ENABLED: OnceLock<bool> = OnceLock::new();
+
+/// Install the resolved `mouse` setting. Idempotent (`OnceLock`): the first call
+/// wins. Called once from `main` after config resolves, beside `theme::init`.
+pub fn set_mouse_enabled(b: bool) {
+    let _ = MOUSE_ENABLED.set(b);
+}
+
+/// Whether viewers may capture the mouse. `true` if [`set_mouse_enabled`] was
+/// never called, matching the config default so any viewer can gate on this
+/// global directly.
+pub fn mouse_enabled() -> bool {
+    *MOUSE_ENABLED.get().unwrap_or(&true)
 }
 
 #[cfg(test)]

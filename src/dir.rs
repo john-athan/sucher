@@ -933,13 +933,7 @@ impl Drop for MouseGuard {
     }
 }
 
-pub fn run(
-    start: String,
-    icons: IconMode,
-    layout: Layout,
-    git_enabled: bool,
-    mouse: bool,
-) -> io::Result<()> {
+pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) -> io::Result<()> {
     let cwd = fs::canonicalize(&start).unwrap_or_else(|_| PathBuf::from(&start));
     // Probe the graphics protocol once, before any alternate screen. If the
     // terminal can't do pixels, previews fall back to text/metadata.
@@ -1014,7 +1008,7 @@ pub fn run(
         // below disables capture before `restore` (and before any opened viewer,
         // which runs its own screen); the guard's Drop is the backstop that also
         // covers a panic during `main_loop`.
-        let guard = MouseGuard::enable(mouse);
+        let guard = MouseGuard::enable(crate::config::mouse_enabled());
         let action = app.main_loop(&mut term);
         drop(guard);
         ratatui::restore();

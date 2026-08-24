@@ -133,6 +133,9 @@ fn run() -> ExitCode {
     // Install the navigation-animation toggle beside the palette so any viewer —
     // including the config-less in-process `imgview` — can gate on `anim::enabled()`.
     anim::set_enabled(config.animate);
+    // Same reasoning for pointer input: the browser opens viewers in-process and
+    // they never see a `Config`, so `--no-mouse` travels as a global too.
+    config::set_mouse_enabled(config.mouse);
 
     // No argument browses the current directory.
     let path = path.unwrap_or_else(|| ".".to_string());
@@ -144,9 +147,7 @@ fn run() -> ExitCode {
         // Directories open the file browser (or a plain listing when piped).
         Format::Directory => {
             if interactive {
-                if let Err(e) =
-                    dir::run(path, config.icons, config.layout, config.git, config.mouse)
-                {
+                if let Err(e) = dir::run(path, config.icons, config.layout, config.git) {
                     eprintln!("sucher: {e}");
                     return ExitCode::FAILURE;
                 }
