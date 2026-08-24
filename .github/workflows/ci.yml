@@ -51,8 +51,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      # Pinned, and pinned in ONE place that `make notices` reads too. `--locked`
+      # pins cargo-about's own dependencies, NOT cargo-about itself, so an
+      # unpinned install silently upgrades the generator: 0.9.2 resolves
+      # target-specific crates 0.9.1 missed, which turned this job red on a
+      # release day with no change to the tree. The generator is an input to the
+      # comparison, so it belongs under the same version control as the rest.
       - name: Install cargo-about
-        run: cargo install cargo-about --locked --features cli
+        run: cargo install cargo-about --locked --features cli --version "$(cat .cargo-about-version)"
       # Upstream license texts carry CRLF, trailing spaces and stray blank lines,
       # and not identically on every machine that extracts them. Left alone, the
       # regenerated file differs from the committed one in whitespace only and

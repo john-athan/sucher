@@ -35,7 +35,18 @@ run:
 # spaces and stray blank lines, and not identically on every machine that
 # extracts them, so without it the CI staleness check compares whitespace
 # forever. A notice has to carry the text, not its incidental spacing.
+# The generator version is an input to the output, so it is pinned in
+# `.cargo-about-version` and CI installs exactly that one. Generating with a
+# different version produces a file CI will reject, which is a confusing way to
+# find out; fail here instead, with the command that fixes it.
 notices:
+	@want=$$(cat .cargo-about-version); \
+	have=$$(cargo about --version 2>/dev/null | awk '{print $$2}'); \
+	if [ "$$have" != "$$want" ]; then \
+		echo "notices: need cargo-about $$want, found $${have:-none}"; \
+		echo "  cargo install cargo-about --locked --features cli --version $$want"; \
+		exit 1; \
+	fi
 	cargo about generate about.hbs -o THIRD_PARTY_LICENSES.md
 	@perl -0777 -pi -e 's/\r\n/\n/g; s/[ \t]+$$//mg; s/\n{3,}/\n\n/g' THIRD_PARTY_LICENSES.md
 	@echo "notices: THIRD_PARTY_LICENSES.md regenerated"

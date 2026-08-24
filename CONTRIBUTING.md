@@ -40,6 +40,43 @@ PDF needs poppler (`pdftocairo`, `pdfinfo`, `pdftotext`); video needs `ffmpeg`
 and `ffprobe`. Keep these optional — the tool should degrade gracefully when a
 backend is missing.
 
+## Releasing
+
+Every step below has been forgotten at least once, which is why it is a list.
+The tap in particular sat a full release behind, so `brew` users were on 0.6.2
+while the tag said 0.6.3.
+
+1. `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+   `cargo test`.
+2. Bump `version` in `Cargo.toml`, then `cargo build` so `Cargo.lock` follows.
+   Pre-1.0 this project spends a **minor** version on anything that changes what
+   an existing key or flag does, and a patch on additions and fixes.
+3. `make notices`. It regenerates `THIRD_PARTY_LICENSES.md`, which stamps the
+   version, so this is never a no-op on a release. The target refuses to run
+   unless your `cargo-about` matches `.cargo-about-version`, because CI installs
+   exactly that version and compares against it.
+4. Move the `[Unreleased]` block in `CHANGELOG.md` under a dated `[x.y.z]`
+   heading and leave a fresh empty `[Unreleased]` above it.
+5. Commit as `release: x.y.z`, saying what changed for a user and why the
+   version moved the way it did.
+6. `git tag -a vx.y.z -m "sucher x.y.z: <one line>"`, then push `main` and the
+   tag.
+7. `gh release create vx.y.z --title "sucher x.y.z: <one line>" --notes-file <the
+   changelog section>`.
+8. `cargo publish --dry-run`, then `cargo publish`. This cannot be undone, only
+   yanked.
+9. **Bump the Homebrew tap**, which nothing does for you. In
+   `john-athan/homebrew-tap`, point `Formula/sucher.rb` at the new tag's tarball
+   and update `sha256`:
+
+   ```sh
+   curl -sL -o /tmp/v.tar.gz https://github.com/john-athan/sucher/archive/refs/tags/vx.y.z.tar.gz
+   shasum -a 256 /tmp/v.tar.gz
+   ```
+
+10. Reinstall locally (`make install`) so the `s` on your PATH is the thing you
+    just shipped, and check CI went green on the release commit.
+
 ## Scope
 
 sucher aims to be a fast, good-looking terminal viewer for awkward-in-a-browser
