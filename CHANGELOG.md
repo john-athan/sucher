@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-24
+
 ### Added
 - **Links in the markdown viewer actually go somewhere, and they are clickable.**
   A link to a file (`./notes.md`, `../src/main.rs`) or an in-document anchor
