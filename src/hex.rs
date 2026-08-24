@@ -99,7 +99,9 @@ impl App {
     fn handle_key(&mut self, code: KeyCode) -> bool {
         let half = (self.viewport_h / 2).max(1) as usize;
         match code {
-            KeyCode::Char('q') | KeyCode::Esc => return true,
+            // Left closes the view: a hex dump is fixed-width, so there is no
+            // horizontal motion for the arrow to mean instead (the back gesture).
+            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Left => return true,
             KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.offset = (self.offset + 1).min(self.max_offset())
@@ -149,7 +151,7 @@ impl App {
             ""
         };
         let status = format!(
-            " {pct}%  {} bytes   [j/k] scroll  [d/u] page  [g/G] top/end  [x] open  [q] quit{trunc}",
+            " {pct}%  {} bytes   [j/k] scroll  [d/u] page  [g/G] top/end  [x] open  [←/q] back{trunc}",
             self.data.len(),
         );
         f.render_widget(

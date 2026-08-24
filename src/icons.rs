@@ -70,6 +70,11 @@ pub fn nerd_glyph(ext: &str, fmt: Format) -> &'static str {
         "md" | "markdown" => "\u{e73e}", // nf-dev-markdown
         "txt" => "\u{f0f6}",             // nf-fa-file_text_o
         "lock" => "\u{f023}",            // nf-fa-lock
+        // --- Build / infra ---
+        "dockerfile" => "\u{f308}", // nf-dev-docker
+        // No dedicated make glyph in the shared set; reuse the shell one rather
+        // than inventing a code point that won't render on other Nerd Fonts.
+        "make" => "\u{e795}", // nf-seti-shell
         // --- Media / documents (glyph is category, colour is the theme role) ---
         "pdf" => "\u{f1c1}", // nf-fa-file_pdf_o
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => "\u{f1c5}", // file_image_o
@@ -142,6 +147,8 @@ pub fn nerd_color(ext: &str, fmt: Format) -> Color {
         "yaml" | "yml" | "toml" => Color::Rgb(180, 160, 120), // config sand
         "xml" => Color::Rgb(227, 140, 66),          // XML orange
         "sql" => Color::Rgb(240, 180, 90),          // SQL amber
+        "dockerfile" => Color::Rgb(36, 150, 237),   // Docker brand blue
+        "make" => Color::Rgb(137, 224, 81),         // shell green (reused glyph, reused tint)
         // Unlisted: defer to the theme role for this Format.
         _ => fmt.color(),
     }

@@ -54,8 +54,8 @@ pub struct App {
 
 pub fn run(title: String, path: String) -> io::Result<()> {
     let (lines, truncated) = read_capped(&path)?;
-    let ext = ext_of(&path);
-    let syntax = highlight::syntax_for(&ext).unwrap_or(highlight::PLAIN);
+    let key = lang_key_of(&path);
+    let syntax = highlight::syntax_for(&key).unwrap_or(highlight::PLAIN);
     let hl = highlight_all(&lines, syntax);
     let max_line_len = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
 
@@ -64,7 +64,7 @@ pub fn run(title: String, path: String) -> io::Result<()> {
         path,
         lines,
         hl,
-        lang: language_name(&ext),
+        lang: language_name(&key),
         truncated,
         max_line_len,
         offset: 0,
@@ -110,8 +110,7 @@ impl App {
 
     /// Furthest a line can be panned while keeping its tail reachable.
     fn max_hoffset(&self) -> usize {
-        self.max_line_len
-            .saturating_sub(self.viewport_w.max(1) as usize)
+        max_hoffset(self.max_line_len, self.viewport_w)
     }
 
     fn recompute_matches(&mut self) {
@@ -194,6 +193,11 @@ impl App {
             KeyCode::Char('l') | KeyCode::Right => {
                 self.hoffset = (self.hoffset + HSTEP).min(self.max_hoffset())
             }
+            // Left is content-aware (ADR 0020 D1): it pans while the longest line
+            // still overflows the viewport, and closes the view once there is no
+            // left to pan to. `h` stays pure motion either way (D2), so holding it
+            // never exits.
+            KeyCode::Left if self.max_hoffset() == 0 => return true,
             KeyCode::Char('h') | KeyCode::Left => self.hoffset = self.hoffset.saturating_sub(HSTEP),
             KeyCode::Char('/') => {
                 self.mode = Mode::Search;
@@ -291,8 +295,13 @@ impl App {
         } else {
             ""
         };
+        // The hint tracks what the keys actually do right now: with nothing to pan
+        // to, `h`/`l` are inert and Left is the back gesture instead (ADR 0020 D3).
+        let pannable = self.max_hoffset() > 0;
+        let pan = if pannable { "[h/l] pan  " } else { "" };
+        let close = if pannable { "[q] quit" } else { "[←/q] back" };
         let status = format!(
-            " {}%  {} lines   [j/k] scroll  [h/l] pan  [/] search  [n/N] next/prev  [x] open  [q] quit   {}{}",
+            " {}%  {} lines   [j/k] scroll  {pan}[/] search  [n/N] next/prev  [x] open  {close}   {}{}",
             pct.min(100),
             self.lines.len(),
             self.lang,
@@ -322,6 +331,14 @@ impl App {
             bar,
         );
     }
+}
+
+/// Furthest a row can be panned while keeping its tail reachable, as a pure
+/// function of the content and the viewport. Zero means the widest line already
+/// fits, which is what makes Left a close gesture rather than a pan (ADR 0020 D1),
+/// so the rule is testable without a terminal.
+fn max_hoffset(max_line_len: usize, viewport_w: u16) -> usize {
+    max_line_len.saturating_sub(viewport_w.max(1) as usize)
 }
 
 /// Take the visible `[start, start + width)` character columns of a token row,
@@ -388,19 +405,22 @@ fn read_capped(path: &str) -> io::Result<(Vec<String>, bool)> {
     Ok((lines, byte_truncated || line_truncated))
 }
 
-/// Lowercased extension of a path.
-fn ext_of(path: &str) -> String {
+/// The language key of a path's file name (see `highlight::lang_key`): usually
+/// the lowercased extension, but a canonical pseudo-extension for a file whose
+/// NAME is its type (`Dockerfile`, `Makefile`, `.gitignore`), so the viewer
+/// highlights and labels those correctly too.
+fn lang_key_of(path: &str) -> String {
     Path::new(path)
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
+        .file_name()
+        .map(|n| highlight::lang_key(&n.to_string_lossy()))
         .unwrap_or_default()
 }
 
-/// Language label for the status bar: the extension when a syntax is known,
-/// else "text" (plain-text types and unknown extensions).
-fn language_name(ext: &str) -> String {
-    if highlight::syntax_for(ext).is_some() {
-        ext.to_string()
+/// Language label for the status bar: the key when a syntax is known, else
+/// "text" (plain-text types and unknown keys).
+fn language_name(key: &str) -> String {
+    if highlight::syntax_for(key).is_some() {
+        key.to_string()
     } else {
         "text".to_string()
     }
@@ -488,6 +508,20 @@ mod tests {
         assert!(rows[2]
             .iter()
             .any(|t| t.kind == TokenKind::Keyword && t.text == "let"));
+    }
+
+    #[test]
+    fn left_closes_only_when_nothing_can_be_panned() {
+        // The widest line fits the viewport: nothing to pan to, so Left closes.
+        assert_eq!(max_hoffset(40, 80), 0);
+        assert_eq!(max_hoffset(80, 80), 0);
+        // One column of overflow is still a pan, so Left keeps its motion.
+        assert_eq!(max_hoffset(81, 80), 1);
+        assert_eq!(max_hoffset(200, 80), 120);
+        // A zero-width viewport (before the first render) must not divide the
+        // rule by zero or report a negative pan.
+        assert_eq!(max_hoffset(0, 0), 0);
+        assert_eq!(max_hoffset(5, 0), 4);
     }
 
     #[test]

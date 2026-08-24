@@ -21,7 +21,16 @@ const CELL_MAX: usize = 28;
 
 #[derive(Clone)]
 enum Tok {
-    Word(String, Style),
+    /// `link` is the index into `Builder::links` (and later `Rendered::links`)
+    /// this word belongs to, `Some` while tokenised inside an open `[..](..)`
+    /// (or an inline-code span inside one). It is the index the in-progress
+    /// `LinkRef` WILL get: `Builder::run` pushes it at `Event::End(TagEnd::Link)`,
+    /// after every word inside has already been tokenised.
+    Word {
+        text: String,
+        style: Style,
+        link: Option<usize>,
+    },
     Space,
 }
 
@@ -57,6 +66,26 @@ pub struct Rendered {
     lines: Vec<LogLine>,
     pub toc: Vec<TocEntry>,
     pub links: Vec<LinkRef>,
+}
+
+/// The result of [`Rendered::layout`]. A named struct rather than a tuple
+/// because a fourth parallel vector (`hits`, carrying link positions) made a
+/// tuple return unreadable at call sites.
+pub struct Layout {
+    pub display: Vec<Line<'static>>,
+    pub plain: Vec<String>,
+    pub log2disp: Vec<usize>,
+    /// One entry per display line: the link runs that land on that line.
+    pub hits: Vec<Vec<LinkHit>>,
+}
+
+/// One contiguous run of a single link on a single display line. `col` is the
+/// 0-based CHARACTER column within that line's laid-out content (matching
+/// `Layout::plain`, not byte offset); `width` is the run's char width.
+pub struct LinkHit {
+    pub col: usize,
+    pub width: usize,
+    pub link: usize,
 }
 
 #[derive(Default)]
@@ -106,11 +135,18 @@ impl Builder {
     }
 
     fn tokenize(&mut self, text: &str, style: Style) {
+        // The link this text belongs to, if any: the index the in-progress
+        // `LinkRef` will get once `End(TagEnd::Link)` pushes it (see `Tok::Word`).
+        let link = self.link_url.is_some().then_some(self.links.len());
         let mut word = String::new();
         for ch in text.chars() {
             if ch.is_whitespace() {
                 if !word.is_empty() {
-                    self.cur.push(Tok::Word(std::mem::take(&mut word), style));
+                    self.cur.push(Tok::Word {
+                        text: std::mem::take(&mut word),
+                        style,
+                        link,
+                    });
                 }
                 if !matches!(self.cur.last(), Some(Tok::Space)) {
                     self.cur.push(Tok::Space);
@@ -120,7 +156,11 @@ impl Builder {
             }
         }
         if !word.is_empty() {
-            self.cur.push(Tok::Word(word, style));
+            self.cur.push(Tok::Word {
+                text: word,
+                style,
+                link,
+            });
         }
     }
 
@@ -215,8 +255,11 @@ impl Builder {
                     }
                 }
                 Event::Start(Tag::Item) => {
-                    self.cur
-                        .push(Tok::Word("•".into(), Style::default().fg(AMBER)));
+                    self.cur.push(Tok::Word {
+                        text: "•".into(),
+                        style: Style::default().fg(AMBER),
+                        link: None,
+                    });
                     self.cur.push(Tok::Space);
                 }
                 Event::End(TagEnd::Item) => self.finish(Kind::Normal),
@@ -280,8 +323,14 @@ impl Builder {
                 }
 
                 Event::Code(t) => {
-                    self.cur
-                        .push(Tok::Word(t.to_string(), Style::default().fg(AMBER)));
+                    // Inline code inside an open link (e.g. `[click `here`](url)`)
+                    // carries the same link index as surrounding words.
+                    let link = self.link_url.is_some().then_some(self.links.len());
+                    self.cur.push(Tok::Word {
+                        text: t.to_string(),
+                        style: Style::default().fg(AMBER),
+                        link,
+                    });
                     if self.link_url.is_some() {
                         self.link_text.push_str(&t);
                     }
@@ -299,7 +348,11 @@ impl Builder {
                     } else if self.in_code {
                         for line in t.lines() {
                             self.push_raw(
-                                vec![Tok::Word(format!("    {line}"), Style::default().fg(MINT))],
+                                vec![Tok::Word {
+                                    text: format!("    {line}"),
+                                    style: Style::default().fg(MINT),
+                                    link: None,
+                                }],
                                 Kind::Code,
                             );
                         }
@@ -356,7 +409,14 @@ impl Builder {
         let gray = Style::default().fg(GRAY);
         let white = Style::default().fg(WHITE);
         let push_line = |text: String, style: Style, b: &mut Builder| {
-            b.push_raw(vec![Tok::Word(text, style)], Kind::Pre);
+            b.push_raw(
+                vec![Tok::Word {
+                    text,
+                    style,
+                    link: None,
+                }],
+                Kind::Pre,
+            );
         };
 
         push_line(border('┌', '┬', '┐'), gray, self);
@@ -386,6 +446,28 @@ fn truncate(s: &str, max: usize) -> String {
     }
 }
 
+/// GitHub-style heading slug: lowercase, spaces become `-`, anything that is
+/// not alphanumeric or `-` is dropped, and repeated `-` collapse to one. Used
+/// to match an in-document `#fragment` link against a `TocEntry::title`.
+pub fn slug(title: &str) -> String {
+    let mut out = String::new();
+    let mut pending_dash = false;
+    for ch in title.chars() {
+        let lc = ch.to_ascii_lowercase();
+        if lc.is_ascii_alphanumeric() {
+            if pending_dash && !out.is_empty() {
+                out.push('-');
+            }
+            pending_dash = false;
+            out.push(lc);
+        } else if lc == '-' || lc.is_whitespace() {
+            pending_dash = true;
+        }
+        // any other punctuation is dropped without affecting pending_dash
+    }
+    out
+}
+
 fn heading_level(l: HeadingLevel) -> u8 {
     match l {
         HeadingLevel::H1 => 1,
@@ -412,34 +494,40 @@ impl Rendered {
     }
 
     /// Wrap logical lines to `width`, returning display lines, their plain-text
-    /// (for search), and a logical->display-index map.
-    pub fn layout(&self, width: usize) -> (Vec<Line<'static>>, Vec<String>, Vec<usize>) {
+    /// (for search), a logical->display-index map, and the link runs per
+    /// display line (so a screen cell can be mapped back to a link).
+    pub fn layout(&self, width: usize) -> Layout {
         let width = width.max(8);
         let mut display: Vec<Line<'static>> = Vec::new();
         let mut plain: Vec<String> = Vec::new();
-        let mut map: Vec<usize> = Vec::with_capacity(self.lines.len());
+        let mut log2disp: Vec<usize> = Vec::with_capacity(self.lines.len());
+        let mut hits: Vec<Vec<LinkHit>> = Vec::new();
 
         for ll in &self.lines {
-            map.push(display.len());
+            log2disp.push(display.len());
             match ll.kind {
                 Kind::Blank => {
                     display.push(Line::default());
                     plain.push(String::new());
+                    hits.push(Vec::new());
                 }
                 Kind::Rule => {
                     let rule = "─".repeat(width.min(60));
                     plain.push(rule.clone());
                     display.push(Line::from(Span::styled(rule, Style::default().fg(GRAY))));
+                    hits.push(Vec::new());
                 }
                 Kind::Code | Kind::Pre => {
                     let (line, text) = render_unwrapped(&ll.toks);
                     display.push(line);
                     plain.push(text);
+                    hits.push(Vec::new());
                 }
                 Kind::Heading => {
-                    for (line, text) in wrap(&ll.toks, width) {
+                    for (line, text, lhits) in wrap(&ll.toks, width) {
                         display.push(line);
                         plain.push(text);
+                        hits.push(lhits);
                     }
                 }
                 Kind::Normal => {
@@ -464,18 +552,28 @@ impl Rendered {
                     if wrapped.is_empty() {
                         display.push(Line::default());
                         plain.push(String::new());
+                        hits.push(Vec::new());
                     } else {
-                        for (line, text) in wrapped {
+                        for (line, text, mut lhits) in wrapped {
                             let mut spans = prefix.clone();
                             spans.extend(line.spans);
                             display.push(Line::from(spans));
                             plain.push(format!("{pplain}{text}"));
+                            for h in &mut lhits {
+                                h.col += pwidth;
+                            }
+                            hits.push(lhits);
                         }
                     }
                 }
             }
         }
-        (display, plain, map)
+        Layout {
+            display,
+            plain,
+            log2disp,
+            hits,
+        }
     }
 }
 
@@ -484,9 +582,9 @@ fn render_unwrapped(toks: &[Tok]) -> (Line<'static>, String) {
     let mut text = String::new();
     for t in toks {
         match t {
-            Tok::Word(w, st) => {
+            Tok::Word { text: w, style, .. } => {
                 text.push_str(w);
-                spans.push(Span::styled(w.clone(), *st));
+                spans.push(Span::styled(w.clone(), *style));
             }
             Tok::Space => {
                 text.push(' ');
@@ -497,15 +595,33 @@ fn render_unwrapped(toks: &[Tok]) -> (Line<'static>, String) {
     (Line::from(spans), text)
 }
 
-fn wrap(toks: &[Tok], width: usize) -> Vec<(Line<'static>, String)> {
-    let mut out: Vec<(Line<'static>, String)> = Vec::new();
+/// A link run currently being accumulated while wrapping: `start`/`end` are
+/// CHARACTER columns within the line under construction. Adjacent words (and
+/// the spaces between them) sharing the same `link` extend `end` in place
+/// rather than opening a new hit, so "click here" yields one hit, not two.
+struct OpenLink {
+    link: usize,
+    start: usize,
+    end: usize,
+}
+
+fn close_link(open: &mut Option<OpenLink>, hits: &mut Vec<LinkHit>) {
+    if let Some(o) = open.take() {
+        hits.push(LinkHit {
+            col: o.start,
+            width: o.end - o.start,
+            link: o.link,
+        });
+    }
+}
+
+fn wrap(toks: &[Tok], width: usize) -> Vec<(Line<'static>, String, Vec<LinkHit>)> {
+    let mut out: Vec<(Line<'static>, String, Vec<LinkHit>)> = Vec::new();
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut text = String::new();
     let mut w = 0usize;
-
-    let flush = |spans: &mut Vec<Span<'static>>, text: &mut String, out: &mut Vec<_>| {
-        out.push((Line::from(std::mem::take(spans)), std::mem::take(text)));
-    };
+    let mut hits: Vec<LinkHit> = Vec::new();
+    let mut open: Option<OpenLink> = None;
 
     for t in toks {
         match t {
@@ -514,7 +630,12 @@ fn wrap(toks: &[Tok], width: usize) -> Vec<(Line<'static>, String)> {
                     continue;
                 }
                 if w + 1 > width {
-                    flush(&mut spans, &mut text, &mut out);
+                    close_link(&mut open, &mut hits);
+                    out.push((
+                        Line::from(std::mem::take(&mut spans)),
+                        std::mem::take(&mut text),
+                        std::mem::take(&mut hits),
+                    ));
                     w = 0;
                 } else {
                     spans.push(Span::raw(" "));
@@ -522,20 +643,43 @@ fn wrap(toks: &[Tok], width: usize) -> Vec<(Line<'static>, String)> {
                     w += 1;
                 }
             }
-            Tok::Word(word, st) => {
+            Tok::Word {
+                text: word,
+                style,
+                link,
+            } => {
                 let len = word.chars().count();
                 if w + len > width && w > 0 {
-                    flush(&mut spans, &mut text, &mut out);
+                    close_link(&mut open, &mut hits);
+                    out.push((
+                        Line::from(std::mem::take(&mut spans)),
+                        std::mem::take(&mut text),
+                        std::mem::take(&mut hits),
+                    ));
                     w = 0;
                 }
-                spans.push(Span::styled(word.clone(), *st));
+                let start = w;
+                spans.push(Span::styled(word.clone(), *style));
                 text.push_str(word);
                 w += len;
+                match (link, &mut open) {
+                    (Some(li), Some(o)) if o.link == *li => o.end = w,
+                    (Some(li), _) => {
+                        close_link(&mut open, &mut hits);
+                        open = Some(OpenLink {
+                            link: *li,
+                            start,
+                            end: w,
+                        });
+                    }
+                    (None, _) => close_link(&mut open, &mut hits),
+                }
             }
         }
     }
+    close_link(&mut open, &mut hits);
     if !spans.is_empty() {
-        flush(&mut spans, &mut text, &mut out);
+        out.push((Line::from(spans), text, hits));
     }
     out
 }
@@ -545,7 +689,7 @@ mod tests {
     use super::*;
 
     fn plain_at(src: &str, width: usize) -> Vec<String> {
-        Rendered::build(src).layout(width).1
+        Rendered::build(src).layout(width).plain
     }
 
     #[test]
@@ -591,5 +735,83 @@ mod tests {
         let lines = plain_at(&md, 20);
         assert!(lines.len() > 1);
         assert!(lines.iter().all(|l| l.chars().count() <= 20));
+    }
+
+    /// Char-count slice, mirroring `LinkHit::col`/`width` (character columns,
+    /// not byte offsets).
+    fn char_slice(s: &str, col: usize, width: usize) -> String {
+        s.chars().skip(col).take(width).collect()
+    }
+
+    #[test]
+    fn link_hit_matches_text() {
+        let md = "[click here](http://e.com)\n";
+        let l = Rendered::build(md).layout(80);
+        let (li, hits) = l
+            .hits
+            .iter()
+            .enumerate()
+            .find(|(_, h)| !h.is_empty())
+            .expect("expected a link hit");
+        assert_eq!(hits.len(), 1, "one hit for a single-run link");
+        let hit = &hits[0];
+        assert_eq!(hit.link, 0);
+        assert_eq!(char_slice(&l.plain[li], hit.col, hit.width), "click here");
+    }
+
+    #[test]
+    fn link_hit_shifted_by_blockquote_gutter() {
+        let md = "> [text](http://e.com)\n";
+        let l = Rendered::build(md).layout(80);
+        let (li, hits) = l
+            .hits
+            .iter()
+            .enumerate()
+            .find(|(_, h)| !h.is_empty())
+            .expect("expected a link hit");
+        assert_eq!(hits.len(), 1);
+        let hit = &hits[0];
+        // "│ " gutter is 2 chars wide, so the link starts at column 2.
+        assert_eq!(hit.col, 2);
+        assert_eq!(char_slice(&l.plain[li], hit.col, hit.width), "text");
+    }
+
+    #[test]
+    fn long_link_wraps_into_one_hit_per_line() {
+        let md = "[aaaa bbbb cccc dddd](http://e.com)\n";
+        let l = Rendered::build(md).layout(9);
+        assert_eq!(l.plain[0], "aaaa bbbb");
+        assert_eq!(l.plain[1], "cccc dddd");
+        assert_eq!(
+            l.hits[0].len(),
+            1,
+            "line 0 hits: {:?}",
+            debug_hits(&l.hits[0])
+        );
+        assert_eq!(
+            l.hits[1].len(),
+            1,
+            "line 1 hits: {:?}",
+            debug_hits(&l.hits[1])
+        );
+        assert_eq!(
+            char_slice(&l.plain[0], l.hits[0][0].col, l.hits[0][0].width),
+            "aaaa bbbb"
+        );
+        assert_eq!(
+            char_slice(&l.plain[1], l.hits[1][0].col, l.hits[1][0].width),
+            "cccc dddd"
+        );
+    }
+
+    fn debug_hits(hits: &[LinkHit]) -> Vec<(usize, usize, usize)> {
+        hits.iter().map(|h| (h.col, h.width, h.link)).collect()
+    }
+
+    #[test]
+    fn slug_cases() {
+        assert_eq!(slug("Getting Started"), "getting-started");
+        assert_eq!(slug("Hello, World!"), "hello-world");
+        assert_eq!(slug("A -- B"), "a-b");
     }
 }

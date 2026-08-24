@@ -4,10 +4,13 @@
 // diverging tables: *which viewer opens a file* and *how the browser presents
 // it* (colour / glyph / label). Adding a file type touches exactly one place.
 //
-// Classification is a PURE function `classify(ext, is_dir, head)` — extension
-// first, with a byte `head` disambiguating only unknown / extension-less files —
-// unit-tested without the filesystem. The thin `classify_path` wrapper does the
-// only IO (reading the head when the extension can't decide).
+// Classification is a PURE function `classify(key, is_dir, head)`, key first,
+// with a byte `head` disambiguating only unknown / empty-key files, unit-tested
+// without the filesystem. The key is `highlight::lang_key(file_name)`: usually
+// the lowercased extension, but a canonical pseudo-extension for the file
+// families whose NAME is their type (`Dockerfile`, `Makefile`, `.gitignore`).
+// The thin `classify_path` wrapper does the only IO (reading the head when the
+// key can't decide).
 
 use crate::highlight;
 use crate::theme;
@@ -47,18 +50,18 @@ pub enum Format {
     Binary,
 }
 
-/// Classify a file from its (already-lowercased) extension, its directory-ness,
-/// and an optional byte `head`. PURE — no IO.
+/// Classify a file from its [`highlight::lang_key`], its directory-ness, and an
+/// optional byte `head`. PURE, no IO.
 ///
-/// A known extension wins outright and ignores `head`. For an unknown or empty
-/// extension we consult `head`: textual → [`Format::Text`], otherwise
-/// [`Format::Binary`]. `head == None` (the directory list, which classifies by
-/// extension only) also yields `Binary` for an unknown extension.
-pub fn classify(ext: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
+/// A known key wins outright and ignores `head`. For an unknown or empty key we
+/// consult `head`: textual gives [`Format::Text`], otherwise [`Format::Binary`].
+/// `head == None` (the directory list, which classifies by key only) also
+/// yields `Binary` for an unknown key.
+pub fn classify(key: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
     if is_dir {
         return Format::Directory;
     }
-    match ext {
+    match key {
         "md" | "markdown" | "mdx" => Format::Markdown,
         // HTML is reduced to markdown (ADR 0008), not shown as source.
         "html" | "htm" | "xhtml" => Format::Html,
@@ -86,9 +89,9 @@ pub fn classify(ext: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
         "zip" | "gz" | "tar" | "tgz" | "bz2" | "xz" | "7z" | "rar" | "zst" => Format::Archive,
         // SVG is XML markup we can now both rasterise and show as source.
         "svg" => Format::Svg,
-        // Any other known source / plain-text extension.
+        // Any other known source / plain-text key.
         e if highlight::is_text_ext(e) => Format::Text,
-        // Unknown or empty extension: the head decides text vs binary.
+        // Unknown or empty key: the head decides text vs binary.
         _ => match head {
             Some(h) if looks_textual(h) => Format::Text,
             _ => Format::Binary,
@@ -111,19 +114,19 @@ fn looks_textual(head: &[u8]) -> bool {
     }
 }
 
-/// IO wrapper around [`classify`]: computes `is_dir` and the lowercased
-/// extension, and — only when the extension can't decide — reads up to
+/// IO wrapper around [`classify`]: computes `is_dir` and the file's
+/// [`highlight::lang_key`], and, only when the key can't decide, reads up to
 /// [`HEAD_BYTES`] of the file to distinguish text from binary.
 pub fn classify_path(path: &Path) -> Format {
     let is_dir = path.is_dir();
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
+    let key = path
+        .file_name()
+        .map(|n| highlight::lang_key(&n.to_string_lossy()))
         .unwrap_or_default();
     // `classify` with no head returns `Binary` exactly for an unknown/empty
-    // extension; that's the only case worth a file read.
-    match classify(&ext, is_dir, None) {
-        Format::Binary => classify(&ext, is_dir, read_head(path).as_deref()),
+    // key; that's the only case worth a file read.
+    match classify(&key, is_dir, None) {
+        Format::Binary => classify(&key, is_dir, read_head(path).as_deref()),
         other => other,
     }
 }
@@ -239,9 +242,9 @@ impl Format {
 mod tests {
     use super::*;
 
-    /// Classify a file by extension only (as the directory list does).
-    fn by_ext(ext: &str) -> Format {
-        classify(ext, false, None)
+    /// Classify a file by key only (as the directory list does).
+    fn by_ext(key: &str) -> Format {
+        classify(key, false, None)
     }
 
     #[test]
@@ -336,6 +339,19 @@ mod tests {
         assert_eq!(by_ext("mp4"), Format::Video);
         assert_eq!(by_ext("mp3"), Format::Audio);
         assert_eq!(by_ext("zip"), Format::Archive);
+    }
+
+    #[test]
+    fn dockerfile_key_is_text_and_opens() {
+        // ADR 0018: a Dockerfile has no extension, but its lang_key is
+        // "dockerfile" and it must classify as Text, not Binary.
+        assert_eq!(classify("dockerfile", false, None), Format::Text);
+        assert!(classify("dockerfile", false, None).opens());
+    }
+
+    #[test]
+    fn gitignore_key_is_text() {
+        assert_eq!(classify("gitignore", false, None), Format::Text);
     }
 
     #[test]

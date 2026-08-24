@@ -124,7 +124,9 @@ fn main_loop(
                         crate::util::open_in_native_app(p);
                         continue;
                     }
-                    if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc) {
+                    // Left closes the view too: the pane never pans, so the arrow
+                    // carries no motion here and reads as the back gesture.
+                    if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc | KeyCode::Left) {
                         // Full-view CLOSE: mirror the intro, shrinking the current
                         // frame back down, then exit (ADR 0006 D3). Teardown is
                         // unchanged — `run_pane` still calls `ratatui::restore()`
@@ -180,7 +182,7 @@ fn draw_zoom(
     status(
         f,
         chunks[1],
-        &format!(" {title}   {w}×{h}px{hint}   [q] quit"),
+        &format!(" {title}   {w}×{h}px{hint}   [←/q] back"),
     );
 }
 

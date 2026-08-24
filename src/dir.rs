@@ -2943,8 +2943,8 @@ impl App {
 
     fn preview_markdown(&mut self, src: String) {
         let width = preview_text_width();
-        let (lines, _, _) = crate::markdown::Rendered::build(&src).layout(width);
-        self.preview.extend(lines.into_iter().take(600));
+        let layout = crate::markdown::Rendered::build(&src).layout(width);
+        self.preview.extend(layout.display.into_iter().take(600));
     }
 
     /// Spreadsheet preview: the first rows/cols rendered as an aligned grid (the
@@ -3038,11 +3038,11 @@ impl App {
             self.preview.push(no_preview());
             return;
         };
-        let ext = path
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
+        let key = path
+            .file_name()
+            .map(|n| highlight::lang_key(&n.to_string_lossy()))
             .unwrap_or_default();
-        if !highlight::is_text_ext(&ext) {
+        if !highlight::is_text_ext(&key) {
             // Unrecognised type: keep the original flat, single-colour rendering.
             for l in text.lines() {
                 self.preview.push(Line::from(Span::styled(
@@ -3052,7 +3052,7 @@ impl App {
             }
             return;
         }
-        let syntax = highlight::syntax_for(&ext).unwrap_or(highlight::PLAIN);
+        let syntax = highlight::syntax_for(&key).unwrap_or(highlight::PLAIN);
         for line in highlight::highlight(&text, syntax) {
             let spans: Vec<Span> = line
                 .into_iter()
@@ -3601,14 +3601,14 @@ impl App {
                         c
                     }
                     IconMode::Nerd => {
-                        let ext = hit
+                        let key = hit
                             .path
-                            .extension()
-                            .map(|x| x.to_string_lossy().to_lowercase())
+                            .file_name()
+                            .map(|n| highlight::lang_key(&n.to_string_lossy()))
                             .unwrap_or_default();
-                        let c = icons::nerd_color(&ext, hit.kind);
+                        let c = icons::nerd_color(&key, hit.kind);
                         spans.push(Span::styled(
-                            format!("{} ", icons::nerd_glyph(&ext, hit.kind)),
+                            format!("{} ", icons::nerd_glyph(&key, hit.kind)),
                             Style::default().fg(c),
                         ));
                         c
@@ -4121,15 +4121,11 @@ fn entry_items(
                     c
                 }
                 IconMode::Nerd => {
-                    // Same lowercased-extension convention as `classify_path`.
-                    let ext = e
-                        .path
-                        .extension()
-                        .map(|x| x.to_string_lossy().to_lowercase())
-                        .unwrap_or_default();
-                    let c = icons::nerd_color(&ext, e.kind);
+                    // Same `lang_key` convention as `classify_path`.
+                    let key = highlight::lang_key(&e.name);
+                    let c = icons::nerd_color(&key, e.kind);
                     spans.push(Span::styled(
-                        format!("{} ", icons::nerd_glyph(&ext, e.kind)),
+                        format!("{} ", icons::nerd_glyph(&key, e.kind)),
                         Style::default().fg(fade(c)),
                     ));
                     c
@@ -4249,13 +4245,10 @@ fn read_entries(dir: &Path, sort: Sort) -> Vec<Entry> {
             let path = ent.path();
             let meta = ent.metadata().ok();
             let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-            // Classify by extension only — no per-entry file read, keeping
+            // Classify by lang_key only, no per-entry file read, keeping
             // directory loading content-free and fast.
-            let ext = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_lowercase())
-                .unwrap_or_default();
-            let kind = crate::format::classify(&ext, is_dir, None);
+            let key = highlight::lang_key(&name);
+            let kind = crate::format::classify(&key, is_dir, None);
             entries.push(Entry {
                 name,
                 path,

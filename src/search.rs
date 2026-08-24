@@ -20,8 +20,8 @@
 //! ## The per-entry pipeline (the interesting part)
 //! For every entry the walker visits we:
 //!   1. skip the root itself,
-//!   2. derive `name`/`is_dir`/`size`/`modified`/`ext` exactly as
-//!      `dir::read_entries` does — classification is by extension only, no
+//!   2. derive `name`/`is_dir`/`size`/`modified`/`key` (lang_key) exactly as
+//!      `dir::read_entries` does: classification is by lang_key only, no
 //!      per-file read (mirrors ADR 0001's cheap listing path),
 //!   3. apply [`Query::matches`] — the **pure, metadata-only** predicate the
 //!      local filter also uses (ADR 0007 D2) — as a cheap reject,
@@ -267,13 +267,10 @@ fn visit(
     let meta = entry.metadata().ok();
     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let modified = meta.and_then(|m| m.modified().ok());
-    // Classify by extension only (pass no head) — identical to the browser's
+    // Classify by lang_key only (pass no head), identical to the browser's
     // listing path (`dir::read_entries`); no per-entry file read for kind.
-    let ext = path
-        .extension()
-        .map(|e| e.to_string_lossy().to_lowercase())
-        .unwrap_or_default();
-    let kind = crate::format::classify(&ext, is_dir, None);
+    let key = crate::highlight::lang_key(&name);
+    let kind = crate::format::classify(&key, is_dir, None);
 
     // Cheap, pure metadata reject (name fuzzy + kind/ext/size/age). This is the
     // same predicate the local filter runs; it gates every entry before any file

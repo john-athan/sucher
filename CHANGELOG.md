@@ -6,6 +6,43 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Added
+- **Links in the markdown viewer actually go somewhere, and they are clickable.**
+  A link to a file (`./notes.md`, `../src/main.rs`) or an in-document anchor
+  (`#install`) previously did nothing at all: the picker only ever handed a
+  target to the OS browser, and the allow-list guarding that opener refused
+  everything that was not `http`/`https`/`mailto`. A schemeless local path now
+  opens in sucher's own viewer, an anchor jumps to the heading, and a left-click
+  activates a link where the pointer sits. `file://` and every other scheme is
+  still refused, because the new door leads to sucher rather than to the OS
+  (ADR 0019).
+- **Dockerfiles are recognised and highlighted.** A `Dockerfile` has no
+  extension, so the browser had been listing it as a generic binary "File" and
+  opening it with no highlighting at all. Language and format are now keyed off
+  the file NAME, which also fixes `Makefile`, `.gitignore` and `.env`; the
+  `.gitignore` entry in the text-type table had never once matched, which is the
+  evidence the old extension key was wrong (ADR 0018).
+- **Left backs out of a view that has nothing to its left.** In the hex, SVG,
+  image and markdown viewers the arrow was a dead key, and in the text viewer it
+  was dead for any file with no line long enough to pan. It now closes the view
+  exactly where it is not already a motion, so `pdf` page turns, `video` seeks,
+  `sheet` columns and `archive` levels are untouched. `h` stays pure motion
+  everywhere (ADR 0020).
+
+### Fixed
+- **Syntax highlighting no longer leaks into Python docstrings.** In
+  `""" nothing here is deployed """` the word `is` was coloured as a keyword:
+  the highlighter only understood single-character string delimiters, so `"""`
+  parsed as an empty string followed by an opening quote and the body was
+  tokenised as code. Multi-line spans are now first-class and carry their own
+  token kind, which fixes `'''` docstrings and JavaScript template literals
+  by the same stroke (ADR 0018 D3).
+
+### Changed
+- **`--no-mouse` reaches every viewer**, not just the browser. It had been
+  threaded in as a `dir::run` parameter, and the viewers the browser opens
+  in-process never see a `Config`, so they had no way to honour it.
+
 ## [0.6.3] - 2026-08-14
 
 ### Added

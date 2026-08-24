@@ -114,7 +114,9 @@ impl App {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
                         match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                            // Left closes the view: the source pane scrolls only
+                            // vertically, so the arrow has no motion to mean instead.
+                            KeyCode::Char('q') | KeyCode::Esc | KeyCode::Left => return Ok(()),
                             KeyCode::Char('x') => crate::util::open_in_native_app(&self.path),
                             KeyCode::Char('j') | KeyCode::Down => {
                                 self.offset = (self.offset + 1).min(self.max_offset())
@@ -150,7 +152,7 @@ impl App {
 
         let (w, h) = self.dims;
         let status = format!(
-            " {}   SVG {w}×{h}px   [j/k] scroll source  [x] open  [q] quit",
+            " {}   SVG {w}×{h}px   [j/k] scroll source  [x] open  [←/q] back",
             self.title
         );
         f.render_widget(

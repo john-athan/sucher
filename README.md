@@ -90,6 +90,7 @@ real pixels where one is available.
 | Markdown | `.md` `.markdown` `.mdx` | [`pulldown-cmark`](https://crates.io/crates/pulldown-cmark) |
 | HTML | `.html` `.htm` `.xhtml` | [`html5ever`](https://crates.io/crates/html5ever) DOM walk → markdown renderer |
 | Text / source | code, `.txt` `.log`, config files, extension-less UTF-8 text | syntax-highlighted text viewer (no soft-wrap; pan + search) |
+| Name-keyed types | `Dockerfile` (also `Dockerfile.dev`, `web.dockerfile`), `Makefile`, `.gitignore`, `.env` | recognised by file NAME rather than extension, then highlighted like any source file |
 | Spreadsheet | `.xlsx`, `.xlsm` | streaming reader (zip + quick-xml) on a worker thread |
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
 | Data — columnar | `.parquet` `.pq` | embedded **DuckDB** (`read_parquet`) |
@@ -426,11 +427,18 @@ claiming more than it knows.
 **Markdown** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
 `t` table of contents · `/` search (`n`/`N` next/prev) · `l` link picker ·
 `i` image gallery (for docx/pptx/epub/ipynb embedded media; `n`/`p` cycle) ·
-`x` open in native app · `?` help · `q` quit.
+`x` open in native app · `?` help · `←`/`q` back. **Links are clickable**: a
+left-click activates the link under the pointer, and `l` still picks one by
+keyboard. A `http`/`https`/`mailto` target opens in your browser, a `#heading`
+jumps within the document, and a relative or absolute file path opens in sucher
+itself. Any other scheme (`file://`, `javascript:`) is refused, and a path that
+is not on disk says so in the status bar instead of failing silently.
 
 **Text / source** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G`
 top/bottom · `h`/`l` pan long lines · `/` search (`n`/`N` next/prev) ·
-`x` open in native app · `q` quit.
+`x` open in native app · `←`/`q` back. `←` pans while a line is wider than the
+window, and closes the view once there is nothing left to pan to; `h` is always
+pan.
 
 **Spreadsheet** — `h`/`j`/`k`/`l` or arrows move cell · `PgUp`/`PgDn` ·
 `g`/`G` top/bottom · `Tab` / `[` `]` switch sheet · `/` search all cells
@@ -446,11 +454,11 @@ through is near-instant; visited pages stay cached. `libpdfium` is embedded in
 the binary at build time, so the fast path works out of the box; set
 `SUCHER_PDFIUM_LIB` to override with a specific copy.
 
-**Image** — `x` open in native app · `q` quit.
+**Image** — `x` open in native app · `←`/`q` back.
 
 **SVG** — the rasterised picture fills the top pane; the XML source scrolls
 below it with `j`/`k` `↑`/`↓` · `g`/`G` top/bottom · `x` open in native app ·
-`q` quit.
+`←`/`q` back.
 
 **Video** — auto-plays on open · `space` play/pause · `←`/`→` ±5 s ·
 `↑`/`↓` ±30 s · `,`/`.` frame step · `g`/`G` start/end · `x` open in native app ·
@@ -462,7 +470,7 @@ below it with `j`/`k` `↑`/`↓` · `g`/`G` top/bottom · `x` open in native ap
 breadcrumb; sucher lists and lets you browse folders, but never extracts.
 
 **Binary (hex)** — `j`/`k` `↑`/`↓` scroll · `d`/`u` page · `g`/`G` top/end ·
-`x` open in native app · `q` quit.
+`x` open in native app · `←`/`q` back.
 
 ## Remote filesystems (S3, GCS, …)
 
@@ -512,7 +520,8 @@ fileop/        file operations: collect (bounded walk) -> plan (pure) -> execute
 lineedit.rs    single-line buffer with a cursor, for the rename/create prompt
 git.rs         gutter + HEAD readout: two `git` calls, pure mapping around them
 markdown.rs    parse → logical lines + TOC + links; width-aware wrap/layout
-tui.rs         markdown TUI (scroll / TOC / search / links)
+               (layout also reports where each link sits, so a click can hit it)
+tui.rs         markdown TUI (scroll / TOC / search / clickable links)
 text.rs        source/plain-text TUI (highlight, no wrap, pan + search)
 plain.rs       one-shot markdown renderer (kitty text-sizing in pipe mode)
 sheet.rs       grid UI over a `Book` (eager calamine, streaming xlsx, or lazy data)
@@ -534,7 +543,8 @@ hex.rs         canonical hexdump viewer for binary files
 media.rs       shared graphics pane (ratatui-image protocol probe + render)
 config.rs      flag -> env -> file -> default resolution, into one `Config`
 theme.rs       the palettes: one source of truth for every viewer's colours
-highlight.rs   dependency-free tokenizer the text viewer colours through theme
+highlight.rs   dependency-free tokenizer the text viewer colours through theme;
+               also maps a file NAME to its language key (Dockerfile, Makefile)
 icons.rs       per-extension glyphs and tints, layered above `Format`
 anim.rs        wall-clock animation core (fade, zoom), framerate-independent
 util.rs        shared formatting helpers (sizes, times, the metadata line)
