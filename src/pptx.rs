@@ -74,8 +74,8 @@ fn slide_paragraphs(xml: &str) -> Vec<String> {
         match r.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"a:p" => cur.clear(),
-                b"a:t" => in_text = true,
+                "a:p" => cur.clear(),
+                "a:t" => in_text = true,
                 _ => {}
             },
             Ok(Event::Text(t)) if in_text => {
@@ -85,8 +85,8 @@ fn slide_paragraphs(xml: &str) -> Vec<String> {
                 cur.push_str(&crate::util::xml_ref(&r));
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"a:t" => in_text = false,
-                b"a:p" => {
+                "a:t" => in_text = false,
+                "a:p" => {
                     let text = cur.trim();
                     if !text.is_empty() {
                         paras.push(text.to_string());

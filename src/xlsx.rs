@@ -169,13 +169,13 @@ fn read_workbook_sheets(zip: &mut zip::ZipArchive<File>) -> Result<Vec<(String, 
     let mut buf = Vec::new();
     loop {
         match rd.read_event_into(&mut buf) {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"sheet" => {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == "sheet" => {
                 let mut name = String::new();
                 let mut rid = String::new();
                 for a in e.attributes().flatten() {
                     match a.key.as_ref() {
-                        b"name" => name = String::from_utf8_lossy(&a.value).into_owned(),
-                        b"r:id" => rid = String::from_utf8_lossy(&a.value).into_owned(),
+                        "name" => name = a.value.into_owned(),
+                        "r:id" => rid = a.value.into_owned(),
                         _ => {}
                     }
                 }
@@ -194,13 +194,13 @@ fn read_workbook_sheets(zip: &mut zip::ZipArchive<File>) -> Result<Vec<(String, 
     let mut buf = Vec::new();
     loop {
         match rd.read_event_into(&mut buf) {
-            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == b"Relationship" => {
+            Ok(Event::Empty(e)) | Ok(Event::Start(e)) if e.name().as_ref() == "Relationship" => {
                 let mut id = String::new();
                 let mut target = String::new();
                 for a in e.attributes().flatten() {
                     match a.key.as_ref() {
-                        b"Id" => id = String::from_utf8_lossy(&a.value).into_owned(),
-                        b"Target" => target = String::from_utf8_lossy(&a.value).into_owned(),
+                        "Id" => id = a.value.into_owned(),
+                        "Target" => target = a.value.into_owned(),
                         _ => {}
                     }
                 }
@@ -247,11 +247,11 @@ fn read_shared_strings(zip: &mut zip::ZipArchive<File>) -> Vec<String> {
     loop {
         match rd.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"si" => {
+                "si" => {
                     cur.clear();
                     in_si = true;
                 }
-                b"t" => in_t = true,
+                "t" => in_t = true,
                 _ => {}
             },
             Ok(Event::Text(t)) if in_t && in_si => {
@@ -261,8 +261,8 @@ fn read_shared_strings(zip: &mut zip::ZipArchive<File>) -> Vec<String> {
                 cur.push_str(&crate::util::xml_ref(&r));
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"t" => in_t = false,
-                b"si" => {
+                "t" => in_t = false,
+                "si" => {
                     out.push(std::mem::take(&mut cur));
                     in_si = false;
                 }
@@ -397,22 +397,22 @@ where
         }
         match rd.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"row" => {
+                "row" => {
                     row = Vec::new();
                     col = 0;
                 }
-                b"c" => {
+                "c" => {
                     ctype = b'n';
                     let mut cref: Option<Vec<u8>> = None;
                     for a in e.attributes().flatten() {
                         match a.key.as_ref() {
-                            b"r" => cref = Some(a.value.into_owned()),
-                            b"t" => {
+                            "r" => cref = Some(a.value.as_bytes().to_vec()),
+                            "t" => {
                                 ctype = match a.value.as_ref() {
-                                    b"s" => b's',
-                                    b"inlineStr" => b'i',
-                                    b"str" => b'l',
-                                    b"b" => b'b',
+                                    "s" => b's',
+                                    "inlineStr" => b'i',
+                                    "str" => b'l',
+                                    "b" => b'b',
                                     _ => b'n',
                                 }
                             }
@@ -427,11 +427,11 @@ where
                     }
                     val.clear();
                 }
-                b"v" => {
+                "v" => {
                     in_v = true;
                     val.clear();
                 }
-                b"t" => in_t = true,
+                "t" => in_t = true,
                 _ => {}
             },
             Ok(Event::Text(t)) => {
@@ -445,9 +445,9 @@ where
                 }
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"v" => in_v = false,
-                b"t" => in_t = false,
-                b"c" => {
+                "v" => in_v = false,
+                "t" => in_t = false,
+                "c" => {
                     let resolved = match ctype {
                         b's' => val
                             .trim()
@@ -471,7 +471,7 @@ where
                     row[col] = resolved;
                     col += 1;
                 }
-                b"row" if on_row(std::mem::take(&mut row)) => {
+                "row" if on_row(std::mem::take(&mut row)) => {
                     return;
                 }
                 _ => {}

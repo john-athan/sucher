@@ -91,11 +91,11 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
 /// An element attribute's value by exact (unqualified) key. epub's container/OPF
 /// attributes (`full-path`, `href`, `media-type`, `id`, `idref`) carry no
 /// namespace prefix, so a plain byte match suffices. None when absent.
-fn attr(e: &BytesStart, name: &[u8]) -> Option<String> {
+fn attr(e: &BytesStart, name: &str) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.as_ref() == name)
-        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        .map(|a| a.value.into_owned())
 }
 
 /// The OPF package file's full path from `META-INF/container.xml`: the
@@ -109,8 +109,8 @@ fn opf_path_from_container(xml: &str) -> Option<String> {
         match r.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == b"rootfile" {
-                    if let Some(p) = attr(&e, b"full-path") {
+                if e.local_name().as_ref() == "rootfile" {
+                    if let Some(p) = attr(&e, "full-path") {
                         return Some(p);
                     }
                 }
@@ -150,14 +150,14 @@ fn spine_hrefs(opf_xml: &str, opf_dir: &str) -> Vec<String> {
         match r.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => match e.local_name().as_ref() {
-                b"item" => {
-                    if let (Some(id), Some(href)) = (attr(&e, b"id"), attr(&e, b"href")) {
-                        let mt = attr(&e, b"media-type").unwrap_or_default();
+                "item" => {
+                    if let (Some(id), Some(href)) = (attr(&e, "id"), attr(&e, "href")) {
+                        let mt = attr(&e, "media-type").unwrap_or_default();
                         manifest.insert(id, (href, mt));
                     }
                 }
-                b"itemref" => {
-                    if let Some(idref) = attr(&e, b"idref") {
+                "itemref" => {
+                    if let Some(idref) = attr(&e, "idref") {
                         order.push(idref);
                     }
                 }

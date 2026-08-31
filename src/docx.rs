@@ -25,16 +25,16 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
     Ok(parse(&xml))
 }
 
-fn attr_val(e: &BytesStart, name: &[u8]) -> Option<String> {
+fn attr_val(e: &BytesStart, name: &str) -> Option<String> {
     e.attributes()
         .flatten()
         .find(|a| a.key.as_ref() == name)
-        .map(|a| String::from_utf8_lossy(&a.value).into_owned())
+        .map(|a| a.value.into_owned())
 }
 
 /// A boolean toggle property (<w:b/>, <w:i/>) is on unless w:val says otherwise.
 fn toggle_on(e: &BytesStart) -> bool {
-    match attr_val(e, b"w:val") {
+    match attr_val(e, "w:val") {
         Some(v) => !matches!(v.as_str(), "0" | "false" | "off"),
         None => true,
     }
@@ -91,25 +91,25 @@ fn parse(xml: &str) -> String {
 }
 
 impl Parser {
-    fn open(&mut self, name: &[u8], e: &BytesStart) {
+    fn open(&mut self, name: &str, e: &BytesStart) {
         match name {
-            b"w:p" => {
+            "w:p" => {
                 self.para.clear();
                 self.style = None;
                 self.is_list = false;
             }
-            b"w:pStyle" => self.style = attr_val(e, b"w:val"),
-            b"w:numPr" => self.is_list = true,
-            b"w:b" => self.bold = toggle_on(e),
-            b"w:i" => self.italic = toggle_on(e),
-            b"w:t" => self.in_text = true,
-            b"w:tbl" => {
+            "w:pStyle" => self.style = attr_val(e, "w:val"),
+            "w:numPr" => self.is_list = true,
+            "w:b" => self.bold = toggle_on(e),
+            "w:i" => self.italic = toggle_on(e),
+            "w:t" => self.in_text = true,
+            "w:tbl" => {
                 self.in_table = true;
                 self.rows.clear();
                 self.first_row_cols = 0;
             }
-            b"w:tr" => self.row = Vec::new(),
-            b"w:tc" => {
+            "w:tr" => self.row = Vec::new(),
+            "w:tc" => {
                 self.in_cell = true;
                 self.cell.clear();
             }
@@ -132,26 +132,26 @@ impl Parser {
         self.para.push_str(&piece);
     }
 
-    fn close(&mut self, name: &[u8]) {
+    fn close(&mut self, name: &str) {
         match name {
-            b"w:t" => self.in_text = false,
-            b"w:r" => {
+            "w:t" => self.in_text = false,
+            "w:r" => {
                 self.bold = false;
                 self.italic = false;
             }
-            b"w:p" => {
+            "w:p" => {
                 if self.in_cell {
                     self.cell.push(' ');
                 } else {
                     self.flush_para();
                 }
             }
-            b"w:tc" => {
+            "w:tc" => {
                 self.in_cell = false;
                 self.row.push(self.cell.trim().to_string());
             }
-            b"w:tr" => self.rows.push(std::mem::take(&mut self.row)),
-            b"w:tbl" => {
+            "w:tr" => self.rows.push(std::mem::take(&mut self.row)),
+            "w:tbl" => {
                 self.in_table = false;
                 self.flush_table();
             }
