@@ -6,6 +6,18 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-31
+
+### Fixed
+- **Builds again against current dependencies.** `quick-xml` 0.42 moved parsed
+  event and attribute content from bytes to `&str` (`Event::name()`/`QName`
+  comparisons, attribute values, and `BytesText` decoding all changed shape),
+  which broke every XML call site in the office-format readers. Ported
+  `xlsx.rs`, `docx.rs`, `epub.rs`, `pptx.rs`, and `util.rs` to the new
+  string-based API; behavior is unchanged. No user-visible effect, but a
+  dependency bump that used to leave the crate uncompilable now goes through
+  clean.
+
 ## [0.7.0] - 2026-08-24
 
 ### Added
