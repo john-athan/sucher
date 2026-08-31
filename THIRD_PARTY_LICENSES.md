@@ -16,7 +16,7 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 358 |
+| MIT License | 359 |
 | Apache License 2.0 | 20 |
 | ISC License | 19 |
 | BSD 3-Clause "New" or "Revised" License | 9 |
@@ -7918,7 +7918,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `calamine 0.36.1`
+Used by `calamine 0.36.1`, `quick-xml 0.42.0`
 
 ```
 The MIT License (MIT)
