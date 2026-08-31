@@ -417,7 +417,7 @@ fn is_raster_name(name: &str) -> bool {
 /// events, so a `Text` event never contains `&…;` — decoding is all that's
 /// needed here; see [`xml_ref`] for the entity side. Empty on a decode error.
 pub fn xml_text(t: &BytesText) -> String {
-    t.decode().map(|c| c.into_owned()).unwrap_or_default()
+    t.as_ref().to_owned()
 }
 
 /// Resolve an XML entity reference (`Event::GeneralRef`) to its text: the five
@@ -425,7 +425,7 @@ pub fn xml_text(t: &BytesText) -> String {
 /// (`#65`, `#x41`). We rebuild the `&name;` form and reuse quick-xml's own
 /// unescaper so the mapping stays authoritative. Unknown entities → empty.
 pub fn xml_ref(r: &BytesRef) -> String {
-    let name = r.decode().map(|c| c.into_owned()).unwrap_or_default();
+    let name = r.as_ref();
     quick_xml::escape::unescape(&format!("&{name};"))
         .map(|c| c.into_owned())
         .unwrap_or_default()
