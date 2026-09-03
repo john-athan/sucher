@@ -1,5 +1,10 @@
 name: CI
 
+# A caller, never a container. Everything below is `make check`, which is the
+# same target `oss check sucher` runs and the same one to run by hand before a
+# push. There is one definition of what green means, in the Makefile, rather
+# than one here and a different one on the machine the code was written on.
+
 on:
   push:
     branches: [main]
@@ -7,6 +12,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -17,61 +26,17 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Format
-        run: cargo fmt --check
-      - name: Clippy
-        run: cargo clippy -- -D warnings
-      - name: Test
-        run: cargo test
-      - name: Build (release)
-        run: cargo build --release
-      # Guard the lean build: the `data` feature (DuckDB, ADR 0016) is default-on,
-      # so also prove the crate still compiles and its non-DuckDB tests pass with
-      # it off — this path has silently broken before.
-      - name: Build & test without default features (lean)
-        run: |
-          cargo build --no-default-features
-          cargo test --no-default-features
 
-  deny:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
 
-  # deny.toml decides which licenses may enter the tree; this job proves the
-  # notices we actually ship still match the tree that check passed. A dependency
-  # bump that adds a crate silently drops its copyright line otherwise, and the
-  # release binary carries that crate's code either way.
-  notices:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
       # Pinned, and pinned in ONE place that `make notices` reads too. `--locked`
       # pins cargo-about's own dependencies, NOT cargo-about itself, so an
       # unpinned install silently upgrades the generator: 0.9.2 resolves
       # target-specific crates 0.9.1 missed, which turned this job red on a
-      # release day with no change to the tree. The generator is an input to the
-      # comparison, so it belongs under the same version control as the rest.
+      # release day with no change to the tree.
       - name: Install cargo-about
         run: cargo install cargo-about --locked --features cli --version "$(cat .cargo-about-version)"
-      # Upstream license texts carry CRLF, trailing spaces and stray blank lines,
-      # and not identically on every machine that extracts them. Left alone, the
-      # regenerated file differs from the committed one in whitespace only and
-      # this job is red forever. Normalising costs nothing: a notice has to carry
-      # the text, not its incidental spacing.
-      - name: Regenerate notices
-        run: make notices
-      - name: Fail if committed notices are stale
-        run: |
-          if ! git diff --quiet -- THIRD_PARTY_LICENSES.md; then
-            echo "THIRD_PARTY_LICENSES.md is out of date. Regenerate it with:"
-            echo "  make notices"
-            echo
-            git diff -- THIRD_PARTY_LICENSES.md | head -60
-            exit 1
-          fi
+
+      - name: Check
+        run: make check

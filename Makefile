@@ -7,7 +7,27 @@ CARGO_BIN := $(HOME)/.cargo/bin
 # `SUCHER_PDFIUM_LIB` at it; set `SUCHER_PDFIUM_NO_EMBED=1` to skip embedding
 # entirely (PDFs then use the poppler fallback).
 
-.PHONY: build install link uninstall run notices
+.PHONY: build install link uninstall run notices check
+
+# Everything CI checks, in the order CI checks it, runnable here first. `oss
+# check sucher` calls exactly this, and so does .github/workflows/ci.yml, so
+# there is one definition of what "green" means rather than three.
+check:
+	cargo fmt --check
+	cargo clippy -- -D warnings
+	cargo test
+	cargo build --release
+	cargo build --no-default-features
+	cargo test --no-default-features
+	cargo deny check
+	$(MAKE) notices
+	@git diff --quiet -- THIRD_PARTY_LICENSES.md || { \
+		echo "THIRD_PARTY_LICENSES.md is out of date; `make notices` rewrote it."; \
+		git diff --stat -- THIRD_PARTY_LICENSES.md; \
+		exit 1; \
+	}
+	@echo "check: everything passes"
+
 
 build:
 	cargo build --release
