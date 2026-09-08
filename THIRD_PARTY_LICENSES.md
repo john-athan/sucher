@@ -7016,7 +7016,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `base64-simd 0.8.0`, `chrono 0.4.45`, `duckdb 1.10505.0`, `icy_sixel 0.5.0`, `libm 0.2.16`, `objc2-encode 4.1.0`, `objc2-foundation 0.3.2`, `objc2 0.6.4`, `pdfium-render 0.9.3`, `profiling-procmacros 1.0.18`, `profiling 1.0.18`, `quantette 0.5.1`, `simd_helpers 0.1.0`, `siphasher 1.0.3`, `vsimd 0.8.0`, `wide 0.8.3`, `windows-core 0.56.0`, `windows-core 0.58.0`, `windows-implement 0.56.0`, `windows-implement 0.58.0`, `windows-interface 0.56.0`, `windows-interface 0.58.0`, `windows-link 0.2.1`, `windows-result 0.1.2`, `windows-result 0.2.0`, `windows-strings 0.1.0`, `windows-sys 0.59.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows 0.56.0`, `windows 0.58.0`, `windows_x86_64_gnu 0.52.6`, `windows_x86_64_msvc 0.52.6`, `zune-inflate 0.2.54`
+Used by `base64-simd 0.8.0`, `chrono 0.4.45`, `duckdb 1.10505.0`, `icy_sixel 0.5.0`, `libm 0.2.16`, `objc2-encode 4.1.0`, `objc2-foundation 0.3.2`, `objc2 0.6.4`, `pdfium-render 0.9.3`, `profiling-procmacros 1.0.18`, `profiling 1.0.18`, `quantette 0.5.1`, `simd_helpers 0.1.0`, `siphasher 1.0.3`, `vsimd 0.8.0`, `wide 0.8.3`, `windows-core 0.56.0`, `windows-core 0.58.0`, `windows-implement 0.56.0`, `windows-implement 0.58.0`, `windows-interface 0.56.0`, `windows-interface 0.58.0`, `windows-link 0.2.1`, `windows-result 0.1.2`, `windows-result 0.2.0`, `windows-strings 0.1.0`, `windows-sys 0.52.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows 0.56.0`, `windows 0.58.0`, `windows_x86_64_gnu 0.52.6`, `windows_x86_64_msvc 0.52.6`, `zune-inflate 0.2.54`
 
 ```
 MIT License
@@ -8244,7 +8244,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `ratatui-image 11.0.7`
+Used by `ratatui-image 11.0.8`
 
 ```
 The MIT License (MIT)
