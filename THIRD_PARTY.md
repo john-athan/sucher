@@ -53,8 +53,7 @@ viewers. They contain no third-party content.
 
 ## Reviewed and cleared
 
-Findings from [`scripts/provenance-check.py`](scripts/provenance-check.py) that
-were investigated and closed. Kept so the reasoning survives longer than the
+Findings from `oss provenance sucher` that were investigated and closed. Kept so the reasoning survives longer than the
 memory of it.
 
 ### `base64_encode` in `src/util.rs` (reviewed 2026-08-10)
