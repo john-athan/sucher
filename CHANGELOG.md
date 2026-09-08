@@ -6,6 +6,19 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-09-08
+
+### Changed
+- **Dependencies bumped, and the notices bumped with them.** `flate2` 1.1.10,
+  `toml` 1.1.5, `trash` 5.2.7 and the `miniz_oxide` 0.9.1 that `flate2` pulls
+  in. `THIRD_PARTY_LICENSES.md` is regenerated in the same commit, which is
+  what the Dependabot pull request could not do on its own: it carried a
+  lockfile only, and `make check` fails when the regenerated notices differ
+  from the tree.
+- **The provenance gate lives in oss-kit now, and CI calls `make check`.** The
+  476 line checker used to sit in this repository in a copy shared with six
+  others. Nothing about the binary changes.
+
 ## [0.7.1] - 2026-08-31
 
 ### Fixed
