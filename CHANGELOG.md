@@ -6,6 +6,13 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-08
+
+### Changed
+- Sagen, woher die Herkunftspruefung heute laeuft
+- ratatui-image auf 11.0.8 heben
+- Die erzeugten Lizenzhinweise auf 0.7.2 nachziehen
+
 ## [0.7.2] - 2026-09-08
 
 ### Changed
