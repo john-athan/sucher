@@ -16,7 +16,7 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 359 |
+| MIT License | 361 |
 | Apache License 2.0 | 20 |
 | ISC License | 19 |
 | BSD 3-Clause "New" or "Revised" License | 9 |
@@ -3279,7 +3279,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `flate2 1.1.9`
+Used by `flate2 1.1.10`
 
 ```
 Copyright (c) 2014-2026 Alex Crichton
@@ -5668,7 +5668,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `serde_spanned 1.1.1`, `toml 1.1.4+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
+Used by `serde_spanned 1.1.1`, `toml 1.1.5+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
 
 ```
 Copyright (c) Individual contributors
@@ -5915,7 +5915,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `trash 5.2.6`
+Used by `trash 5.2.7`
 
 ```
 Copyright 2019 Artúr Barnabás Kovács
@@ -7100,7 +7100,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `miniz_oxide 0.8.9`
+Used by `miniz_oxide 0.8.9`, `miniz_oxide 0.9.1`
 
 ```
 MIT License
@@ -7132,7 +7132,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `miniz_oxide 0.8.9`
+Used by `miniz_oxide 0.8.9`, `miniz_oxide 0.9.1`
 
 ```
 MIT License
@@ -8244,7 +8244,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `ratatui-image 11.0.6`
+Used by `ratatui-image 11.0.7`
 
 ```
 The MIT License (MIT)
