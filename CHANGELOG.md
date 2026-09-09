@@ -6,6 +6,18 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-09
+
+### Added
+- **Saved email messages open as documents.** `s message.eml` and
+  `s message.msg` show the subject as the heading, the envelope, the body, and
+  the attachment list, with inline images in the gallery (`i`). An HTML body
+  goes through the same reducer `.html` uses, so marketing mail reads as text
+  rather than tag soup; a plain-text body keeps its `>` quoting as blockquotes.
+  `.eml` is parsed as MIME (`mail-parser`), `.msg` off Outlook's property
+  streams (`cfb`), and which reader runs is decided by the bytes, so a misnamed
+  file still opens. Filter for them with `kind:email`. See `docs/adr/0021`.
+
 ## [0.8.0] - 2026-09-09
 
 ### Changed

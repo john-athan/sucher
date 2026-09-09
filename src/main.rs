@@ -1,8 +1,8 @@
 // sucher, a fast terminal viewer for files that are awkward in a browser:
 // markdown, source/plain text, spreadsheets (incl. csv/tsv), PDF, images, video,
-// docx, pptx, Keynote, archives, binary (hex), and directories. One command
-// dispatches by a single classification registry (`format.rs`) to a per-type
-// viewer.
+// docx, pptx, Keynote, saved email (.eml/.msg), archives, binary (hex), and
+// directories. One command dispatches by a single classification registry
+// (`format.rs`) to a per-type viewer.
 //
 // Interactive TUI when stdout is a tty; falls back to a one-shot text dump when
 // piped or with --plain (markdown can use the kitty text-sizing protocol for
@@ -16,6 +16,7 @@ mod config;
 mod data;
 mod dir;
 mod docx;
+mod email;
 mod epub;
 mod fileop;
 mod format;
@@ -259,6 +260,21 @@ fn run() -> ExitCode {
             };
             return render_markdown(interactive, title, src, images, Some(path.clone()));
         }
+        Format::Email => {
+            let src = match email::to_markdown(&path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("sucher: {path}: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let images = if interactive {
+                email::media(&path)
+            } else {
+                Vec::new()
+            };
+            return render_markdown(interactive, title, src, images, Some(path.clone()));
+        }
         Format::Ipynb => {
             let src = match ipynb::to_markdown(&path) {
                 Ok(s) => s,
@@ -457,6 +473,13 @@ pub fn open_interactive(path: &str) {
         },
         Format::Epub => match epub::to_markdown(path) {
             Ok(src) => tui::run(title, src, epub::media(path), Some(path.to_string())),
+            Err(e) => {
+                eprintln!("sucher: {path}: {e}");
+                Ok(())
+            }
+        },
+        Format::Email => match email::to_markdown(path) {
+            Ok(src) => tui::run(title, src, email::media(path), Some(path.to_string())),
             Err(e) => {
                 eprintln!("sucher: {path}: {e}");
                 Ok(())

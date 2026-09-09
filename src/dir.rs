@@ -2876,6 +2876,13 @@ impl App {
                     Err(_) => self.preview.push(no_preview()),
                 }
             }
+            Format::Email => {
+                // .eml/.msg → markdown (envelope + body); on failure no preview.
+                match crate::email::to_markdown(&path.to_string_lossy()) {
+                    Ok(src) => self.preview_markdown(src),
+                    Err(_) => self.preview.push(no_preview()),
+                }
+            }
             Format::Ipynb => {
                 // .ipynb → markdown (cells + outputs); on failure show no preview.
                 match crate::ipynb::to_markdown(&path.to_string_lossy()) {

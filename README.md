@@ -11,8 +11,8 @@
 
 A fast terminal viewer for the files that are awkward to open in a browser:
 **markdown, spreadsheets, data files (Parquet, JSONL, SQLite, DuckDB), PDF,
-images, SVG, video, Word/PowerPoint/Keynote, EPUB e-books, archives, and raw
-binary**. All behind one tiny command:
+images, SVG, video, Word/PowerPoint/Keynote, EPUB e-books, saved email, archives,
+and raw binary**. All behind one tiny command:
 
 ```sh
 s report.md
@@ -24,6 +24,7 @@ s photo.jpg
 s diagram.svg
 s clip.mp4
 s deck.pptx
+s message.eml       # .eml and Outlook .msg: envelope, body, attachments
 s archive.zip
 s ~/projects        # or a directory, browse and open files in place
 s                   # no argument: browse the current directory
@@ -106,6 +107,7 @@ real pixels where one is available.
 | Presentation | `.pptx` | unzip + streaming XML (slide text) → markdown renderer |
 | E-book | `.epub` | unzip + spine order → HTML → markdown renderer |
 | Notebook | `.ipynb` | JSON cells → markdown + code + outputs (images to gallery) |
+| Email | `.eml` `.msg` | [`mail-parser`](https://crates.io/crates/mail-parser) (MIME) or [`cfb`](https://crates.io/crates/cfb) (Outlook) → markdown renderer |
 | Keynote | `.key` | embedded QuickLook preview image → graphics |
 | Archive | `.zip` `.tar` `.tar.gz` `.tgz` `.gz` | navigable table of contents (folders + path + size); no extraction |
 | Binary | unrecognized non-text files | scrolling canonical hexdump (`offset │ hex │ ASCII`) |
@@ -119,7 +121,7 @@ recognized but have no lister; extract them with a shell tool.
 
 When stdout is not a TTY (piped), sucher prints a sensible text dump instead of
 launching the TUI (`pdftotext` for PDF, TSV for sheets and data files, metadata for video,
-styled text for markdown/html/docx/pptx/epub/ipynb, faithful bytes for text/source, raw XML for
+styled text for markdown/html/docx/pptx/epub/ipynb/email, faithful bytes for text/source, raw XML for
 SVG, a canonical hexdump for binary, a `size⇥path` table for archives, a plain
 listing for directories).
 
@@ -341,7 +343,7 @@ breadcrumb segment to jump there;
 the wheel scrolls the list. The right pane renders a live
 preview of the selection: **images (animated GIFs loop in place), SVGs, PDFs
 (page 1), video posters, and Keynote previews as real pixels**,
-**markdown/docx/pptx/epub/ipynb with full typography**, a
+**markdown/docx/pptx/epub/ipynb/email with full typography**, a
 **grid preview for spreadsheets** (including csv/tsv), a **table of contents for
 archives**, a **hexdump for binary**, a child listing for folders, and the head
 of the file for text/code. Previews are cached as you move.
@@ -427,7 +429,7 @@ claiming more than it knows.
 
 **Markdown**: `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
 `t` table of contents · `/` search (`n`/`N` next/prev) · `l` link picker ·
-`i` image gallery (for docx/pptx/epub/ipynb embedded media; `n`/`p` cycle) ·
+`i` image gallery (for docx/pptx/epub/ipynb/email embedded media; `n`/`p` cycle) ·
 `x` open in native app · `?` help · `←`/`q` back. **Links are clickable**: a
 left-click activates the link under the pointer, and `l` still picks one by
 keyboard. A `http`/`https`/`mailto` target opens in your browser, a `#heading`
@@ -538,6 +540,7 @@ docx.rs        .docx → markdown (reuses the markdown renderer)
 pptx.rs        .pptx slide text → markdown (reuses the markdown renderer)
 epub.rs        .epub spine → HTML → markdown (reuses html.rs + the renderer)
 ipynb.rs       .ipynb JSON cells → markdown + code + outputs (reuses the renderer)
+email.rs       .eml MIME / .msg Outlook properties → markdown (reuses the renderer)
 keynote.rs     .key → embedded QuickLook preview image
 archive.rs     zip/tar/gz table-of-contents lister
 hex.rs         canonical hexdump viewer for binary files

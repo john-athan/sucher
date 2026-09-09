@@ -109,6 +109,7 @@ fn fallback_glyph(fmt: Format) -> &'static str {
         Format::Pptx | Format::Keynote => "\u{f1c4}", // powerpoint
         Format::Epub => "\u{f02d}",                   // book
         Format::Ipynb => "\u{e678}",                  // nf-seti-jupyter
+        Format::Email => "\u{f0e0}",                  // nf-fa-envelope
         Format::Archive => "\u{f1c6}",                // archive
         Format::Binary => "\u{f471}",                 // nf-oct-file_binary
     }

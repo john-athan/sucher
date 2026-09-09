@@ -43,6 +43,12 @@ pub const MAX_IMAGE_DIM: u32 = 20_000;
 /// decompression bomb inflates at most `max + 1` bytes here before we stop, and a
 /// parser is never handed a silently truncated half-document (ADR 0009).
 pub fn read_to_string_capped<R: Read>(reader: R, max: usize) -> Result<String, String> {
+    String::from_utf8(read_capped(reader, max)?).map_err(|_| "input is not valid UTF-8".to_string())
+}
+
+/// [`read_to_string_capped`] without the UTF-8 requirement, for sources whose
+/// bytes are not text (a saved email carries base64 and 8-bit parts).
+pub fn read_capped<R: Read>(reader: R, max: usize) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     reader
         .take(max as u64 + 1)
@@ -54,7 +60,7 @@ pub fn read_to_string_capped<R: Read>(reader: R, max: usize) -> Result<String, S
             human_size(max as u64)
         ));
     }
-    String::from_utf8(buf).map_err(|_| "input is not valid UTF-8".to_string())
+    Ok(buf)
 }
 
 /// `image::Limits` bounding decode to [`MAX_IMAGE_DIM`] on each axis, keeping the
@@ -410,21 +416,39 @@ fn extract_zip_images(archive: &str, keep: impl Fn(&str) -> bool) -> Vec<PathBuf
     if names.is_empty() {
         return Vec::new();
     }
+    let items: Vec<(String, Vec<u8>)> = names
+        .into_iter()
+        .filter_map(|name| {
+            let mut f = zip.by_name(&name).ok()?;
+            let mut bytes = Vec::new();
+            f.read_to_end(&mut bytes).ok()?;
+            Some((name, bytes))
+        })
+        .collect();
+    write_media(&items)
+}
+
+/// Write already-decoded media into the per-process temp directory the viewers
+/// read their image galleries from, returning the written paths in order.
+/// Best-effort: an unwritable directory or file is skipped, never fatal. The
+/// source-relative name is flattened (`/` and `\` → `_`) so members that share a
+/// basename across directories can't collide, and so an attachment named
+/// `../../x` can't escape the directory.
+///
+/// Used both by the zip extractors above and by formats whose media never sits
+/// in a zip at all (email parts, which arrive base64-decoded in memory).
+pub fn write_media(items: &[(String, Vec<u8>)]) -> Vec<PathBuf> {
+    if items.is_empty() {
+        return Vec::new();
+    }
     let dir = std::env::temp_dir().join(format!("sucher-media-{}", std::process::id()));
     if std::fs::create_dir_all(&dir).is_err() {
         return Vec::new();
     }
     let mut out = Vec::new();
-    for name in names {
-        let Ok(mut f) = zip.by_name(&name) else {
-            continue;
-        };
-        let mut bytes = Vec::new();
-        if f.read_to_end(&mut bytes).is_err() {
-            continue;
-        }
-        let dest = dir.join(name.replace('/', "_"));
-        if std::fs::write(&dest, &bytes).is_ok() {
+    for (name, bytes) in items {
+        let dest = dir.join(name.replace(['/', '\\'], "_"));
+        if std::fs::write(&dest, bytes).is_ok() {
             out.push(dest);
         }
     }
@@ -433,7 +457,7 @@ fn extract_zip_images(archive: &str, keep: impl Fn(&str) -> bool) -> Vec<PathBuf
 
 /// Does this archive member name end in a raster image extension the `image`
 /// crate can decode? (SVG/EMF/WMF vector media are skipped, no in-tree decoder.)
-fn is_raster_name(name: &str) -> bool {
+pub fn is_raster_name(name: &str) -> bool {
     let n = name.to_lowercase();
     [
         ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp",

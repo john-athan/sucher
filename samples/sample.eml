@@ -1,0 +1,120 @@
+Return-Path: <juergen@example.com>
+Message-ID: <20211120142201.4711@example.com>
+Date: Sat, 20 Nov 2021 14:22:01 +0100
+From: =?utf-8?Q?J=C3=BCrgen_Wei=C3=9F?= <juergen@example.com>
+To: Alice Neumann <alice@example.com>, bob@example.com
+Cc: Carol Ortiz <carol@example.com>
+Subject: =?utf-8?Q?Quartalsbericht_Q2=2C_kurzer_Stand?=
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer"
+
+--outer
+Content-Type: multipart/related; boundary="inner"
+
+--inner
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Hallo Team,
+
+kurzer Stand vor dem Kickoff:
+
+* Umsatz liegt 4% ueber Plan
+* Der Bericht haengt an
+* Naechster Termin: Montag 09:00
+
+> Kommt die Zahl aus dem alten Modell?
+
+Nein, aus dem neuen. Details im Bericht.
+
+Viele Gruesse
+Juergen
+
+--alt
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body>
+<p>Hallo Team,</p>
+<p>kurzer Stand vor dem <b>Kickoff</b>:</p>
+<ul><li>Umsatz liegt 4% =C3=BCber Plan</li><li>Der Bericht h=C3=A4ngt an</li>
+<li>N=C3=A4chster Termin: <i>Montag 09:00</i></li></ul>
+<blockquote>Kommt die Zahl aus dem alten Modell?</blockquote>
+<p>Nein, aus dem neuen. Details im Bericht.</p>
+<p><img src=3D"cid:chart@sucher" alt=3D"Chart"></p>
+<table><tr><th>Quartal</th><th>Umsatz</th></tr>
+<tr><td>Q1</td><td>120</td></tr><tr><td>Q2</td><td>134</td></tr></table>
+<p>Viele Gr=C3=BC=C3=9Fe<br>J=C3=BCrgen</p>
+</body></html>
+
+--alt--
+--inner
+Content-Type: image/png; name="chart.png"
+Content-ID: <chart@sucher>
+Content-Disposition: inline; filename="chart.png"
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAPAAAAB4CAIAAABD1OhwAAABXklEQVR4nO3SQQ3AIADAQJga5CAR
+qTNBQtLcKeijc+0zoOJ7HQA3GZoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYm
+xdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqh
+STE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5Ni
+aFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCk
+GJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0
+KYYmxdCkGJoUQ5NiaFIMTYqhSTE0KYYmxdCkGJoUQ5NiaFIMTYqhSTE0o+QHgc8CCOAywVMAAAAA
+SUVORK5CYII=
+--inner--
+--outer
+Content-Type: application/pdf; name="bericht.pdf"
+Content-Disposition: attachment; filename="bericht.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3Vy
+Y2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSIC9GMiAzIDAgUgo+PgplbmRvYmoKMiAwIG9iago8PAov
+QmFzZUZvbnQgL0hlbHZldGljYSAvRW5jb2RpbmcgL1dpbkFuc2lFbmNvZGluZyAvTmFtZSAvRjEg
+L1N1YnR5cGUgL1R5cGUxIC9UeXBlIC9Gb250Cj4+CmVuZG9iagozIDAgb2JqCjw8Ci9CYXNlRm9u
+dCAvSGVsdmV0aWNhLUJvbGQgL0VuY29kaW5nIC9XaW5BbnNpRW5jb2RpbmcgL05hbWUgL0YyIC9T
+dWJ0eXBlIC9UeXBlMSAvVHlwZSAvRm9udAo+PgplbmRvYmoKNCAwIG9iago8PAovQ29udGVudHMg
+MTAgMCBSIC9NZWRpYUJveCBbIDAgMCA2MTIgNzkyIF0gL1BhcmVudCA5IDAgUiAvUmVzb3VyY2Vz
+IDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0lt
+YWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9i
+ago1IDAgb2JqCjw8Ci9Db250ZW50cyAxMSAwIFIgL01lZGlhQm94IFsgMCAwIDYxMiA3OTIgXSAv
+UGFyZW50IDkgMCBSIC9SZXNvdXJjZXMgPDwKL0ZvbnQgMSAwIFIgL1Byb2NTZXQgWyAvUERGIC9U
+ZXh0IC9JbWFnZUIgL0ltYWdlQyAvSW1hZ2VJIF0KPj4gL1JvdGF0ZSAwIC9UcmFucyA8PAoKPj4g
+CiAgL1R5cGUgL1BhZ2UKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0NvbnRlbnRzIDEyIDAgUiAvTWVk
+aWFCb3ggWyAwIDAgNjEyIDc5MiBdIC9QYXJlbnQgOSAwIFIgL1Jlc291cmNlcyA8PAovRm9udCAx
+IDAgUiAvUHJvY1NldCBbIC9QREYgL1RleHQgL0ltYWdlQiAvSW1hZ2VDIC9JbWFnZUkgXQo+PiAv
+Um90YXRlIDAgL1RyYW5zIDw8Cgo+PiAKICAvVHlwZSAvUGFnZQo+PgplbmRvYmoKNyAwIG9iago8
+PAovUGFnZU1vZGUgL1VzZU5vbmUgL1BhZ2VzIDkgMCBSIC9UeXBlIC9DYXRhbG9nCj4+CmVuZG9i
+ago4IDAgb2JqCjw8Ci9BdXRob3IgKGFub255bW91cykgL0NyZWF0aW9uRGF0ZSAoRDoyMDI2MDYw
+NjE5NDg0OSswMicwMCcpIC9DcmVhdG9yIChhbm9ueW1vdXMpIC9LZXl3b3JkcyAoKSAvTW9kRGF0
+ZSAoRDoyMDI2MDYwNjE5NDg0OSswMicwMCcpIC9Qcm9kdWNlciAoUmVwb3J0TGFiIFBERiBMaWJy
+YXJ5IC0gXChvcGVuc291cmNlXCkpIAogIC9TdWJqZWN0ICh1bnNwZWNpZmllZCkgL1RpdGxlICh1
+bnRpdGxlZCkgL1RyYXBwZWQgL0ZhbHNlCj4+CmVuZG9iago5IDAgb2JqCjw8Ci9Db3VudCAzIC9L
+aWRzIFsgNCAwIFIgNSAwIFIgNiAwIFIgXSAvVHlwZSAvUGFnZXMKPj4KZW5kb2JqCjEwIDAgb2Jq
+Cjw8Ci9GaWx0ZXIgWyAvQVNDSUk4NURlY29kZSAvRmxhdGVEZWNvZGUgXSAvTGVuZ3RoIDE3Nwo+
+PgpzdHJlYW0KR2FyV3FZbXVATiUiUjwtVnRgYylecTMzaGZkTiRkNmZbNW9iXmdVK0x1QS9nQlUk
+Pz9sMG8zai9TNXRhaDZWbT1aSGIiJWNrNzpPJlVJaWdfOi9YRj88dHU1ckg3dVwmZzh0Nm9kbC0r
+QmNgam5RWjNYMGFHXDJMUWZvL2lJQ11BckFtPz1qM1BFcCpqN1wycSlGbGAjWm0/WzZwPE1VbVR0
+WE9jYlU3VzpPQGg9In4+ZW5kc3RyZWFtCmVuZG9iagoxMSAwIG9iago8PAovRmlsdGVyIFsgL0FT
+Q0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCAxNzcKPj4Kc3RyZWFtCkdhcldxWW11
+QE4lIlI8LVZ0YGMpXnEzM2hmZE4kZDZmWzVvYl5nVStMdUEvZ0JVJD8/bDBvM2ovUzV0YWg2Vm09
+WkhiIiVjazc6TyZVSWlnXzovWEY/PHR1NXJIN3VcJmc4dDZvZGwtK0JjYGpuUVozWDBhR1wxYTlE
+IitFXj4vYEkxRzReRlM2a0tQRVZtVXNOTUR0Imc2KW5WSFk3PHI6dUE5bGpxQmlYT091QF1+PmVu
+ZHN0cmVhbQplbmRvYmoKMTIgMCBvYmoKPDwKL0ZpbHRlciBbIC9BU0NJSTg1RGVjb2RlIC9GbGF0
+ZURlY29kZSBdIC9MZW5ndGggMTc5Cj4+CnN0cmVhbQpHYXJXcTBiOGppJi1fIV8/aCRVLlc5cjg3
+QXRyJDAkbDo5LUBUcF5XNjdpK2NDR2o3Qm1jPW1ycGVGLFA7bjozVGZKOyRjSmcuRk9kUiZRc2ZR
+MzEhIXBTPDNRKUsvRHFASkJoVV1eb1JObjQodDVkUk0yK3UzaWNjPTQqXz9icmNycF0mS3MvJ0Js
+bFFUY1Q+W1VKZURBKEU/RDwsVDNVWj5vL0pTWEI0JFNybVZAVGB+PmVuZHN0cmVhbQplbmRvYmoK
+eHJlZgowIDEzCjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDA2MSAwMDAwMCBuIAowMDAwMDAw
+MTAyIDAwMDAwIG4gCjAwMDAwMDAyMDkgMDAwMDAgbiAKMDAwMDAwMDMyMSAwMDAwMCBuIAowMDAw
+MDAwNTE1IDAwMDAwIG4gCjAwMDAwMDA3MDkgMDAwMDAgbiAKMDAwMDAwMDkwMyAwMDAwMCBuIAow
+MDAwMDAwOTcxIDAwMDAwIG4gCjAwMDAwMDEyMzIgMDAwMDAgbiAKMDAwMDAwMTMwMyAwMDAwMCBu
+IAowMDAwMDAxNTcxIDAwMDAwIG4gCjAwMDAwMDE4MzkgMDAwMDAgbiAKdHJhaWxlcgo8PAovSUQg
+Cls8MDJmODU2NzczMmQ0YTM4ZDJkMzJiZWQ5MmU1ZjA5ZTI+PDAyZjg1Njc3MzJkNGEzOGQyZDMy
+YmVkOTJlNWYwOWUyPl0KJSBSZXBvcnRMYWIgZ2VuZXJhdGVkIFBERiBkb2N1bWVudCAtLSBkaWdl
+c3QgKG9wZW5zb3VyY2UpCgovSW5mbyA4IDAgUgovUm9vdCA3IDAgUgovU2l6ZSAxMwo+PgpzdGFy
+dHhyZWYKMjEwOQolJUVPRgo=
+--outer--

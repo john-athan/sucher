@@ -43,6 +43,7 @@ pub enum Format {
     Pptx,
     Epub,
     Ipynb,
+    Email,
     Keynote,
     Doc,
     Audio,
@@ -83,6 +84,9 @@ pub fn classify(key: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
         "epub" => Format::Epub,
         // A Jupyter notebook is a JSON document of cells reduced to markdown.
         "ipynb" => Format::Ipynb,
+        // A saved message, RFC 5322 (.eml) or Outlook's property store (.msg),
+        // reduced to markdown like the other document containers (ADR 0021).
+        "eml" | "msg" => Format::Email,
         "key" => Format::Keynote,
         "doc" | "rtf" | "odt" | "ppt" => Format::Doc,
         "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" => Format::Audio,
@@ -158,6 +162,7 @@ impl Format {
             Format::Pptx => "Presentation",
             Format::Epub => "E-book",
             Format::Ipynb => "Notebook",
+            Format::Email => "Email",
             Format::Keynote => "Keynote",
             Format::Doc => "Document",
             Format::Audio => "Audio",
@@ -185,6 +190,7 @@ impl Format {
             | Format::Pptx
             | Format::Epub
             | Format::Ipynb
+            | Format::Email
             | Format::Doc => "▢",
             Format::Text => "◇",
             Format::Archive => "▣",
@@ -207,6 +213,7 @@ impl Format {
             | Format::Pptx
             | Format::Epub
             | Format::Ipynb
+            | Format::Email
             | Format::Doc => theme::palette().doc,
             Format::Text => theme::palette().code,
             Format::Archive => theme::palette().archive,
@@ -231,6 +238,7 @@ impl Format {
                 | Format::Pptx
                 | Format::Epub
                 | Format::Ipynb
+                | Format::Email
                 | Format::Keynote
                 | Format::Archive
                 | Format::Binary
@@ -311,6 +319,14 @@ mod tests {
         assert!(by_ext("parquet").opens());
         // A `.json` file is usually one document, not a table, it stays Text.
         assert_eq!(by_ext("json"), Format::Text);
+    }
+
+    #[test]
+    fn saved_messages_are_their_own_format() {
+        // ADR 0021: both mail containers reduce to markdown, one viewer.
+        assert_eq!(by_ext("eml"), Format::Email);
+        assert_eq!(by_ext("msg"), Format::Email);
+        assert!(by_ext("eml").opens());
     }
 
     #[test]
@@ -412,6 +428,7 @@ mod tests {
             Format::Pptx,
             Format::Epub,
             Format::Ipynb,
+            Format::Email,
             Format::Keynote,
             Format::Archive,
             Format::Binary,
