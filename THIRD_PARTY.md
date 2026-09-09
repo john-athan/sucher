@@ -56,6 +56,40 @@ viewers. They contain no third-party content.
 Findings from `oss provenance sucher` that were investigated and closed. Kept so the reasoning survives longer than the
 memory of it.
 
+### `preview_grid` in `src/sheet.rs`, and Warp (reviewed 2026-09-09)
+
+The gate blocked on twenty-five AGPL-3.0 matches for
+
+```rust
+pub fn preview_grid(path: &str, max_rows: usize, max_cols: usize) -> Option<Vec<Vec<String>>> {
+```
+
+All twenty-five are the same file, `app/src/terminal/model/header_grid.rs`, in
+[warpdotdev/warp](https://github.com/warpdotdev/warp) and twenty-four forks of
+it. That is one codebase, not twenty-five opinions.
+
+Nothing is shared. The probe was the co-occurrence of `preview_grid` and
+`max_rows`, and Warp's file, 1252 lines of terminal grid model, happens to
+contain both:
+
+- `preview_grid` appears exactly once, inside a comment:
+  `TODO(CORE-2403): Rename this field to should_populate_prompt_preview_grid.`
+- `max_rows` is an `Option<usize>` row cap on `command_to_string_internal`,
+  seven occurrences, unrelated to anything here.
+- `max_cols` does not appear in it at all, and neither does `Vec<Vec<String>>`.
+
+Sucher's function reads the first rows and columns of a spreadsheet or data file
+into a grid of strings for the browser's preview pane. Warp's file models a
+terminal's prompt and command grid. The two tokens co-occurring in a file that
+long is a property of the file's length, not of either author.
+
+No Warp code was read into this repository, and no AGPL-3.0 material is present
+in it.
+
+The finding is also why the gate now counts distinct files as well as distinct
+owners: twenty-five accounts reads as a crowd until you notice they are twenty-
+five copies of one path.
+
 ### `base64_encode` in `src/util.rs` (reviewed 2026-08-10)
 
 A code search for the line `let sextet = |shift: u32| ALPHABET[...]` matches
