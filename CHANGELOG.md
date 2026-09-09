@@ -6,6 +6,11 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-09
+
+### Changed
+- Stop passing a file's own escape sequences through to the terminal
+
 ## [0.7.3] - 2026-09-08
 
 ### Changed
