@@ -2,30 +2,31 @@
 // SQLite, DuckDB. This is the grid's third `Book` shape, alongside the eager
 // calamine `MemBook` and the capped-streaming `StreamBook`.
 //
-// It is NOT one engine, but two native engines behind ONE `Book::Data` seam —
+// It is NOT one engine, but two native engines behind ONE `Book::Data` seam,
 // *native-engine-per-source*, not a hybrid of interchangeable libraries (ADR
 // 0016). Each file is read by the engine that actually owns its format:
 //
-//   * `DuckBook` (embedded DuckDB) — Parquet, JSONL/NDJSON, native DuckDB files.
+//   * `DuckBook` (embedded DuckDB), Parquet, JSONL/NDJSON, native DuckDB files.
 //     DuckDB is the reference SQL-on-files engine; its `read_parquet` /
 //     `read_json_auto` readers and native `ATTACH` cover these three.
-//   * `SqliteBook` (rusqlite) — SQLite databases (`.sqlite/.sqlite3/.db/.db3`),
+//   * `SqliteBook` (rusqlite), SQLite databases (`.sqlite/.sqlite3/.db/.db3`),
 //     read through rusqlite's statically-bundled libsqlite.
 //
-// Why the split — offline is enforced, not assumed. sucher is a local viewer
+// Why the split, offline is enforced, not assumed. sucher is a local viewer
 // that must never phone home. DuckDB's format readers are loadable extensions it
 // will, by default, AUTO-INSTALL over the network on first use, so every DuckDB
-// connection runs two pragmas immediately after opening —
+// connection runs two pragmas immediately after opening,
 //     SET autoinstall_known_extensions = false;  -- never touch the network
 //     SET autoload_known_extensions    = false;  -- never even load from the
 //                                                 -- on-disk extension cache
 // With BOTH false, only the statically-compiled readers can run: `parquet` and
 // `json` are compiled INTO libduckdb via the crate's features, and native
-// `ATTACH` is core, so all three work with no extension directory and no network
-// — while a reader that is not built in fails loudly instead of downloading. CI
+// `ATTACH` is core, so all three work with no extension directory and no
+// network, while a reader that is not built in fails loudly instead of
+// downloading. CI
 // on a clean machine proved DuckDB's SQLite scanner is NOT a static feature (it
 // is loadable-only and would fail under these pragmas), so SQLite is read with
-// rusqlite's own bundled libsqlite instead — fully offline, no compromise.
+// rusqlite's own bundled libsqlite instead, fully offline, no compromise.
 //
 // The two engines expose the same internal shape, so the grid is unaware which
 // one backs a given file:
@@ -34,7 +35,7 @@
 //     single-relation files (Parquet, JSONL) are one sheet named by the file
 //     stem, exposed as a view/relation the `:` prompt can `FROM`.
 //   * Schema without executing. DuckDB takes the schema from `DESCRIBE`
-//     (`(name, type)`, binds but does not run — instant even on a billion-row
+//     (`(name, type)`, binds but does not run, instant even on a billion-row
 //     Parquet); SQLite reads it from a prepared statement's `column_names()`
 //     (SQLite knows the columns at prepare time). Neither materialises the data.
 //   * Values as display text. DuckDB reads each cell as `CAST(col AS VARCHAR)` →
@@ -42,9 +43,9 @@
 //     SQLite reads the raw `ValueRef` and formats it (NULL → "", integers/reals
 //     as numbers, text UTF-8-lossy, blobs as `[N bytes]`).
 //   * Lazy, uncapped windowing. Both are fast lazy query engines, neither eager
-//     (MemBook) nor worth capping (StreamBook). The book windows on demand —
+//     (MemBook) nor worth capping (StreamBook). The book windows on demand,
 //     `… LIMIT <len> OFFSET <start>` around the visible range, with a prefetch
-//     margin cached so ordinary scrolling is a cache hit — and reports the real
+//     margin cached so ordinary scrolling is a cache hit, and reports the real
 //     `COUNT(*)` as its total, so the grid scrolls an arbitrarily large file
 //     with no row cap.
 //   * A `:` query override. Submitting a query replaces the active sheet's
@@ -76,14 +77,14 @@ enum SourceKind {
 
 /// One grid "sheet": a table (SQLite/DuckDB) or the single view over a
 /// Parquet/JSONL file. `relation` is a SQL statement the window/count/describe
-/// queries wrap in a subquery — `SELECT * FROM "<name>"` or `SELECT * FROM db."<table>"`.
+/// queries wrap in a subquery, `SELECT * FROM "<name>"` or `SELECT * FROM db."<table>"`.
 struct Sheet {
     name: String,
     relation: String,
 }
 
 /// A window of consecutive rows (all columns) cached around the last viewport, so
-/// the common case — scrolling within the prefetched margin — needs no query.
+/// the common case, scrolling within the prefetched margin, needs no query.
 struct WindowCache {
     /// 0-based index of the first cached row within the active relation.
     start: usize,
@@ -93,7 +94,7 @@ struct WindowCache {
 
 /// The two read engines behind the one `Book::Data` seam (ADR 0016). DuckDB owns
 /// Parquet/JSONL/native-DuckDB; rusqlite owns SQLite. The grid never sees this
-/// distinction — [`DataBook`] delegates every call to the active engine.
+/// distinction, [`DataBook`] delegates every call to the active engine.
 enum Engine {
     Duck(DuckBook),
     Sqlite(SqliteBook),
@@ -107,7 +108,7 @@ pub struct DataBook {
 }
 
 impl DataBook {
-    /// Open a data file: detect its family, and hand it to the owning engine —
+    /// Open a data file: detect its family, and hand it to the owning engine,
     /// SQLite to [`SqliteBook`], everything else to [`DuckBook`]. A bad/unreadable
     /// file surfaces as a human-readable `Err`, mirroring `MemBook::open`.
     pub fn open(path: &str) -> Result<DataBook, String> {
@@ -171,7 +172,7 @@ impl DataBook {
         }
     }
 
-    /// Real column names for the active sheet — the grid shows these as headers
+    /// Real column names for the active sheet, the grid shows these as headers
     /// instead of synthesised A/B/C letters.
     pub fn headers(&self) -> Vec<String> {
         match &self.engine {
@@ -202,8 +203,8 @@ impl DataBook {
 // ---- DuckDB engine: Parquet / JSONL / native DuckDB ----
 
 /// The DuckDB-backed engine. Owns the connection for its whole lifetime (views
-/// and attachments live in it), the list of sheets, and — for the active sheet
-/// only — the cached schema, total row count, and the last window.
+/// and attachments live in it), the list of sheets, and, for the active sheet
+/// only, the cached schema, total row count, and the last window.
 struct DuckBook {
     conn: Connection,
     sheets: Vec<Sheet>,
@@ -214,7 +215,7 @@ struct DuckBook {
     override_sql: Option<String>,
     /// Active sheet schema: `(column_name, column_type)` from `DESCRIBE`.
     schema: Vec<(String, String)>,
-    /// Active sheet real row count (`COUNT(*)`), cached — this powers lazy scroll.
+    /// Active sheet real row count (`COUNT(*)`), cached, this powers lazy scroll.
     total: usize,
     cache: Option<WindowCache>,
 }
@@ -245,7 +246,7 @@ impl DuckBook {
     /// The relation every read (schema, count, window, find) wraps in a subquery:
     /// the user's `:` override when one is set, else the active sheet's base
     /// relation. Routing all reads through here is what makes an override replace
-    /// the entire view — schema, dims, cells, and search — with the query result.
+    /// the entire view, schema, dims, cells, and search, with the query result.
     fn active_relation(&self) -> String {
         match &self.override_sql {
             Some(sql) => sql.clone(),
@@ -279,10 +280,10 @@ impl DuckBook {
             self.cur = idx;
             // Switching tabs returns to the base table. The tabs ARE the source
             // relations, and the `:` prompt is only a transient query lens over
-            // the current one — moving to a different source drops that lens.
+            // the current one, moving to a different source drops that lens.
             self.override_sql = None;
             // A reload failure leaves the book pointed at the new sheet with an
-            // empty schema/zero count — the grid renders an empty sheet rather
+            // empty schema/zero count, the grid renders an empty sheet rather
             // than panicking; the previous sheet's data is already dropped.
             let _ = self.load_active();
         }
@@ -310,7 +311,7 @@ impl DuckBook {
             Ok(()) => Ok(()),
             Err(e) => {
                 // Restore the previous lens and reload it so the schema/count/
-                // cache describe the prior result again — the book is untouched.
+                // cache describe the prior result again, the book is untouched.
                 self.override_sql = prev;
                 let _ = self.load_active();
                 Err(e)
@@ -345,7 +346,7 @@ impl DuckBook {
     /// Case-insensitive cell search over the active relation. DuckDB does the
     /// coarse filter: a subquery tags every row with its natural position
     /// (`row_number() OVER () - 1`, computed BEFORE the filter so the index is the
-    /// relation's), then an `ILIKE` across every column keeps candidate rows —
+    /// relation's), then an `ILIKE` across every column keeps candidate rows,
     /// bounded by `FIND_CAP`. Rust then confirms the precise column hits with
     /// [`crate::xlsx::contains_ci`], matching the grid's own notion of a match.
     fn find(&self, query: &str) -> Vec<(usize, usize)> {
@@ -403,7 +404,7 @@ impl DuckBook {
             if i > 0 {
                 filter.push_str(" OR ");
             }
-            // ESCAPE '\' — a lone backslash (DuckDB strings are not C-escaped),
+            // ESCAPE '\', a lone backslash (DuckDB strings are not C-escaped),
             // matching `escape_like`, so literal % / _ in the query stay literal.
             filter.push_str(&format!("({cast} ILIKE {pattern} ESCAPE '\\')"));
         }
@@ -415,7 +416,7 @@ impl DuckBook {
     }
 }
 
-/// Fetch `len` rows starting at `start` as `CAST(... AS VARCHAR)` strings — every
+/// Fetch `len` rows starting at `start` as `CAST(... AS VARCHAR)` strings, every
 /// column, so the cache can serve any horizontal slice. NULL → "".
 fn fetch_duck(
     conn: &Connection,
@@ -445,7 +446,7 @@ fn fetch_duck(
 }
 
 /// Open an in-memory DuckDB connection and enforce the offline guarantee
-/// immediately — see the module note. Every DuckDB connection sucher opens goes
+/// immediately, see the module note. Every DuckDB connection sucher opens goes
 /// through here. BOTH auto-flags are false: `autoinstall` blocks the network,
 /// `autoload` additionally refuses the on-disk extension cache, so only the
 /// statically-compiled readers (`parquet`, `json`, core) can run.
@@ -460,7 +461,7 @@ fn open_conn() -> Result<Connection, String> {
 
 /// Register the source on `conn` and return its sheets. Parquet/JSONL become one
 /// view named by the file stem; a native DuckDB database is attached READ_ONLY as
-/// `db` and each of its tables becomes a sheet. (SQLite never reaches here — it is
+/// `db` and each of its tables becomes a sheet. (SQLite never reaches here, it is
 /// read by [`SqliteBook`], since its DuckDB scanner is a network-only extension.)
 fn register(conn: &Connection, kind: SourceKind, path: &str) -> Result<Vec<Sheet>, String> {
     let lit = quote_literal(path);
@@ -549,25 +550,25 @@ fn count(conn: &Connection, relation: &str) -> Result<usize, String> {
 /// native library: tables are sheets, columns come from a prepared statement,
 /// cells from raw `ValueRef`s, windowing/count/find/override all the same shape.
 /// The connection is opened READ-ONLY. rusqlite's statically-bundled libsqlite
-/// makes this fully offline — the reason SQLite is not read through DuckDB.
+/// makes this fully offline, the reason SQLite is not read through DuckDB.
 struct SqliteBook {
     conn: rusqlite::Connection,
     sheets: Vec<Sheet>,
     cur: usize,
     /// The `:` prompt's query lens over the ACTIVE sheet, or `None` for the base
-    /// table — a transient override cleared whenever the active sheet changes.
+    /// table, a transient override cleared whenever the active sheet changes.
     override_sql: Option<String>,
     /// Active relation's column names (SQLite is dynamically typed, so only names
-    /// are needed — there is no per-column type string to carry).
+    /// are needed, there is no per-column type string to carry).
     columns: Vec<String>,
-    /// Active relation real row count (`COUNT(*)`), cached — powers lazy scroll.
+    /// Active relation real row count (`COUNT(*)`), cached, powers lazy scroll.
     total: usize,
     cache: Option<WindowCache>,
 }
 
 impl SqliteBook {
     /// Open a SQLite file READ-ONLY and build the sheet list (its tables). A
-    /// non-SQLite `.db` errors here (or at the first table query) — a
+    /// non-SQLite `.db` errors here (or at the first table query), a
     /// human-readable `Err`, mirroring DuckBook's bad-file behaviour.
     fn open(path: &str) -> Result<SqliteBook, String> {
         let conn =
@@ -735,7 +736,7 @@ impl SqliteBook {
                 filter.push_str(" OR ");
             }
             // ESCAPE '\' matches `escape_like`, so literal % / _ stay literal.
-            // SQLite's LIKE is ASCII case-insensitive — the coarse prefilter.
+            // SQLite's LIKE is ASCII case-insensitive, the coarse prefilter.
             filter.push_str(&format!("({cast} LIKE {pattern} ESCAPE '\\')"));
         }
         Some(format!(
@@ -768,7 +769,7 @@ fn sqlite_sheets(conn: &rusqlite::Connection) -> Result<Vec<Sheet>, String> {
 }
 
 /// The active relation's column names, from a prepared `… LIMIT 0` (SQLite knows
-/// the columns at prepare time — no execution). Also validates the relation's SQL.
+/// the columns at prepare time, no execution). Also validates the relation's SQL.
 fn sqlite_columns(conn: &rusqlite::Connection, relation: &str) -> Result<Vec<String>, String> {
     let stmt = conn
         .prepare(&format!("SELECT * FROM ({relation}) LIMIT 0"))
@@ -791,7 +792,7 @@ fn sqlite_count(conn: &rusqlite::Connection, relation: &str) -> Result<usize, St
 }
 
 /// Fetch `len` rows starting at `start`, reading each cell from its raw
-/// `ValueRef` — every column, so the cache can serve any horizontal slice.
+/// `ValueRef`, every column, so the cache can serve any horizontal slice.
 fn fetch_sqlite(
     conn: &rusqlite::Connection,
     ncols: usize,
@@ -850,7 +851,7 @@ fn cache_covers(cache: &Option<WindowCache>, r0: usize, r1: usize) -> bool {
 
 /// The windowing loop shared by both engines: clamp to `total`, serve `[r0, r1) ×
 /// [c0, c1)` from the prefetch cache, and on a miss fetch `[r0-MARGIN, r1+MARGIN]`
-/// (clamped) via the engine's own `fetch` closure and cache it — so ordinary
+/// (clamped) via the engine's own `fetch` closure and cache it, so ordinary
 /// scrolling is a cache hit. A fetch error yields a blank window (the next frame
 /// retries) rather than aborting the UI. The engines differ only in `fetch`.
 fn window_cached(
@@ -929,7 +930,7 @@ fn quote_literal(s: &str) -> String {
 }
 
 /// The projection list `CAST("c0" AS VARCHAR), CAST("c1" AS VARCHAR), …` for a
-/// schema — the NULL-safe, panic-free way to read any column as display text. PURE.
+/// schema, the NULL-safe, panic-free way to read any column as display text. PURE.
 fn cast_projection(schema: &[(String, String)]) -> String {
     schema
         .iter()
@@ -1037,8 +1038,8 @@ mod tests {
 
     // ---- integration (feature-gated release build) ----
     //
-    // Fixtures are created IN the test — Parquet/DuckDB with DuckDB itself, SQLite
-    // with rusqlite (NOT DuckDB's network-only SQLite scanner) — so the tests are
+    // Fixtures are created IN the test, Parquet/DuckDB with DuckDB itself, SQLite
+    // with rusqlite (NOT DuckDB's network-only SQLite scanner), so the tests are
     // hermetic and prove each engine's round trip end to end.
 
     /// A unique scratch path with the given extension, in the OS temp dir.
@@ -1137,7 +1138,7 @@ mod tests {
         assert_eq!(book.active_sql(), None);
 
         // A valid query replaces the ENTIRE view: schema, dims, cells all reflect
-        // the result — 1 row / 1 col named `n`, holding the count.
+        // the result, 1 row / 1 col named `n`, holding the count.
         let q = format!("SELECT count(*) AS n FROM {view}");
         book.set_sql(&q).expect("ok");
         assert_eq!(book.dims(), (1, 1, true, false));
@@ -1295,10 +1296,10 @@ mod tests {
         // First viewport.
         let a = book.window(100, 110, 0, 2);
         assert_eq!(a[0], vec!["100", "row100"]);
-        // Scroll one row — still inside the cached margin (a cache hit), correct.
+        // Scroll one row, still inside the cached margin (a cache hit), correct.
         let b = book.window(101, 111, 0, 2);
         assert_eq!(b[0], vec!["101", "row101"]);
-        // Jump far — a fresh fetch, still correct.
+        // Jump far, a fresh fetch, still correct.
         let c = book.window(4990, 5000, 0, 2);
         assert_eq!(
             c.last().unwrap(),
@@ -1311,7 +1312,7 @@ mod tests {
     /// Large-Parquet benchmark, ignored by default (mirrors the `big_xlsx` one).
     /// Point it at a real file to prove the lazy-windowing claim:
     ///   `SUCHER_BIG_PARQUET=/path/big.parquet cargo test --release big_parquet -- --ignored --nocapture`
-    /// Open (schema + COUNT only) and a window near the END must both be fast —
+    /// Open (schema + COUNT only) and a window near the END must both be fast,
     /// neither materialises the file, so wall-clock is independent of row count.
     #[test]
     #[ignore = "set SUCHER_BIG_PARQUET to a large .parquet to run"]
@@ -1344,8 +1345,8 @@ mod tests {
         // both-false pragmas reads a Parquet purely from the statically-compiled
         // build. To prove the static path even on a CONTAMINATED dev machine
         // (whose `~/.duckdb/extensions` may already hold a network-installed
-        // parquet extension), we point `extension_directory` at a fresh EMPTY dir
-        // — so only a built-in reader can possibly satisfy the query.
+        // parquet extension), we point `extension_directory` at a fresh EMPTY
+        // dir, so only a built-in reader can possibly satisfy the query.
         let path = make_parquet();
         let p = path.to_str().unwrap();
 

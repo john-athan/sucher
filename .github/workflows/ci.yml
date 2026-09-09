@@ -10,6 +10,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -21,14 +24,17 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
+      # Pinned from the same file `make deny` reads, for the reason the cargo-about
+      # step below spells out: the tool version is an input to the verdict,
+      # so CI and the machine this was written on must install the same one.
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
+        run: cargo install cargo-deny --locked --version "$(cat .cargo-deny-version)"
 
       # Pinned, and pinned in ONE place that `make notices` reads too. `--locked`
       # pins cargo-about's own dependencies, NOT cargo-about itself, so an

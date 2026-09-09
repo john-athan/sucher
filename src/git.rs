@@ -4,7 +4,7 @@
 // calls in [`status_map`]; every mapping and aggregation decision lives in the
 // pure, unit-tested [`resolve`] / [`status_from_xy`] below. When git isn't on
 // `PATH` or the directory isn't a repo, [`status_map`] returns `None` and the
-// browser draws no gutter (the width is reclaimed by the name — see
+// browser draws no gutter (the width is reclaimed by the name, see
 // `render_entry_list`), so non-repo output is byte-for-byte the pre-git render.
 
 use crate::theme;
@@ -51,17 +51,17 @@ impl GitStatus {
         }
     }
 
-    /// The palette colour the marker is drawn in — reusing the file-kind roles
+    /// The palette colour the marker is drawn in, reusing the file-kind roles
     /// so the gutter stays in the same visual family as the rest of the browser.
     pub fn color(&self) -> Color {
         let p = theme::palette();
         match self {
-            GitStatus::Untracked => p.dim,  // muted — not yet part of the tree
+            GitStatus::Untracked => p.dim,  // muted, not yet part of the tree
             GitStatus::Added => p.sheet,    // green, like "new/good"
             GitStatus::Modified => p.doc,   // yellow, like "changed"
             GitStatus::Deleted => p.pdf,    // red
             GitStatus::Renamed => p.image,  // purple
-            GitStatus::Conflict => p.video, // hot pink/red — hard to miss
+            GitStatus::Conflict => p.video, // hot pink/red, hard to miss
         }
     }
 
@@ -85,12 +85,12 @@ impl GitStatus {
 /// repo (or `git` is absent). The thin-IO boundary: two subprocess calls, then
 /// all logic is delegated to the pure [`resolve`].
 ///
-/// 1. `git -C <dir> rev-parse --show-toplevel --show-prefix` — a non-zero exit
+/// 1. `git -C <dir> rev-parse --show-toplevel --show-prefix`, a non-zero exit
 ///    or spawn error means "not a repo / git missing" ⇒ `None` (no gutter). The
 ///    second output line is the dir's root-relative *prefix* (empty at the repo
 ///    root, e.g. `src/` in a nested dir).
 /// 2. `git -C <dir> status --porcelain=v1 -z --untracked-files=normal
-///    --ignored=no` — NUL-separated, repo-root-relative `XY path` records.
+///    --ignored=no`, NUL-separated, repo-root-relative `XY path` records.
 ///
 /// The records are parsed (handling the `-z` rename quirk) and handed to
 /// The repo's HEAD identity for the breadcrumb line (ADR 0004, D2 amendment):
@@ -109,8 +109,8 @@ pub struct RepoHead {
 }
 
 /// Read the repo HEAD for `dir`, or `None` when it isn't a repo (or `git` is
-/// absent). Thin IO: ONE subprocess — `git status --porcelain=v2 --branch
-/// --untracked-files=no -z` — whose `# branch.*` headers carry everything
+/// absent). Thin IO: ONE subprocess, `git status --porcelain=v2 --branch
+/// --untracked-files=no -z`, whose `# branch.*` headers carry everything
 /// ([`parse_head`] is the pure part). `--untracked-files=no` skips the
 /// untracked-file walk, so this stays cheap even in huge dirty trees; the entry
 /// records after the headers are simply ignored.
@@ -136,10 +136,10 @@ pub fn head_info(dir: &Path) -> Option<RepoHead> {
 
 /// PURE: extract [`RepoHead`] from porcelain-v2 NUL-separated fields. Only the
 /// `# branch.*` headers matter:
-/// - `# branch.oid <oid|(initial)>` — full commit id, shortened to 7 chars;
+/// - `# branch.oid <oid|(initial)>`, full commit id, shortened to 7 chars;
 ///   `(initial)` (unborn branch) maps to `None`.
-/// - `# branch.head <name|(detached)>` — branch name; `(detached)` maps to `None`.
-/// - `# branch.ab +<ahead> -<behind>` — present only with an upstream.
+/// - `# branch.head <name|(detached)>`, branch name; `(detached)` maps to `None`.
+/// - `# branch.ab +<ahead> -<behind>`, present only with an upstream.
 ///
 /// Non-header fields (the status entries) are skipped, so the same stream that
 /// feeds the gutter could feed this too.
@@ -216,7 +216,7 @@ pub fn status_map(dir: &Path) -> Option<HashMap<String, GitStatus>> {
 
 /// Parse `-z` (NUL-separated) porcelain v1 into `(xy, path)` records, both as
 /// owned `String`s. Each record field is `XY<space>PATH`; a rename/copy record
-/// is TWO NUL fields — `XY <new>\0<old>` — so after such a record we consume the
+/// is TWO NUL fields, `XY <new>\0<old>`, so after such a record we consume the
 /// following (old-path) field and keep the NEW path, which comes first (D2).
 /// Paths are repo-root-relative and, thanks to `-z`, never quoted.
 fn parse_porcelain_z(bytes: &[u8]) -> Vec<(String, String)> {
@@ -229,7 +229,7 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<(String, String)> {
             continue;
         }
         // Bytes 0,1 are the XY status letters and byte 2 is the separating
-        // space — all ASCII, so byte 3 is a valid char boundary for the path.
+        // space, all ASCII, so byte 3 is a valid char boundary for the path.
         let xy = &field[..2];
         let path = &field[3..];
         // Renames/copies are index-side (`R`/`C` in the staged column) and carry
@@ -250,7 +250,7 @@ fn parse_porcelain_z(bytes: &[u8]) -> Vec<(String, String)> {
 /// - No `/` in the remainder → a file directly in this dir: it takes the
 ///   record's own [`status_from_xy`].
 /// - A `/` in the remainder → the change is inside a child directory: the first
-///   path segment names that child, which is marked with a *directory signal* —
+///   path segment names that child, which is marked with a *directory signal*,
 ///   [`GitStatus::Untracked`] for an untracked entry (`??`, incl. the wholly
 ///   untracked `?? sub/` form), [`GitStatus::Conflict`] for a conflict, else
 ///   [`GitStatus::Modified`] (any tracked change collapses to "has changes").
@@ -262,7 +262,7 @@ pub fn resolve(records: &[(String, String)], prefix: &str) -> HashMap<String, Gi
     let mut map: HashMap<String, GitStatus> = HashMap::new();
     for (xy, path) in records {
         let Some(rest) = path.strip_prefix(prefix) else {
-            continue; // outside the viewed dir — ignore
+            continue; // outside the viewed dir, ignore
         };
         if rest.is_empty() {
             continue;
@@ -291,7 +291,7 @@ fn merge(map: &mut HashMap<String, GitStatus>, name: String, status: GitStatus) 
 /// Collapse a descendant's own status into the signal it contributes to its
 /// containing directory: untracked and conflict pass through (so a wholly
 /// untracked child dir reads `Untracked` and a conflict bubbles up), every other
-/// tracked change becomes `Modified` — a single, predictable "has changes" read.
+/// tracked change becomes `Modified`, a single, predictable "has changes" read.
 fn dir_signal(child: GitStatus) -> GitStatus {
     match child {
         GitStatus::Untracked => GitStatus::Untracked,
@@ -305,8 +305,8 @@ fn dir_signal(child: GitStatus) -> GitStatus {
 /// 1. `??` → `Untracked`.
 /// 2. Any unmerged code → `Conflict`: a `U` in either column, or the both-sides
 ///    `AA` / `DD` pairs (covering `AU`, `UD`, `UA`, `DU`, `UU`, `AA`, `DD`).
-/// 3. Otherwise pick the more meaningful column — the worktree `Y` if it isn't a
-///    space, else the staged `X` — and map that letter: `A`/`C` → `Added`,
+/// 3. Otherwise pick the more meaningful column, the worktree `Y` if it isn't a
+///    space, else the staged `X`, and map that letter: `A`/`C` → `Added`,
 ///    `D` → `Deleted`, `R` → `Renamed`, `M`/`T` (and anything else) → `Modified`.
 fn status_from_xy(xy: &str) -> GitStatus {
     let bytes = xy.as_bytes();
@@ -329,7 +329,7 @@ fn status_from_xy(xy: &str) -> GitStatus {
 }
 
 /// Is `XY` an unmerged (conflict) code? A `U` on either side, or the both-added
-/// / both-deleted pairs — the full porcelain conflict set (D2).
+/// / both-deleted pairs, the full porcelain conflict set (D2).
 fn is_conflict(x: u8, y: u8) -> bool {
     x == b'U' || y == b'U' || (x == b'A' && y == b'A') || (x == b'D' && y == b'D')
 }
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn parse_porcelain_z_handles_rename_two_field_record() {
-        // `R  new\0old\0` — keep the NEW path, discard the old source field.
+        // `R  new\0old\0`, keep the NEW path, discard the old source field.
         let bytes = b"R  new.rs\x00old.rs\x00 M other.rs\x00";
         let recs = parse_porcelain_z(bytes);
         assert_eq!(

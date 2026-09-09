@@ -1,6 +1,6 @@
 // Time-based animation engine (ADR 0006). One tiny, pure core: an [`Anim`] is a
-// start instant plus a duration, and every derived value — `progress`, `done`,
-// the eased factor — is a function of **wall-clock elapsed**, never a frame
+// start instant plus a duration, and every derived value, `progress`, `done`,
+// the eased factor, is a function of **wall-clock elapsed**, never a frame
 // counter. That is the whole trick behind framerate-independence: a fade lasts
 // the same real 120 ms whether the loop sustains 30 fps or 250 fps, and a
 // dropped frame costs a little smoothness but never stretches the timing.
@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 
 /// A single time-based animation: the instant it began and how long it runs.
 /// `Copy` so the browser can hold it in an `Option<Anim>` and cheaply snapshot
-/// it each loop iteration. All state is derived — there is no mutable cursor.
+/// it each loop iteration. All state is derived, there is no mutable cursor.
 #[derive(Clone, Copy, Debug)]
 pub struct Anim {
     start: Instant,
@@ -47,7 +47,7 @@ impl Anim {
         (elapsed / dur).clamp(0.0, 1.0)
     }
 
-    /// Whether the animation has reached (or passed) its end — `progress >= 1.0`.
+    /// Whether the animation has reached (or passed) its end, `progress >= 1.0`.
     pub fn done(&self, now: Instant) -> bool {
         self.progress(now) >= 1.0
     }
@@ -59,7 +59,7 @@ impl Anim {
     }
 }
 
-/// Cubic ease-out: fast to start, gently settling — `1 - (1 - t)^3` for `t` in
+/// Cubic ease-out: fast to start, gently settling, `1 - (1 - t)^3` for `t` in
 /// `0..=1` (input clamped for safety). Fixes the endpoints (`0 → 0`, `1 → 1`),
 /// is monotonically increasing, and sits at or above the linear ramp across the
 /// interior (e.g. `0.5 → 0.875`), so a fade feels immediate then eases in.
@@ -75,14 +75,14 @@ pub fn ease_out_cubic(t: f32) -> f32 {
 const ZOOM_START: f32 = 0.15;
 
 /// Centred sub-rect of `full` scaled by a factor that ramps from [`ZOOM_START`]
-/// at `t = 0` to `1.0` at `t = 1` — the geometry of the image viewer's open/close
+/// at `t = 0` to `1.0` at `t = 1`, the geometry of the image viewer's open/close
 /// zoom (ADR 0006 D3). Pure so the "always inside, centred, exact at the ends"
 /// invariants are unit-tested without a terminal.
 ///
 /// The endpoint identity matters: `zoom_rect(full, 1.0) == full` **exactly** (the
 /// scale is `1.0`, the rounded dimensions land back on `full`'s, the centring
 /// offset is zero), so the intro's settle frame renders the picture at precisely
-/// the size and position the normal `render` uses — no visible jump when the zoom
+/// the size and position the normal `render` uses, no visible jump when the zoom
 /// hands off to the static display. `w`/`h` are floored to `1` and capped at
 /// `full`'s so the rect is never empty and never spills outside `full` (the
 /// offsets use `saturating_sub`, so a degenerate zero-width `full` can't underflow).
@@ -107,8 +107,8 @@ pub fn zoom_rect(full: Rect, t: f32) -> Rect {
 ///
 /// Sucher's palette is `Color::Rgb` everywhere (see `theme.rs`; every file-kind,
 /// git, and nerd colour resolves to an RGB triple), so only the `Rgb`×`Rgb` case
-/// interpolates. Any non-`Rgb` input falls back to `to` — still exact at the
-/// `t = 1` endpoint and never inventing an off-palette colour — which in practice
+/// interpolates. Any non-`Rgb` input falls back to `to`, still exact at the
+/// `t = 1` endpoint and never inventing an off-palette colour, which in practice
 /// is unreachable for the browser's fade.
 pub fn lerp_color(from: Color, to: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
@@ -185,7 +185,7 @@ pub fn record(kind: &'static str, frames: u32, elapsed: Duration) {
 }
 
 /// Print every recorded animation's kind, frame count, elapsed ms, and achieved
-/// FPS to stderr — the honest, measurable answer to "actually 120 Hz?" (ADR
+/// FPS to stderr, the honest, measurable answer to "actually 120 Hz?" (ADR
 /// 0006). A no-op unless `SUCHER_ANIM_STATS` is set. Must be called **after** the
 /// alternate screen is torn down (from `main`, post-`restore`) so it never
 /// corrupts the TUI.
@@ -328,7 +328,7 @@ mod tests {
     fn lerp_endpoints_and_midpoint() {
         let from = Color::Rgb(16, 16, 20);
         let to = Color::Rgb(96, 165, 250);
-        // t = 0 → from, t = 1 → to (exactly — the identity the fade relies on).
+        // t = 0 → from, t = 1 → to (exactly, the identity the fade relies on).
         assert_eq!(lerp_color(from, to, 0.0), from);
         assert_eq!(lerp_color(from, to, 1.0), to);
         // Midpoint is the rounded component-wise average: R 16→96 ⇒ 56, G 16→165

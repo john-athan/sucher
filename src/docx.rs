@@ -1,7 +1,7 @@
 // DOCX -> markdown. A .docx is a zip; the body lives in word/document.xml as
 // WordprocessingML. We walk it with a streaming XML reader and emit markdown
 // (headings, bold/italic, lists, tables) so the existing markdown layout/TUI
-// renders it — no new UI needed.
+// renders it, no new UI needed.
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::reader::Reader;

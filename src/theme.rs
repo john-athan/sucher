@@ -2,14 +2,14 @@
 //
 // Per-file-kind colours (used by the directory browser to tint entries and
 // previews) plus the token colours for the syntax highlighter. Keeping them
-// here means one edit — or one config line — re-themes the whole UI. Dependency
+// here means one edit, or one config line, re-themes the whole UI. Dependency
 // flows theme -> highlight (for the `TokenKind` type only), never the reverse.
 //
 // Per ADR 0003 (D1) the colours are no longer compile-time consts but a runtime
 // [`Palette`] held in a process-global [`OnceLock`]. `main` resolves a palette
 // from the user's config and calls [`init`] once at startup; every call site
 // reads a field off [`palette`]. The palette is immutable for the process's
-// life, so a global read is the honest model — it avoids threading `&Palette`
+// life, so a global read is the honest model, it avoids threading `&Palette`
 // through dozens of render signatures for a value that never changes.
 
 use crate::highlight::TokenKind;
@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 /// The first block is the per-file-kind colours the browser uses to tint
 /// entries and previews (see [`crate::format::Format::color`]); `dim` and
 /// `accent` are the chrome colours (muted metadata / active breadcrumb). The
-/// syntax highlighter's token colours are derived from these fields — only
+/// syntax highlighter's token colours are derived from these fields, only
 /// `keyword` is unique to the highlighter (see [`token_color`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette {
@@ -47,7 +47,7 @@ pub struct Palette {
     pub dim: Color,
     /// Accent for the breadcrumb / active chrome.
     pub accent: Color,
-    /// Selection row background — a soft, low-luma accent-ish tint that reads as
+    /// Selection row background, a soft, low-luma accent-ish tint that reads as
     /// "here" without the harshness of a reverse-video bar (per theme).
     pub selection: Color,
     /// Highlighter keyword colour (the one token colour with no file-kind twin).
@@ -71,14 +71,14 @@ pub fn palette() -> &'static Palette {
     PALETTE.get_or_init(Palette::sucher_dark)
 }
 
-/// Build a [`Color`] from a packed `0xRRGGBB` literal — a compact, greppable
+/// Build a [`Color`] from a packed `0xRRGGBB` literal, a compact, greppable
 /// spelling for the curated palettes below.
 const fn hex(c: u32) -> Color {
     Color::Rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
 impl Palette {
-    /// Sucher's original dark palette — the default, so upgrading never
+    /// Sucher's original dark palette, the default, so upgrading never
     /// re-skins anyone. These are the EXACT RGB values that shipped as the
     /// pre-config `theme::*` consts; keep them byte-for-byte.
     pub fn sucher_dark() -> Self {
@@ -94,7 +94,7 @@ impl Palette {
             other: Color::Rgb(205, 205, 215),
             dim: Color::Rgb(120, 120, 132),
             accent: Color::Rgb(125, 211, 252),
-            // Dark desaturated blue-grey — a hair above the background so the
+            // Dark desaturated blue-grey, a hair above the background so the
             // selected row lifts without shouting.
             selection: Color::Rgb(38, 44, 62),
             keyword: Color::Rgb(147, 197, 253),
@@ -157,7 +157,7 @@ impl Palette {
             other: hex(0xebdbb2),     // fg
             dim: hex(0x928374),       // gray
             accent: hex(0x689d6a),    // neutral aqua
-            selection: hex(0x3c3836), // bg1 — the native gruvbox selection warmth
+            selection: hex(0x3c3836), // bg1, the native gruvbox selection warmth
             keyword: hex(0x458588),   // neutral blue
         }
     }

@@ -44,7 +44,7 @@ pd.rounded_rectangle([0, 0, sw + 23, sh + 23], radius=14, outline=(40, 44, 54), 
 img.paste(panel, (px - 12, py - 12))
 img.paste(shot, (px, py))
 
-# Left text column — kept clear of the panel (panel left edge ≈ px-12).
+# Left text column, kept clear of the panel (panel left edge ≈ px-12).
 x = 64
 d.text((x, 168), "sucher", font=font(MONO, 104), fill=SKY)
 d.text((x + 4, 300), "Fast terminal viewer + directory browser",

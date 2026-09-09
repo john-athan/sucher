@@ -7,7 +7,7 @@ CARGO_BIN := $(HOME)/.cargo/bin
 # `SUCHER_PDFIUM_LIB` at it; set `SUCHER_PDFIUM_NO_EMBED=1` to skip embedding
 # entirely (PDFs then use the poppler fallback).
 
-.PHONY: build install link uninstall run notices check
+.PHONY: build install link uninstall run notices deny check
 
 # Everything CI checks, in the order CI checks it, runnable here first. `oss
 # check sucher` calls exactly this, and so does .github/workflows/ci.yml, so
@@ -19,7 +19,7 @@ check:
 	cargo build --release
 	cargo build --no-default-features
 	cargo test --no-default-features
-	cargo deny check
+	$(MAKE) deny
 	$(MAKE) notices
 	@git diff --quiet -- THIRD_PARTY_LICENSES.md || { \
 		echo "THIRD_PARTY_LICENSES.md is out of date; `make notices` rewrote it."; \
@@ -59,6 +59,21 @@ run:
 # `.cargo-about-version` and CI installs exactly that one. Generating with a
 # different version produces a file CI will reject, which is a confusing way to
 # find out; fail here instead, with the command that fixes it.
+# The supply-chain gate, pinned for the same reason the notice generator is: the
+# verdict is a property of the tool as much as of the tree. cargo-deny gains
+# checks and revises advisory handling between versions, so an unpinned install
+# means CI and this machine can disagree about a clean tree, and neither is
+# wrong. `.cargo-deny-version` is the one place that says which.
+deny:
+	@want=$$(cat .cargo-deny-version); \
+	have=$$(cargo deny --version 2>/dev/null | awk '{print $$2}'); \
+	if [ "$$have" != "$$want" ]; then \
+		echo "deny: need cargo-deny $$want, found $${have:-none}"; \
+		echo "  cargo install cargo-deny --locked --version $$want"; \
+		exit 1; \
+	fi
+	cargo deny check
+
 notices:
 	@want=$$(cat .cargo-about-version); \
 	have=$$(cargo about --version 2>/dev/null | awk '{print $$2}'); \

@@ -1,12 +1,12 @@
 // Keynote (.key) preview.
 //
-// A modern .key is an iWork *package* — a zip whose real content is IWA
+// A modern .key is an iWork *package*, a zip whose real content is IWA
 // (Snappy-compressed protobuf) we deliberately don't parse. But Keynote embeds a
 // QuickLook JPEG of the deck so Finder can show a thumbnail; we extract the
 // best available one and hand it to the image viewer. This gives an honest
 // visual preview (the first slide / cover) with zero format decoding.
 //
-// Full per-slide text would mean decoding the IWA protobuf stream — out of scope;
+// Full per-slide text would mean decoding the IWA protobuf stream, out of scope;
 // see the effort discussion in the project notes.
 
 use image::DynamicImage;

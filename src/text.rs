@@ -6,7 +6,7 @@
 // reached by horizontal panning rather than wrapping. Search mirrors the
 // markdown viewer (`tui.rs`): case-insensitive substring on the raw lines with
 // matching rows highlighted. Colours come from `theme`; classification and
-// tokenisation come from `highlight` — this module owns only presentation.
+// tokenisation come from `highlight`, this module owns only presentation.
 
 use crate::highlight::{self, Syntax, Token};
 use crate::theme;

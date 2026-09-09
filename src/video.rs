@@ -3,7 +3,7 @@
 // Playback streams raw rgb24 frames from ONE long-lived ffmpeg process (scaled
 // to the display, fps-limited) over a pipe, decoded on a background thread that
 // paces to real time and keeps only the latest frame. The UI shows whatever is
-// current — so when terminal-graphics encoding can't keep up, frames drop
+// current, so when terminal-graphics encoding can't keep up, frames drop
 // instead of the whole thing lagging behind. Scrubbing while paused extracts a
 // single frame (fast input-seek). There is NO audio.
 

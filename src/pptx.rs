@@ -2,7 +2,7 @@
 // ppt/slides/slideN.xml as DrawingML, where visible runs are `<a:t>` inside
 // paragraphs `<a:p>`. We enumerate the slide parts in numeric order, extract the
 // text paragraph by paragraph, and emit markdown (a `## Slide N` heading plus one
-// bullet per paragraph) so the existing markdown TUI renders it — no new UI.
+// bullet per paragraph) so the existing markdown TUI renders it, no new UI.
 //
 // Layout and speaker notes are dropped: this is a reading view of the words on
 // the slides, matching how docx.rs reduces a document. Embedded images aren't
@@ -61,7 +61,7 @@ fn slide_number(name: &str) -> Option<u32> {
 }
 
 /// Extract one string per `<a:p>` paragraph: the concatenation of its `<a:t>`
-/// runs, trimmed. Empty paragraphs (spacer boxes) are dropped. PURE — unit-tested.
+/// runs, trimmed. Empty paragraphs (spacer boxes) are dropped. PURE, unit-tested.
 fn slide_paragraphs(xml: &str) -> Vec<String> {
     let mut r = Reader::from_str(xml);
     r.config_mut().trim_text(false);

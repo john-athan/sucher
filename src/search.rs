@@ -2,11 +2,11 @@
 //!
 //! Where the local filter (`/`) narrows the *current directory's* listing in
 //! memory with zero IO, recursive search answers "where is this, anywhere below
-//! here?" — it walks the tree from a root downward and streams matching hits to
+//! here?", it walks the tree from a root downward and streams matching hits to
 //! the UI as they are found (ADR 0007 D1). The walk itself is ripgrep's own
 //! [`ignore`] parallel walker; content matching is ripgrep's own
 //! [`grep_searcher`] line searcher driven by a [`grep_regex`] matcher (D3/D4).
-//! Running the real engine — not a hand-rolled `walkdir` loop — is the concrete
+//! Running the real engine, not a hand-rolled `walkdir` loop, is the concrete
 //! form of the ADR's "more performant than all others" claim.
 //!
 //! ## Shape of the module
@@ -23,8 +23,8 @@
 //!   2. derive `name`/`is_dir`/`size`/`modified`/`key` (lang_key) exactly as
 //!      `dir::read_entries` does: classification is by lang_key only, no
 //!      per-file read (mirrors ADR 0001's cheap listing path),
-//!   3. apply [`Query::matches`] — the **pure, metadata-only** predicate the
-//!      local filter also uses (ADR 0007 D2) — as a cheap reject,
+//!   3. apply [`Query::matches`], the **pure, metadata-only** predicate the
+//!      local filter also uses (ADR 0007 D2), as a cheap reject,
 //!   4. only if a `content:` term is present *and* the cheap predicates already
 //!      passed do we open the file and grep it (D2: a metadata-only query never
 //!      touches file bytes; a content query never opens a directory).
@@ -67,7 +67,7 @@ pub struct Hit {
     /// Absolute path to the match.
     pub path: PathBuf,
     /// Path relative to the search root, for display (ADR 0007 D5 draws rows
-    /// specialised around this — a flat listing has no relative path).
+    /// specialised around this, a flat listing has no relative path).
     pub rel: String,
     pub kind: Format,
     pub size: u64,
@@ -81,7 +81,7 @@ pub struct Hit {
 pub enum Msg {
     Hit(Hit),
     /// The walk ended. `capped` is true when [`CAP`] was reached and some matches
-    /// went unreported (surface it in the UI, never truncate silently — D3).
+    /// went unreported (surface it in the UI, never truncate silently, D3).
     Done {
         capped: bool,
     },
@@ -89,7 +89,7 @@ pub enum Msg {
 
 /// A running search. Owns the receiver plus the cancel handle; dropping it (or
 /// calling [`Search::cancel`]) signals the background walk to stop promptly
-/// (ADR 0007 D3 — no zombie walkers when the query is superseded).
+/// (ADR 0007 D3, no zombie walkers when the query is superseded).
 pub struct Search {
     rx: Receiver<Msg>,
     cancel: Arc<AtomicBool>,
@@ -109,7 +109,7 @@ impl Search {
 }
 
 impl Drop for Search {
-    /// A dropped `Search` must not leave its walk running — the UI drops the old
+    /// A dropped `Search` must not leave its walk running, the UI drops the old
     /// handle when the query changes, and that alone has to stop the old walk.
     fn drop(&mut self) {
         self.cancel();
@@ -119,7 +119,7 @@ impl Drop for Search {
 /// Start a recursive search from `root` for `query`, spawning a background thread
 /// and returning immediately. Honours `show_hidden` (`false` = skip dotfiles, the
 /// browser default) and `.gitignore` (always on). Caller guarantees
-/// `!query.is_empty()` — an empty query would walk the whole tree for nothing
+/// `!query.is_empty()`, an empty query would walk the whole tree for nothing
 /// (see [`Query::is_empty`]).
 pub fn start(root: PathBuf, query: Query, show_hidden: bool) -> Search {
     let (tx, rx) = mpsc::channel();
@@ -146,12 +146,12 @@ fn run_walk(
     cancel: Arc<AtomicBool>,
 ) {
     // Compile the content matcher once for the whole walk (never per file, ADR
-    // 0007 D4). `fixed_strings(true)` makes the pattern a literal substring — no
+    // 0007 D4). `fixed_strings(true)` makes the pattern a literal substring, no
     // regex metacharacter escaping needed; `case_smart(true)` is smart-case:
     // case-insensitive unless the pattern itself contains an uppercase letter.
     // With fixed strings a build failure is effectively impossible, but if it
     // ever happens we must not fall through to reporting metadata-only hits for
-    // what the user asked to be a content search — so we report an empty,
+    // what the user asked to be a content search, so we report an empty,
     // completed search instead.
     let matcher = match query.content() {
         Some(pat) => match grep_regex::RegexMatcherBuilder::new()
@@ -183,7 +183,7 @@ fn run_walk(
     // shareable across threads) and to clone the `Sender` (an `mpsc::Sender` is
     // `Send` but not `Sync`, so each worker needs its own clone). Everything
     // read-only (`root`, `query`, the compiled `matcher`, the atomics) is
-    // borrowed/cloned in — `run` blocks until the walk finishes, so borrows of
+    // borrowed/cloned in, `run` blocks until the walk finishes, so borrows of
     // this stack frame outlive the walk.
     // Borrow the read-only state as references the per-thread closures copy in
     // (references are `Copy`, so each worker gets its own copy of the borrow;
@@ -220,7 +220,7 @@ fn run_walk(
 
     // Exactly one terminal message, whether the walk finished naturally, was
     // cancelled, or hit the cap. (If the receiver is already gone this is a
-    // no-op — the UI moved on.)
+    // no-op, the UI moved on.)
     let _ = tx.send(Msg::Done {
         capped: capped.load(Ordering::Relaxed),
     });
@@ -254,7 +254,7 @@ fn visit(
         Err(_) => return WalkState::Continue,
     };
 
-    // Skip the root entry itself — it is visited at depth 0 and is not a "result".
+    // Skip the root entry itself, it is visited at depth 0 and is not a "result".
     if entry.depth() == 0 {
         return WalkState::Continue;
     }
@@ -280,7 +280,7 @@ fn visit(
     }
 
     // Content matching: only when a `content:` term is present, and only for
-    // files — a directory has no bytes to grep, so it can never be a content hit.
+    // files, a directory has no bytes to grep, so it can never be a content hit.
     let snippet = match matcher {
         Some(m) => {
             if is_dir {
@@ -298,7 +298,7 @@ fn visit(
 
     // Reserve a slot under the cap. `fetch_add` returns the *previous* count, so
     // the first CAP entries (previous 0..CAP) are reported and everything after
-    // is refused — bounding total sends to at most CAP even across worker
+    // is refused, bounding total sends to at most CAP even across worker
     // threads racing on the counter.
     if count.fetch_add(1, Ordering::Relaxed) >= CAP {
         capped.store(true, Ordering::Relaxed);
@@ -332,12 +332,12 @@ fn visit(
 
 /// Grep `path` for the first line matching `matcher`, returning
 /// `(1-based line number, capped snippet)`. `None` when there is no match, the
-/// file is binary, or it errors on open/read — a search must never crash on one
+/// file is binary, or it errors on open/read, a search must never crash on one
 /// bad file (ADR 0007 D4).
 ///
 /// Uses a [`Lossy`] sink (invalid UTF-8 in the matched line degrades to `�`
 /// rather than erroring) whose closure captures the first hit and returns
-/// `Ok(false)` to stop the searcher immediately — we only ever want the first
+/// `Ok(false)` to stop the searcher immediately, we only ever want the first
 /// line for the snippet, not every match in the file.
 fn grep_first_match(
     searcher: &mut Searcher,
@@ -355,7 +355,7 @@ fn grep_first_match(
     found
 }
 
-/// Trim a matched line and cap its length for display. Pure — unit-tested
+/// Trim a matched line and cap its length for display. Pure, unit-tested
 /// without a search. Strips surrounding whitespace (grep hands us the line with
 /// its trailing newline), then truncates to [`SNIPPET_CAP`] *characters* (not
 /// bytes, so multi-byte text is never split mid-char), appending `…` when cut.
@@ -378,8 +378,8 @@ mod tests {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::time::{Duration, Instant};
 
-    /// Per-process, per-test-unique temp directory that cleans itself up on drop
-    /// — no reliance on an external tempfile crate, and parallel tests never
+    /// Per-process, per-test-unique temp directory that cleans itself up on
+    /// drop, with no reliance on an external tempfile crate. Parallel tests never
     /// collide (`process id` + a monotonic counter).
     struct Fixture {
         root: PathBuf,
@@ -437,7 +437,7 @@ mod tests {
 
     /// Collect every hit of a search synchronously: drive `start`, drain until
     /// `Done`, and return `(hits, capped)`. Bounded by a wall-clock timeout and a
-    /// max iteration count so a bug can never hang the test suite — it panics
+    /// max iteration count so a bug can never hang the test suite, it panics
     /// with a clear message if `Done` never arrives.
     fn collect(fx: &Fixture, raw: &str, show_hidden: bool) -> (Vec<Hit>, bool) {
         let search = start(fx.root.clone(), query::parse(raw), show_hidden);
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn descends_recursively_for_a_name_match() {
-        // A name query for `b` must find `sub/b.rs` — proving the walk descends
+        // A name query for `b` must find `sub/b.rs`, proving the walk descends
         // below the root, which the local filter cannot do.
         let fx = standard_tree();
         let (hits, _) = collect(&fx, "b", false);

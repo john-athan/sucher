@@ -63,7 +63,7 @@ pub struct Query {
     age: Option<(Cmp, Duration)>,
     /// A `content:` term: a literal substring to look for *inside* files. Unlike
     /// every other predicate this needs the file's bytes, so it is **not** tested
-    /// by [`Query::matches`] (which stays pure, metadata-only — ADR 0007 D2). Only
+    /// by [`Query::matches`] (which stays pure, metadata-only, ADR 0007 D2). Only
     /// recursive search reads it, via [`Query::content`], and scans the file after
     /// the cheap metadata predicates already passed. Inert for the local filter.
     content: Option<String>,
@@ -107,7 +107,7 @@ pub fn parse(raw: &str) -> Query {
                 Some(p) => age = Some(p),
                 None => terms.push(token),
             },
-            // `content:`/`contains:` — a literal substring to grep for inside
+            // `content:`/`contains:`, a literal substring to grep for inside
             // files (ADR 0007 D2/D4). The last one wins if repeated. The value is
             // taken verbatim (case folding is the searcher's smart-case job, not
             // the parser's), so `content:Foo` and `content:foo` differ here and
@@ -146,7 +146,7 @@ impl Query {
         self.content.as_deref()
     }
 
-    /// True when nothing at all was asked for — no free-text terms, no metadata
+    /// True when nothing at all was asked for, no free-text terms, no metadata
     /// predicates, no `content:`. Recursive search uses this to avoid walking the
     /// entire tree for a blank query: an empty query matches everything, which as
     /// a *search* means "you haven't asked yet," not "list the whole disk."
@@ -375,7 +375,7 @@ mod tests {
     #[test]
     fn content_is_metadata_only_in_matches() {
         // `matches` stays pure metadata (ADR 0007 D2): a content-only query does
-        // not reject any entry on name/kind/size/age — the walker greps the file.
+        // not reject any entry on name/kind/size/age, the walker greps the file.
         let q = parse("content:needle");
         assert!(q.matches("anything.rs", Format::Text, 0, None));
         assert!(q.matches("other.pdf", Format::Pdf, 999, None));

@@ -1,9 +1,9 @@
 // Jupyter notebook (.ipynb) -> markdown. An .ipynb is a JSON document: a `cells`
 // array of markdown / code cells, each carrying `source` and (for code) a list of
-// execution `outputs`. It reduces cleanly to markdown — markdown cells pass
+// execution `outputs`. It reduces cleanly to markdown, markdown cells pass
 // through verbatim, code cells become fenced blocks in the notebook's language,
 // text outputs are shown, and image outputs are sent to the viewer's image
-// gallery — so the existing markdown TUI renders the notebook with no new UI
+// gallery, so the existing markdown TUI renders the notebook with no new UI
 // (mirrors docx/pptx/epub: `to_markdown` + `media`).
 //
 // The transformation is factored into PURE functions (`notebook_to_markdown`,
@@ -40,7 +40,7 @@ pub fn media(path: &str) -> Vec<PathBuf> {
     }
     let mut out = Vec::new();
     for (i, (ext, b64)) in images.iter().enumerate() {
-        // Skip anything that isn't valid base64 or that decodes beyond the cap —
+        // Skip anything that isn't valid base64 or that decodes beyond the cap,
         // a bounded, best-effort extraction (ADR 0009).
         let Some(bytes) = b64_decode(b64) else {
             continue;
@@ -89,9 +89,9 @@ fn code_language(v: &Value) -> String {
         .to_string()
 }
 
-/// Reduce a parsed notebook to markdown. PURE — unit-tested against inline JSON.
+/// Reduce a parsed notebook to markdown. PURE, unit-tested against inline JSON.
 /// Cells are emitted in order separated by a blank line; the *total* output is
-/// bounded (ADR 0009): a notebook with thousands of cells — each under the cap —
+/// bounded (ADR 0009): a notebook with thousands of cells, each under the cap,
 /// could still blow up unbounded, so we stop appending past the cap and mark it.
 fn notebook_to_markdown(v: &Value) -> String {
     let lang = code_language(v);
@@ -210,7 +210,7 @@ fn cell_source(cell: &Value) -> String {
 
 /// nbformat allows a `source`/`text`/image field to be either a single JSON
 /// string or an array of line strings (each already carrying its own newline), so
-/// the array form is concatenated — not joined with `\n`. Absent / other → empty.
+/// the array form is concatenated, not joined with `\n`. Absent / other → empty.
 fn value_text(v: Option<&Value>) -> String {
     match v {
         Some(Value::String(s)) => s.clone(),
@@ -220,7 +220,7 @@ fn value_text(v: Option<&Value>) -> String {
 }
 
 /// Every code-cell image output as `(extension, base64)` in document order:
-/// `image/png` → `png`, `image/jpeg` → `jpg`. PURE — the base64 is decoded and
+/// `image/png` → `png`, `image/jpeg` → `jpg`. PURE, the base64 is decoded and
 /// written by [`media`].
 fn collect_images(v: &Value) -> Vec<(&'static str, String)> {
     let mut out = Vec::new();
@@ -250,7 +250,7 @@ fn collect_images(v: &Value) -> Vec<(&'static str, String)> {
 
 /// Strip ANSI CSI escape sequences (`\x1b[…<final>`, final byte `0x40..=0x7e`)
 /// from a string. Notebook error tracebacks are ANSI-coloured; the markdown
-/// renderer would otherwise show the raw escapes as mojibake. PURE — unit-tested.
+/// renderer would otherwise show the raw escapes as mojibake. PURE, unit-tested.
 fn strip_ansi(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.chars().peekable();
@@ -275,7 +275,7 @@ fn strip_ansi(s: &str) -> String {
 
 /// Decode standard-alphabet base64 (`A-Za-z0-9+/`, `=` padding), IGNORING
 /// whitespace/newlines since notebook base64 image data is line-wrapped. Returns
-/// `None` on any non-alphabet, non-whitespace, non-padding byte. PURE — unit-tested.
+/// `None` on any non-alphabet, non-whitespace, non-padding byte. PURE, unit-tested.
 fn b64_decode(s: &str) -> Option<Vec<u8>> {
     fn sextet(c: u8) -> Option<u32> {
         match c {
@@ -292,7 +292,7 @@ fn b64_decode(s: &str) -> Option<Vec<u8>> {
     let mut bits = 0u32;
     for &b in s.as_bytes() {
         match b {
-            b'=' => break, // padding is always trailing — stop.
+            b'=' => break, // padding is always trailing, stop.
             _ if b.is_ascii_whitespace() => continue,
             _ => {
                 buf = (buf << 6) | sextet(b)?;

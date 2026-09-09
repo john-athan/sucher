@@ -2,7 +2,7 @@
 // parse it with a browser-grade HTML5 parser (html5ever + rcdom) and walk the
 // DOM, emitting the same markdown vocabulary the rest of the app renders
 // (headings, bold/italic, code, links, lists, blockquotes, rules, tables) so the
-// existing markdown layout/TUI shows it — no new UI (mirrors docx.rs).
+// existing markdown layout/TUI shows it, no new UI (mirrors docx.rs).
 //
 // The reducer is a PURE `fn markdown_from_str(&str) -> String`, unit-tested with
 // inline HTML literals; `to_markdown` is the thin IO wrapper. The reducer is
@@ -22,7 +22,7 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
     Ok(markdown_from_str(&html))
 }
 
-/// Reduce an HTML/XHTML document to markdown. PURE — no IO — so it is both
+/// Reduce an HTML/XHTML document to markdown. PURE, no IO, so it is both
 /// unit-testable and reusable by other viewers whose payload is XHTML (epub).
 pub(crate) fn markdown_from_str(html: &str) -> String {
     let dom = parse_document(RcDom::default(), Default::default()).one(html);
@@ -98,7 +98,7 @@ fn is_block(tag: &str) -> bool {
 /// Recursion budget. `parse` must be total on arbitrary input; html5ever builds
 /// an arbitrarily deep DOM for auto-nesting tags (`<div>`, `<span>`, `<b>`, …), so
 /// every tree walk is depth-guarded to keep a pathological file from overflowing
-/// the stack. Deeper subtrees are truncated, not rendered — honest degradation.
+/// the stack. Deeper subtrees are truncated, not rendered, honest degradation.
 const MAX_DEPTH: usize = 500;
 
 #[derive(Default)]
@@ -183,15 +183,15 @@ impl Writer {
             "pre" => self.pre(node),
             "blockquote" => self.blockquote(node),
             "table" => self.table(node),
-            // div / section / body / html / nav / p / dt / dd … — transparent
+            // div / section / body / html / nav / p / dt / dd …, transparent
             // containers: recurse and let their inline/block children sort out.
             _ => self.block(node),
         }
     }
 
     /// Inline markdown for a node's subtree. Block structures (lists, tables,
-    /// pre, blockquote, rules) are not inline and are skipped here — the block
-    /// walker handles them — so this is safe to call on an `<li>` with a nested
+    /// pre, blockquote, rules) are not inline and are skipped here, the block
+    /// walker handles them, so this is safe to call on an `<li>` with a nested
     /// list.
     fn inline(&self, node: &Handle) -> String {
         let mut s = String::new();
@@ -247,7 +247,7 @@ impl Writer {
                 }
                 None => String::new(),
             },
-            // span / small / sup / label … — transparent inline.
+            // span / small / sup / label …, transparent inline.
             _ => self.inline(child),
         }
     }
@@ -447,7 +447,7 @@ fn raw_text(node: &Handle, depth: usize) -> String {
 /// Collapse runs of blank lines to one and trim leading blanks / trailing
 /// whitespace, so the emitted markdown has clean paragraph spacing. Fenced code
 /// blocks (our emitter always fences with a bare ```` ``` ```` line) pass through
-/// verbatim — their blank lines and trailing spaces are significant.
+/// verbatim, their blank lines and trailing spaces are significant.
 fn normalize(s: &str) -> String {
     let mut out = String::new();
     let mut blanks = 0usize;
@@ -529,7 +529,7 @@ let y = 2;</code></pre>
 
     #[test]
     fn recovers_from_malformed_markup() {
-        // Unclosed tags, missing quotes, stray entity — an XML reader would choke;
+        // Unclosed tags, missing quotes, stray entity, an XML reader would choke;
         // the HTML5 parser recovers the way a browser does.
         let md = markdown_from_str("<p>one<p>two<br>three &amp; four <b>bold");
         assert!(md.contains("one"), "{md}");

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/social-preview.png" alt="sucher — fast terminal viewer and directory browser for markdown, spreadsheets, PDF, images, SVG, video, docx, pptx, Keynote, archives and more" width="820">
+  <img src="assets/social-preview.png" alt="sucher, fast terminal viewer and directory browser for markdown, spreadsheets, PDF, images, SVG, video, docx, pptx, Keynote, archives and more" width="820">
 </p>
 
 # sucher
@@ -9,15 +9,15 @@
 [![Made with Rust](https://img.shields.io/badge/Rust-stable-orange.svg?logo=rust)](https://www.rust-lang.org)
 [![Built with ratatui](https://img.shields.io/badge/TUI-ratatui-7dd3fc.svg)](https://ratatui.rs)
 
-A fast terminal viewer for the files that are awkward to open in a browser —
+A fast terminal viewer for the files that are awkward to open in a browser:
 **markdown, spreadsheets, data files (Parquet, JSONL, SQLite, DuckDB), PDF,
 images, SVG, video, Word/PowerPoint/Keynote, EPUB e-books, archives, and raw
-binary** — behind one tiny command:
+binary**. All behind one tiny command:
 
 ```sh
 s report.md
 s data.xlsx
-s data.parquet      # data files open in the grid — with a `:` SQL prompt
+s data.parquet      # data files open in the grid, with a `:` SQL prompt
 s app.db            # SQLite / DuckDB: each table a sheet
 s paper.pdf
 s photo.jpg
@@ -25,11 +25,11 @@ s diagram.svg
 s clip.mp4
 s deck.pptx
 s archive.zip
-s ~/projects        # or a directory — browse and open files in place
+s ~/projects        # or a directory, browse and open files in place
 s                   # no argument: browse the current directory
 ```
 
-*Sucher* is German for the camera **viewfinder** — the little window you look
+*Sucher* is German for the camera **viewfinder**, the little window you look
 through to frame a shot. This one frames files: it picks a viewer by file
 extension and renders it in place, using your terminal's graphics protocol for
 real pixels where one is available.
@@ -47,13 +47,13 @@ real pixels where one is available.
 
 ## Highlights
 
-- **One launcher, many formats** — dispatch by extension, sensible TUI per type.
-- **Directory browser** — point `s` at a folder (or run it bare) for a fast,
+- **One launcher, many formats**, dispatch by extension, sensible TUI per type.
+- **Directory browser**, point `s` at a folder (or run it bare) for a fast,
   two-pane navigator: live preview pane, fuzzy filter, and `Enter` opens the
   selection in its viewer, then drops you back where you were.
-- **Recursive search** (`S`) — find files anywhere below the current directory,
+- **Recursive search** (`S`), find files anywhere below the current directory,
   streamed live as they're found (ripgrep's own walker, `.gitignore`-aware). The
-  same smart query as the filter, plus `content:` to grep *inside* files — and
+  same smart query as the filter, plus `content:` to grep *inside* files, and
   every hit renders in the preview pane as the **actual framed file** (the PDF
   page, the image, the spreadsheet grid), not a grey line of text.
 - **File operations that never destroy.** Mark across folders with `Space`, then
@@ -64,23 +64,24 @@ real pixels where one is available.
   the system trash, and so does anything an overwrite displaces or an undo takes
   back. `U` undoes the last operation. Large copies run in the background with
   live progress, so the browser stays usable while they go.
-- **Handles huge files** — a 240 MB / 800k-row spreadsheet opens in ~160 ms and
+- **Handles huge files**, a 240 MB / 800k-row spreadsheet opens in ~160 ms and
   stays scrollable, because sheets stream in on a background thread instead of
   being loaded whole.
-- **Queryable data files** — Parquet, JSONL, SQLite, and DuckDB open in the grid:
+- **Queryable data files**, Parquet, JSONL, SQLite, and DuckDB open in the grid:
   each database table becomes a tab, columns keep their real names and types
-  (ISO dates, not serial numbers), and a `:` SQL prompt — powered by an
-  **embedded DuckDB** — turns any of them into a live query over the file. It's
+  (ISO dates, not serial numbers), and a `:` SQL prompt, powered by an
+  **embedded DuckDB**, turns any of them into a live query over the file. It's
   **lazy and uncapped**, so a billion-row Parquet opens instantly and scrolls to
-  the end, and **fully offline** — reading a data file never touches the network.
-- **Real graphics** — images, rasterised SVGs, PDF pages, video frames, and
+  the end. It is also **fully offline**: reading a data file never touches the
+  network.
+- **Real graphics**, images, rasterised SVGs, PDF pages, video frames, and
   Keynote previews render as actual pixels via the kitty / iTerm2 / sixel
   protocols (with a Unicode half-block fallback), through
   [`ratatui-image`](https://crates.io/crates/ratatui-image).
-- **Real typography in pipe mode** — `s --plain doc.md` emits the kitty
+- **Real typography in pipe mode**, `s --plain doc.md` emits the kitty
   text-sizing protocol so headings render *larger* on supporting terminals;
   detected at runtime, with graceful fallback.
-- **Responsive** — event-driven redraw (no idle CPU churn) and background work
+- **Responsive**, event-driven redraw (no idle CPU churn) and background work
   for the expensive bits.
 
 ## Supported formats
@@ -93,10 +94,10 @@ real pixels where one is available.
 | Name-keyed types | `Dockerfile` (also `Dockerfile.dev`, `web.dockerfile`), `Makefile`, `.gitignore`, `.env` | recognised by file NAME rather than extension, then highlighted like any source file |
 | Spreadsheet | `.xlsx`, `.xlsm` | streaming reader (zip + quick-xml) on a worker thread |
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
-| Data — columnar | `.parquet` `.pq` | embedded **DuckDB** (`read_parquet`) |
-| Data — line JSON | `.jsonl` `.ndjson` | DuckDB (`read_json_auto`) |
-| Data — SQLite | `.sqlite` `.sqlite3` `.db` `.db3` | [`rusqlite`](https://crates.io/crates/rusqlite) bundled libsqlite (read-only); each table a sheet |
-| Data — DuckDB | `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
+| Data (columnar) | `.parquet` `.pq` | embedded **DuckDB** (`read_parquet`) |
+| Data (line JSON) | `.jsonl` `.ndjson` | DuckDB (`read_json_auto`) |
+| Data (SQLite) | `.sqlite` `.sqlite3` `.db` `.db3` | [`rusqlite`](https://crates.io/crates/rusqlite) bundled libsqlite (read-only); each table a sheet |
+| Data (DuckDB) | `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
 | PDF | `.pdf` | [pdfium](https://crates.io/crates/pdfium-render) (Chrome's engine) → graphics, poppler `pdftocairo` fallback |
 | Image | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` `.tiff` `.tif` `.ico` | [`image`](https://crates.io/crates/image) → graphics |
 | SVG | `.svg` | [`resvg`](https://crates.io/crates/resvg) rasteriser → picture above scrolling source |
@@ -124,13 +125,13 @@ listing for directories).
 
 ## Data files & SQL
 
-The files most technical users live in — **Parquet, newline-delimited JSON,
-SQLite and DuckDB databases** — open in the same grid as spreadsheets, backed by
+The files most technical users live in, **Parquet, newline-delimited JSON,
+SQLite and DuckDB databases**, open in the same grid as spreadsheets, backed by
 two native, statically-bundled engines behind one interface: an **embedded
 DuckDB** reads Parquet/JSONL/DuckDB, and **rusqlite**'s bundled libsqlite reads
 SQLite. Real column names sit in the header (not `A`/`B`/`C`),
 DuckDB's canonical text gives correct ISO dates and timestamps (NULL renders
-blank), and a database opens **read-only** with each table as its own sheet —
+blank), and a database opens **read-only** with each table as its own sheet,
 `Tab` (or `[` / `]`) cycles them, and the SQL prompt can join across them.
 Sample files ship in `samples/` so you can try it straight away:
 
@@ -151,12 +152,12 @@ follow it). For a single-file source, `FROM` the file's stem; for a database,
 ```
 
 A live query shows truncated in the status bar. A parse/bind error stays in the
-prompt with your text — and the previous view — intact; empty input reverts to
+prompt with your text, and the previous view, intact; empty input reverts to
 the base table; switching tabs drops the query.
 
 It's **lazy and uncapped.** The grid windows rows on demand (`LIMIT`/`OFFSET`
 plus a prefetch cache) and reads the schema from `DESCRIBE`, which doesn't
-execute the query — so a file opens instantly regardless of size and scrolls to
+execute the query, so a file opens instantly regardless of size and scrolls to
 the end with **no row cap**, unlike the streaming `.xlsx`/CSV backends. And it's
 **fully offline**: both engines are compiled in statically and DuckDB has
 extension autoinstall/autoload disabled, so reading a data file never reaches for
@@ -165,7 +166,7 @@ sucher's local-viewer identity.
 
 Data files sit behind the **default-on `data` Cargo feature**, so
 `cargo install sucher` includes them out of the box. DuckDB is compiled from
-vendored source and statically bundled — self-contained, with no build-time
+vendored source and statically bundled: self-contained, with no build-time
 download and no runtime network, which puts the release binary at **~75 MB**
 (measured on macOS arm64; the figure moves with target and toolchain). If you
 don't need it, `cargo install sucher --no-default-features` builds the lean
@@ -224,7 +225,7 @@ The fast PDF path uses `libpdfium`, embedded in the binary at build time (no
 install step); poppler remains the fallback and still powers `pdfinfo`/`pdftotext`.
 
 For pixel-perfect images / PDF / video, use a terminal with a graphics
-protocol — **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
+protocol, **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
 Without one, sucher falls back to Unicode half-blocks.
 
 ## Themes, icons & layout
@@ -275,33 +276,33 @@ accent = "#7dd3fc"
 selection = "#26324a"
 ```
 
-- **Themes** — built-ins: `sucher-dark` (the default), `sucher-light`,
+- **Themes**, built-ins: `sucher-dark` (the default), `sucher-light`,
   `catppuccin-mocha`, `gruvbox-dark`, `tokyo-night`. `theme = "auto"` picks a
   light or dark default from the terminal background (`COLORFGBG` / OSC 11,
   falling back to dark).
-- **Icons** — `unicode` (geometric glyphs, renders on any font — the default),
+- **Icons**, `unicode` (geometric glyphs, renders on any font, the default),
   `nerd` (per-extension [Nerd Font](https://www.nerdfonts.com/) glyphs with
-  per-language tints — **requires a patched Nerd Font**; not auto-detected, so
+  per-language tints, **requires a patched Nerd Font**; not auto-detected, so
   opt in), or `none` (no icon column).
-- **Layout** — `auto` shows three columns (**parent · current · preview**, the
+- **Layout**, `auto` shows three columns (**parent · current · preview**, the
   ranger-style [Miller layout](https://en.wikipedia.org/wiki/Miller_columns)) on
   wide terminals (≥ 100 cols) and collapses to two (**current · preview**) when
   narrow; `miller` forces three, `double` forces two. Toggle live with `M`.
-- **Git gutter** — in a git working tree, each entry shows a colored status
+- **Git gutter**, in a git working tree, each entry shows a colored status
   marker (`●` modified · `+` added · `?` untracked · `✗` deleted · `»` renamed ·
   `!` conflict); directories aggregate their descendants' changes. Absent
   outside a repo or with `git = false`.
-- **Repo HEAD readout** — inside a repo, the breadcrumb row shows the current
+- **Repo HEAD readout**, inside a repo, the breadcrumb row shows the current
   branch (or detached commit) right-aligned, with ahead/behind arrows vs the
   upstream and a `●` dot when the tree is dirty: `⎇ main ↑2 ↓1 ●`. Follows the
   same `git` toggle as the gutter.
-- **Mouse** — click a file row to select it, click the highlighted row to open
+- **Mouse**, click a file row to select it, click the highlighted row to open
   it (or enter a folder); click a breadcrumb segment to jump there; in the
   three-column layout click the left pane to go up; scroll the wheel to move the
   selection. Capturing the mouse disables the terminal's own click-drag text
   selection inside sucher (Shift/Option-drag still bypasses it in most
   terminals); set `mouse = false` to keep native selection.
-- **Animations** — entering/leaving a folder fades the new listing in; opening a
+- **Animations**, entering/leaving a folder fades the new listing in; opening a
   file in the full-screen image viewer zooms it up (and back down on close). Both
   are time-based (~120–150 ms), interruptible by any keypress, and disabled with
   `animate = false`. The folder fade is a cheap cell redraw that presents at the
@@ -320,7 +321,7 @@ s --help            # the one-line usage summary (`-h`)
 s --version         # version, and whether this build has `data` (`-V`)
 ```
 
-**Directory** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
+**Directory**: `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l`/`→` open file or enter folder · `h`/`←`/`Backspace` parent ·
 `x` open in native app · `/` smart filter · `S` recursive search ·
 `o` cycle sort (name/size/modified/ext) ·
@@ -349,11 +350,11 @@ The `/` filter mixes free-text fuzzy matching with structured predicates, e.g.
 `report kind:pdf size:>1mb modified:<7d ext:rs`. Plain words fuzzy-match the
 name; four `key:value` predicates narrow by metadata:
 
-- `kind:` — `pdf`, `image`, `video`, `audio`, `sheet`, `doc`, `markdown`,
+- `kind:`, `pdf`, `image`, `video`, `audio`, `sheet`, `doc`, `markdown`,
   `code`, `archive`, `folder`, `binary` (and aliases).
-- `ext:` — a file extension, e.g. `ext:rs`.
-- `size:` — `>1mb`, `<=100kb`, `500` (units `b`/`kb`/`mb`/`gb`/`tb`; bare = at least).
-- `modified:` — file age, e.g. `<7d`, `>2w` (units `s`/`m`/`h`/`d`/`w`/`mo`/`y`).
+- `ext:`, a file extension, e.g. `ext:rs`.
+- `size:`, `>1mb`, `<=100kb`, `500` (units `b`/`kb`/`mb`/`gb`/`tb`; bare = at least).
+- `modified:`, file age, e.g. `<7d`, `>2w` (units `s`/`m`/`h`/`d`/`w`/`mo`/`y`).
 
 Outside the filter, just **type a name** to jump to the first matching entry
 (type-to-select); a brief pause or `Esc` ends the jump, and the vim motion keys
@@ -361,15 +362,15 @@ keep working whenever you're not mid-type.
 
 **Search** (`S`) is the filter's recursive sibling: instead of narrowing the
 current listing, it walks the whole tree from here downward and **streams matches
-in live** as they're found, kept **sorted** (by the current sort — relative path
+in live** as they're found, kept **sorted** (by the current sort, relative path
 by default, so results group by folder) as they arrive rather than in the
 walker's nondeterministic finish order. Type to refine; `↑`/`↓` (and `PgUp`/`PgDn`) move
 through results, `Enter` opens the selected hit (or jumps into it if it's a
 folder), `Esc` returns to browsing. It takes the **same query language** as the
-filter — every `kind:` / `ext:` / `size:` / `modified:` predicate works — plus
+filter, every `kind:` / `ext:` / `size:` / `modified:` predicate works, plus
 one more that only makes sense across files:
 
-- `content:` (aliases `contains:` / `grep:`) — a literal substring to find
+- `content:` (aliases `contains:` / `grep:`), a literal substring to find
   *inside* files, e.g. `content:TODO ext:rs`. Matching is **smart-case**
   (case-insensitive unless you type an uppercase letter) and each hit shows the
   matching `line: text`. Powered by ripgrep's own line searcher, so binary files
@@ -378,7 +379,7 @@ one more that only makes sense across files:
 The walk uses ripgrep's parallel directory walker: it honours `.gitignore`, skips
 dotfiles unless `.` toggled them on, and caps at 5000 hits (surfaced in the
 status line). Because every result flows through the same preview pane, a hit is
-shown as the **real rendered file** — the differentiator over `fd`/`rg`/`fzf`.
+shown as the **real rendered file**, the differentiator over `fd`/`rg`/`fzf`.
 
 **File operations.** sucher stays a viewfinder: it changes *where files are*,
 never *what they contain*. There is no editing, no archive extraction, and no
@@ -424,7 +425,7 @@ it works over ssh with no helper binary. Delivery is up to the terminal (tmux
 needs `set -g set-clipboard on`), and the status line says so rather than
 claiming more than it knows.
 
-**Markdown** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
+**Markdown**: `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G` top/bottom ·
 `t` table of contents · `/` search (`n`/`N` next/prev) · `l` link picker ·
 `i` image gallery (for docx/pptx/epub/ipynb embedded media; `n`/`p` cycle) ·
 `x` open in native app · `?` help · `←`/`q` back. **Links are clickable**: a
@@ -434,54 +435,54 @@ jumps within the document, and a relative or absolute file path opens in sucher
 itself. Any other scheme (`file://`, `javascript:`) is refused, and a path that
 is not on disk says so in the status bar instead of failing silently.
 
-**Text / source** — `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G`
+**Text / source**: `j`/`k` `↑`/`↓` scroll · `d`/`u` half-page · `g`/`G`
 top/bottom · `h`/`l` pan long lines · `/` search (`n`/`N` next/prev) ·
 `x` open in native app · `←`/`q` back. `←` pans while a line is wider than the
 window, and closes the view once there is nothing left to pan to; `h` is always
 pan.
 
-**Spreadsheet** — `h`/`j`/`k`/`l` or arrows move cell · `PgUp`/`PgDn` ·
+**Spreadsheet**: `h`/`j`/`k`/`l` or arrows move cell · `PgUp`/`PgDn` ·
 `g`/`G` top/bottom · `Tab` / `[` `]` switch sheet · `/` search all cells
 (`n`/`N` cycle) · `x` open in native app · `q` quit. Status bar shows the cell
 ref, value, and load progress.
 
-**PDF** — `j`/`k`, `←`/`→`, or `space` page · `g`/`G` first/last ·
+**PDF**: `j`/`k`, `←`/`→`, or `space` page · `g`/`G` first/last ·
 `x` open in native app · `q` quit. Rendered with **pdfium** (Chrome's engine)
-when its library is present — a scanned page opens in ~30 ms instead of the
-several seconds poppler's software rasteriser takes — and falls back to poppler
+when its library is present, a scanned page opens in ~30 ms instead of the
+several seconds poppler's software rasteriser takes, and falls back to poppler
 otherwise. Pages render off-thread with the neighbours prefetched, so stepping
 through is near-instant; visited pages stay cached. `libpdfium` is embedded in
 the binary at build time, so the fast path works out of the box; set
 `SUCHER_PDFIUM_LIB` to override with a specific copy.
 
-**Image** — `x` open in native app · `←`/`q` back.
+**Image**: `x` open in native app · `←`/`q` back.
 
-**SVG** — the rasterised picture fills the top pane; the XML source scrolls
+**SVG**: the rasterised picture fills the top pane; the XML source scrolls
 below it with `j`/`k` `↑`/`↓` · `g`/`G` top/bottom · `x` open in native app ·
 `←`/`q` back.
 
-**Video** — auto-plays on open · `space` play/pause · `←`/`→` ±5 s ·
+**Video**: auto-plays on open · `space` play/pause · `←`/`→` ±5 s ·
 `↑`/`↓` ±30 s · `,`/`.` frame step · `g`/`G` start/end · `x` open in native app ·
 `q` quit. No audio.
 
-**Archive** — `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
+**Archive**: `j`/`k` `↑`/`↓` move · `d`/`u` half-page · `g`/`G` top/bottom ·
 `Enter`/`l` open folder · `h`/`Backspace` parent · `x` open in native app ·
 `q` quit. A read-only, navigable table of contents (path + size) with a
 breadcrumb; sucher lists and lets you browse folders, but never extracts.
 
-**Binary (hex)** — `j`/`k` `↑`/`↓` scroll · `d`/`u` page · `g`/`G` top/end ·
+**Binary (hex)**: `j`/`k` `↑`/`↓` scroll · `d`/`u` page · `g`/`G` top/end ·
 `x` open in native app · `←`/`q` back.
 
 ## Remote filesystems (S3, GCS, …)
 
 sucher is a **local** viewfinder: it works on any path the operating system
 gives it. So the clean way to browse a cloud bucket is to make it *look* like a
-path — mount it, then point `s` at the mount. No sucher-specific setup, no
+path, mount it, then point `s` at the mount. No sucher-specific setup, no
 credentials for sucher to hold, and everything works over it unchanged: the
 browser, every viewer, and the recursive `S` search.
 
 ```sh
-# Amazon S3 — AWS's official FUSE mount (or `rclone`, below)
+# Amazon S3, AWS's official FUSE mount (or `rclone`, below)
 mount-s3 my-bucket ~/mnt/s3          # https://github.com/awslabs/mountpoint-s3
 s ~/mnt/s3
 
@@ -495,13 +496,13 @@ s ~/mnt/r
 ```
 
 Because the bytes come over the network, expect the obvious: previews and
-graphics fetch on demand (a cache helps — e.g. rclone's `--vfs-cache-mode
+graphics fetch on demand (a cache helps, e.g. rclone's `--vfs-cache-mode
 full`), and a `content:` search downloads each candidate object, so scope it
 with `ext:`/`size:` on large buckets. Name/`kind:`/`ext:`/`size:`/`modified:`
 search only reads directory metadata and stays cheap.
 
 Native cloud sourcing *inside* sucher (its own S3/GCS client, no mount) was
-considered and deliberately left out for now — it would trade the zero-config
+considered and deliberately left out for now: it would trade the zero-config
 local-viewer identity for an SDK/auth/async surface, and mounts already cover
 the use case. See [ADR 0007](docs/adr/0007-recursive-search.md) for the search
 design that a native remote source would have to extend.
@@ -563,15 +564,15 @@ Design notes:
   parsed incrementally on a worker thread and the grid reads them live, so
   opening is independent of total file size. Switching sheets frees the
   previous one. A row cap bounds pathological files.
-- **Three Book backends.** The grid's `Book` seam now spans three shapes — eager
+- **Three Book backends.** The grid's `Book` seam now spans three shapes, eager
   (`MemBook`, calamine/CSV), capped-streaming (`StreamBook`, `.xlsx`), and
-  lazy-data (`DataBook`, `data.rs`) — each the right fit for its source. `DataBook`
+  lazy-data (`DataBook`, `data.rs`), each the right fit for its source. `DataBook`
   itself holds two native engines behind one interface: DuckDB (Parquet/JSONL/
   DuckDB) and rusqlite (SQLite), chosen so every format is read by the engine that
   owns it and stays **offline** (both statically compiled; DuckDB extension
   autoinstall/autoload off). Data reads are **lazy & uncapped** (window on demand,
   schema without executing). The `:` SQL prompt is the grid's first capability
-  that varies by backend — a method on `Book`, not a new viewer (ADR 0016).
+  that varies by backend, a method on `Book`, not a new viewer (ADR 0016).
 - **File operations decide before they act.** The hard part of a file manager is
   the decision matrix, not the syscall: name collisions, a destination nested
   inside its own source, the user standing in the directory being moved. So
@@ -630,17 +631,17 @@ text-sizing protocol.
   text as bullets). Embedded images are viewable in an image gallery (`i`) but
   not shown inline; page layout and exact styling are dropped.
 - Keynote shows the embedded QuickLook preview (cover / first slide), not
-  per-slide content — the IWA protobuf body isn't decoded.
+  per-slide content; the IWA protobuf body isn't decoded.
 - SVG rasterises shapes, gradients, and paths; `<text>` needs system fonts,
   which the headless rasteriser doesn't load, so text elements may not appear.
 - Archives are listed and folder-navigable, but never extracted: you can browse
   into directories, though individual entries can't be opened or unpacked.
 - Spreadsheet dates show as serial numbers (style table isn't read); the
-  streaming reader caps very large sheets. (Data files don't have this wart —
+  streaming reader caps very large sheets. (Data files don't have this wart,
   DuckDB renders dates as ISO text.)
 - Data files are **read-only**: databases are attached `READ_ONLY`, and there's
   no writing or editing. A `.db` that isn't actually SQLite errors on open rather
-  than falling back. **Arrow/Feather** files aren't supported — DuckDB's Arrow
+  than falling back. **Arrow/Feather** files aren't supported: DuckDB's Arrow
   *file* reader isn't in the bundled build and would need a network extension, so
   it's deliberately excluded (Parquet covers the columnar need). A `find`/search
   over a data file follows the query's scan order, not a stable row order.
@@ -667,12 +668,12 @@ text-sizing protocol.
   sequence, never that the clipboard took it. tmux needs `set -g set-clipboard on`.
 - Video has no audio, and terminal frame rate is capped by image transmission.
 - Inside the full-screen TUI, markdown headings use color/bold (not the
-  text-sizing protocol — that applies to `--plain` / pipe output).
+  text-sizing protocol, which applies to `--plain` and pipe output only).
 - In the directory browser, previews render synchronously as you move the
   selection, so a PDF or video poster adds a brief raster pause on first visit
-  (cached afterward). Video shows a poster frame, not playback — press `Enter`
+  (cached afterward). Video shows a poster frame rather than playback; press `Enter`
   to open the full player.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

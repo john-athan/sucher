@@ -1,6 +1,6 @@
 // Streaming .xlsx reader for large workbooks.
 //
-// calamine materializes a whole sheet before returning — fatal for multi-
+// calamine materializes a whole sheet before returning, fatal for multi-
 // hundred-MB files. Here we stream <row> elements with quick-xml on a worker
 // thread, appending to a shared buffer the UI reads live, and stop at a row
 // cap. Only the prefix of each (huge) sheet XML is decompressed, so opening is
@@ -17,7 +17,7 @@ use std::thread;
 // Safety bound on rows held in memory for one sheet. High enough to fully load
 // the large real-world sheets we target (≈800k rows × 17 cols ≈ 600MB) so the
 // whole sheet is scrollable; guards only against pathological files. Only the
-// current sheet is held — switching sheets frees the previous one.
+// current sheet is held, switching sheets frees the previous one.
 pub const ROW_CAP: usize = 2_000_000;
 
 #[derive(Default)]
@@ -127,7 +127,7 @@ impl Drop for StreamBook {
     }
 }
 
-/// Case-insensitive substring test (ASCII fold), allocation-free — important
+/// Case-insensitive substring test (ASCII fold), allocation-free, important
 /// when scanning tens of millions of cells. `needle` must be pre-lowercased.
 pub fn contains_ci(hay: &str, needle: &str) -> bool {
     let (h, n) = (hay.as_bytes(), needle.as_bytes());
@@ -289,7 +289,7 @@ fn read_entry(zip: &mut zip::ZipArchive<File>, name: &str) -> Option<String> {
 /// Bounded, synchronous first-rows reader for the directory preview pane.
 ///
 /// Parses ONLY the first worksheet's XML on the calling thread and stops after
-/// `max_rows` rows — no background thread, no polling. The decompressed sheet
+/// `max_rows` rows, no background thread, no polling. The decompressed sheet
 /// XML is read through [`Read::take`] at [`crate::util::MAX_DECODE_BYTES`] so a
 /// zip bomb cannot inflate unbounded even if it presents few `<row>` elements.
 /// Each row is truncated to `max_cols`. Shares the row/cell decoding with the
@@ -359,7 +359,7 @@ fn stream_sheet(
 
     // Mark the sheet fully loaded only on a real end (EOF or the ROW_CAP stop),
     // NOT when `parse_sheet_xml` returned because `stop` was set for a sheet
-    // switch — that sheet's data is being discarded, and flagging it `done` would
+    // switch, that sheet's data is being discarded, and flagging it `done` would
     // misreport a partial, superseded load as complete (pre-refactor semantics).
     if !stop.load(Ordering::Relaxed) {
         if let Ok(mut d) = data.lock() {
@@ -564,7 +564,7 @@ mod tests {
     #[test]
     fn parses_shared_inline_and_typed_cells() {
         // A shared-string ref (t="s"), an inline string (t="inlineStr"), a
-        // number, and a boolean — the four cell shapes the resolver handles.
+        // number, and a boolean, the four cell shapes the resolver handles.
         let sst = vec!["Alpha".to_string(), "Beta".to_string()];
         let xml = "<worksheet><sheetData>\
             <row r=\"1\"><c r=\"A1\" t=\"s\"><v>1</v></c>\
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn parser_stops_when_on_row_signals_full() {
-        // Returning `true` from on_row halts parsing immediately — the mechanism
+        // Returning `true` from on_row halts parsing immediately, the mechanism
         // both the ROW_CAP and the preview cap rely on.
         let xml = "<worksheet><sheetData>\
             <row r=\"1\"><c r=\"A1\" t=\"n\"><v>1</v></c></row>\

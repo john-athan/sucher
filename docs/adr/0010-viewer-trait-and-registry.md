@@ -1,4 +1,4 @@
-# 0010 — A `Viewer` trait: one dispatch registry + one interactive loop
+# 0010, A `Viewer` trait: one dispatch registry + one interactive loop
 
 Status: proposed (decided; implementation is follow-up work)
 Date: 2026-07-09
@@ -77,7 +77,7 @@ and the standard scroll + quit keys (the single home for the `visible_window`
 virtualization from the perf work). `text`/`hex`/`archive`/`svg-source` become
 thin `ScrollView` impls; the richer viewers (`sheet` grid, `pdf`/`video`/`imgview`
 graphics, `tui` markdown with TOC/links) either implement it with extra `on_key`
-handling or keep a bespoke loop where they genuinely differ — the driver is for
+handling or keep a bespoke loop where they genuinely differ, the driver is for
 the ones that are the same, not a Procrustean bed for the ones that aren't.
 
 The `Viewer::open`/`dump` contract is then enforceable: the compiler requires both
@@ -92,9 +92,9 @@ resolved by construction, not by editing prose).
 - ~700 lines of duplicated event-loop/scroll code collapse to one tested driver;
   poll cadence, resize, and scroll semantics change in one place.
 - The interactive loop becomes testable via the trait (drive `on_key`, assert
-  offset/selection) — today it is untested.
+  offset/selection), today it is untested.
 - Migration is incremental: introduce the registry first (mechanical, low-risk),
   then move viewers onto the driver one at a time behind it. No big-bang rewrite.
 - Risk: over-abstracting the divergent viewers. Mitigated by keeping `on_key`/
-  bespoke-loop escape hatches — a viewer that is genuinely different stays
+  bespoke-loop escape hatches, a viewer that is genuinely different stays
   different rather than being forced through the trait.

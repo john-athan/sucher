@@ -1,9 +1,9 @@
-// Runtime pdfium backend (ADR 0015) — Chrome's PDF engine.
+// Runtime pdfium backend (ADR 0015), Chrome's PDF engine.
 //
 // Shelling to poppler's `pdftocairo` re-parses the whole document and re-inits a
 // cold process *per page*, and cairo resamples scanned-image pages in scalar
 // software: a full-page scan takes ~4.5 s. pdfium renders the same page in ~30 ms
-// and hands back an RGBA bitmap in-process — no PNG round-trip, no subprocess.
+// and hands back an RGBA bitmap in-process, no PNG round-trip, no subprocess.
 //
 // libpdfium is loaded at *runtime* (never linked): `make` fetches the pinned
 // dylib and places it beside the binary; this module resolves it at first use.
@@ -44,7 +44,7 @@ pub fn available() -> bool {
 
 /// Render `page` (0-based) of `path` to an RGBA image `width` px wide via pdfium.
 /// Blocks until the service thread replies. `Err` when pdfium is unavailable or
-/// the render fails — the caller is expected to fall back to poppler.
+/// the render fails, the caller is expected to fall back to poppler.
 pub fn render(path: &str, page: usize, width: u32) -> Result<DynamicImage, String> {
     let svc = service().ok_or("pdfium unavailable")?;
     let (tx, rx) = mpsc::channel();
@@ -167,11 +167,11 @@ fn lib_file_name() -> &'static str {
 
 /// Locate libpdfium, in priority order:
 ///
-/// 1. `$SUCHER_PDFIUM_LIB` (explicit full path — used for dev / overrides),
+/// 1. `$SUCHER_PDFIUM_LIB` (explicit full path, used for dev / overrides),
 /// 2. beside the running executable (where `make install` copies it),
 /// 3. common system library directories.
 ///
-/// Returns `None` if not found — the caller then uses poppler.
+/// Returns `None` if not found, the caller then uses poppler.
 fn resolve_library_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("SUCHER_PDFIUM_LIB") {
         let pb = PathBuf::from(p);
@@ -252,7 +252,7 @@ fn materialize_embedded() -> Option<PathBuf> {
     path.is_file().then_some(path)
 }
 
-/// 8-hex-char FNV-1a of `bytes` — a cheap content stamp for the cache file name
+/// 8-hex-char FNV-1a of `bytes`, a cheap content stamp for the cache file name
 /// (not a security hash; the bytes are already trusted, compiled into the binary).
 #[cfg(pdfium_embedded)]
 fn fnv1a_hex(bytes: &[u8]) -> String {
@@ -310,7 +310,7 @@ mod tests {
     fn renders_a_real_pdf() {
         assert!(
             available(),
-            "pdfium unavailable — build with embedding or set SUCHER_PDFIUM_LIB"
+            "pdfium unavailable, build with embedding or set SUCHER_PDFIUM_LIB"
         );
         let img = render("samples/sample.pdf", 0, 800).expect("render page 0");
         assert_eq!(img.width(), 800, "should raster to the requested width");

@@ -1,12 +1,12 @@
-# ADR 0005 — Animated images & pointer input
+# ADR 0005, Animated images & pointer input
 
-Status: **Accepted — 2026-07-09**
+Status: **Accepted, 2026-07-09**
 
 ## Context
 
 Two browser gaps:
 
-1. **Animated GIFs play only their first frame** — both in the full-screen image
+1. **Animated GIFs play only their first frame**, both in the full-screen image
    viewer (`imgview`) and in the directory browser's preview pane. A GIF should
    loop, in place, in both.
 2. **The breadcrumb isn't clickable** and there's no pointer navigation at all;
@@ -15,19 +15,19 @@ Two browser gaps:
 The image display path is shared: `media::ImagePane` wraps `ratatui-image` and is
 used by the image, PDF, video, and Keynote viewers, plus the browser preview. The
 video viewer already animates by decoding frames on a thread and calling
-`pane.set(img)` per frame — proof the terminal-graphics path can sustain motion.
+`pane.set(img)` per frame, proof the terminal-graphics path can sustain motion.
 
 ## Decision
 
-**D1 — `ImagePane` becomes animation-aware; a still is a 1-frame animation.**
+**D1, `ImagePane` becomes animation-aware; a still is a 1-frame animation.**
 Rather than a parallel "animated pane" (a hybrid), every image the pane holds is a
 sequence of `Frame { img: DynamicImage, delay: Duration }`:
 
-- `set(img)` — one frame, `delay = 0`; never self-advances (unchanged for
+- `set(img)`, one frame, `delay = 0`; never self-advances (unchanged for
   PDF/video/Keynote/still images; the video viewer keeps pushing its own frames).
-- `set_animation(frames)` — N frames with per-frame delays; frame 0 shown
+- `set_animation(frames)`, N frames with per-frame delays; frame 0 shown
   immediately.
-- `tick(now) -> bool` — for a multi-frame pane, advances to the next frame when
+- `tick(now) -> bool`, for a multi-frame pane, advances to the next frame when
   its delay has elapsed (wrapping = looping) and re-encodes the protocol,
   returning `true` when the visible frame changed (so the caller redraws). A
   single-frame pane's `tick` is a no-op returning `false`.
@@ -41,7 +41,7 @@ It returns `None` for a non-animated / undecodable file (caller falls back to th
 existing single-image decode). **Guards:** frames are capped (`MAX_FRAMES`, e.g.
 300) and a per-frame minimum delay floor (e.g. 20 ms, matching browsers' handling
 of 0-delay GIFs) is applied; a GIF exceeding the frame cap degrades to its first
-frame (static) rather than exhausting memory — logged via the caption, not a
+frame (static) rather than exhausting memory, logged via the caption, not a
 crash. Scope is **GIF only** for now; animated WebP/APNG are a later, mechanical
 extension of `decode_frames`.
 
@@ -57,17 +57,17 @@ already tightens to a 60 ms poll while a raster is pending (ADR 0004 D3); it
 additionally ticks the preview pane when the current preview is animated, and
 stops as soon as the selection moves off the GIF (no idle churn on non-animated
 selections). Animated previews are **not** added to the still `img_cache`
-(bounded, frame sets are large); reselecting a GIF re-decodes off-thread — cheap
+(bounded, frame sets are large); reselecting a GIF re-decodes off-thread, cheap
 and backgrounded.
 
-**D2 — Opt-in mouse capture for pointer navigation.** The browser enables
+**D2, Opt-in mouse capture for pointer navigation.** The browser enables
 crossterm mouse capture (around `ratatui::init`/`restore`), gated by config
 `mouse = true|false` (default `true`). While captured:
 
-- **Breadcrumb** — each rendered path segment records its column span and target
+- **Breadcrumb**, each rendered path segment records its column span and target
   `PathBuf`; a click in the breadcrumb row navigates (`enter_dir`) to that
   segment's directory.
-- **Wheel** — scroll up/down moves the selection (cheap, expected once the mouse
+- **Wheel**, scroll up/down moves the selection (cheap, expected once the mouse
   is live).
 
 *Tradeoff, documented:* capturing the mouse disables the terminal's native

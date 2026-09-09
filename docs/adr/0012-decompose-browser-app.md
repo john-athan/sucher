@@ -1,4 +1,4 @@
-# 0012 — Decompose the browser `App` into cohesive components
+# 0012, Decompose the browser `App` into cohesive components
 
 Status: proposed (decided; implementation is follow-up work)
 Date: 2026-07-09
@@ -10,33 +10,33 @@ Date: 2026-07-09
 concerns into one struct where every method can touch every field, so the
 (well-documented) invariants are enforced only by convention:
 
-- **Listing / navigation** — `cwd`, `all`, `view`, `state`, `filter`, `sort`,
+- **Listing / navigation**, `cwd`, `all`, `view`, `state`, `filter`, `sort`,
   `parent`, `show_hidden`.
-- **Preview building** — `preview`, `preview_for`, `pv`, `caption`, and the
+- **Preview building**, `preview`, `preview_for`, `pv`, `caption`, and the
   `preview_*` methods.
-- **Async raster pipeline** — `raster_tx`/`rx`, `raster_pending`, `raster_want`,
+- **Async raster pipeline**, `raster_tx`/`rx`, `raster_pending`, `raster_want`,
   `img_cache`, `pane`, `preview_animated`, `spin`.
-- **Navigation animation** — `fade`, `fade_frames`, `slide`, `animate`.
-- **Mouse hit-testing** — `crumb_hits`, `list_area`, `parent_area`, `search_area`.
-- **Recursive search** — `search` (already a sub-struct, `SearchState`).
-- **Git gutter** — `git`, `git_enabled`.
-- **Typeahead** — `typeahead`, `typeahead_at`.
+- **Navigation animation**, `fade`, `fade_frames`, `slide`, `animate`.
+- **Mouse hit-testing**, `crumb_hits`, `list_area`, `parent_area`, `search_area`.
+- **Recursive search**, `search` (already a sub-struct, `SearchState`).
+- **Git gutter**, `git`, `git_enabled`.
+- **Typeahead**, `typeahead`, `typeahead_at`.
 
 Some seams are already extracted (`SearchState`, `Slide`, `Anim`), which shows the
-decomposition is natural — the rest just haven't followed.
+decomposition is natural, the rest just haven't followed.
 
 ## Decision
 
 Extract the remaining concerns into owned components with their own state and
 methods, leaving `App` a coordinator that wires them to the event loop:
 
-- **`Preview`** — owns `preview`/`pv`/`caption`/`preview_for` and the `preview_*`
+- **`Preview`**, owns `preview`/`pv`/`caption`/`preview_for` and the `preview_*`
   builders plus the raster channel/cache/pane/spinner (the whole async poster
   pipeline). Exposes `build(sel)`, `pump() -> bool`, `render(f, area)`.
-- **`NavAnim`** — owns `fade`/`fade_frames`/`slide`/`animate`; exposes `arm(dir)`,
+- **`NavAnim`**, owns `fade`/`fade_frames`/`slide`/`animate`; exposes `arm(dir)`,
   `tick(now) -> bool`, `render_into(...)`. The `visible_window` virtualization for
   the slide/snapshot lives here.
-- **`MouseHits`** — owns the four `Rect`s + `crumb_hits`; exposes `record(...)`
+- **`MouseHits`**, owns the four `Rect`s + `crumb_hits`; exposes `record(...)`
   during render and `hit(col,row) -> Target` on a click, folding in `row_to_index`
   and `crumb_hit`.
 
@@ -45,7 +45,7 @@ methods, leaving `App` a coordinator that wires them to the event loop:
 independently unit-testable (today none of this is, because it is all tangled
 into one struct that needs a live terminal).
 
-Ordering: this composes with ADR 0010 — once the shared scroll driver exists, the
+Ordering: this composes with ADR 0010, once the shared scroll driver exists, the
 browser is one more consumer of it, and `Preview`/`NavAnim`/`MouseHits` are the
 browser-specific pieces layered on top. Do ADR 0010 first, then this.
 

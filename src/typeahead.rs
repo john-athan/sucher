@@ -3,8 +3,8 @@
 // A timed *session*: a buffer of typed characters plus the `Instant` of the
 // last keystroke. While the session is active (last keystroke within `TIMEOUT`)
 // every printable key extends the prefix; once it lapses, the browser's vim
-// motion bindings win again. This module is deliberately pure — no ratatui, no
-// clock, no IO — so the precedence and timeout reset are unit-tested without a
+// motion bindings win again. This module is deliberately pure, no ratatui, no
+// clock, no IO, so the precedence and timeout reset are unit-tested without a
 // terminal or real waiting; the caller injects `Instant::now()`.
 
 use std::time::{Duration, Instant};

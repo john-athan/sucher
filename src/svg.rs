@@ -4,7 +4,7 @@
 // protocol still get the source (the image pane simply draws nothing).
 //
 // Rasterisation lives in [`render_svg`], reused by the directory browser's
-// preview pane. Supersedes ADR-0001 D3 ("SVG is Text, no in-tree rasteriser") —
+// preview pane. Supersedes ADR-0001 D3 ("SVG is Text, no in-tree rasteriser"),
 // resvg/usvg/tiny-skia are now that rasteriser.
 
 use crate::media::ImagePane;

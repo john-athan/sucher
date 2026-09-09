@@ -4,11 +4,11 @@
 // PDF, video, and Keynote viewers, plus the directory browser's preview pane.
 //
 // The pane is animation-aware (ADR 0005 D1): everything it holds is a sequence
-// of `Frame`s. A still is simply a one-frame animation — there is no second,
+// of `Frame`s. A still is simply a one-frame animation, there is no second,
 // parallel "animated pane". A one-frame pane never self-advances, so all the
 // still callers (PDF/video/Keynote/still image) keep their exact old behaviour
 // and cost zero idle work. A multi-frame pane advances on `tick`, looping in
-// place; the per-frame protocol re-encode — the real cost — happens only on an
+// place; the per-frame protocol re-encode, the real cost, happens only on an
 // actual frame change and only while such a pane is on screen.
 
 use image::codecs::gif::GifDecoder;
@@ -36,7 +36,7 @@ pub struct Frame {
 pub const MAX_FRAMES: usize = 300;
 
 /// Minimum per-frame delay. Many GIFs encode 0 or 10 ms meaning "as fast as the
-/// renderer can go"; browsers floor such values, and so do we — both to match
+/// renderer can go"; browsers floor such values, and so do we, both to match
 /// their look and to bound how often we re-encode the graphics protocol.
 pub const MIN_DELAY: Duration = Duration::from_millis(20);
 
@@ -52,7 +52,7 @@ pub struct ImagePane {
 }
 
 impl ImagePane {
-    /// Must be called before entering the alternate screen — it queries the
+    /// Must be called before entering the alternate screen, it queries the
     /// terminal over stdio.
     pub fn new() -> io::Result<Self> {
         let picker = Picker::from_query_stdio()
@@ -67,7 +67,7 @@ impl ImagePane {
     }
 
     /// Show a single still image. Stored as a one-frame animation, so `tick` is
-    /// a no-op and the pane never self-advances — unchanged semantics for every
+    /// a no-op and the pane never self-advances, unchanged semantics for every
     /// existing caller (PDF, video, Keynote, still image).
     pub fn set(&mut self, img: DynamicImage) {
         self.proto = Some(self.picker.new_resize_protocol(img.clone()));
@@ -95,7 +95,7 @@ impl ImagePane {
     /// Advance the animation if its current frame's delay has elapsed. Returns
     /// `true` when the visible frame changed (the caller should redraw).
     ///
-    /// A one-frame pane (any still) always returns `false` — the guarantee that
+    /// A one-frame pane (any still) always returns `false`, the guarantee that
     /// non-animated content costs zero churn. For a multi-frame pane the first
     /// call only starts the clock (returns `false`); subsequent calls advance
     /// and re-encode the protocol once the delay is up, wrapping to loop.
@@ -124,7 +124,7 @@ impl ImagePane {
     }
 
     /// Whether the pane holds a real animation (more than one frame). The caller
-    /// uses this to decide whether to tick at all — gating so a still never churns.
+    /// uses this to decide whether to tick at all, gating so a still never churns.
     pub fn is_animated(&self) -> bool {
         self.frames.len() > 1
     }
@@ -160,9 +160,9 @@ fn frame_delay(numer_ms: u32, denom_ms: u32) -> Duration {
 /// `None` so the caller falls back to the existing single-image decode.
 ///
 /// Returns `None` on any decode error, on a non-animated GIF (fewer than 2
-/// frames — a one-frame GIF is just a still, handled by the still path), or on a
+/// frames, a one-frame GIF is just a still, handled by the still path), or on a
 /// GIF that exceeds [`MAX_FRAMES`] (which degrades to a static first frame rather
-/// than blowing memory — ADR 0005 guard). Each frame's delay is floored to
+/// than blowing memory, ADR 0005 guard). Each frame's delay is floored to
 /// [`MIN_DELAY`]. Scope is GIF only for now; animated WebP/APNG would be another
 /// branch here, unchanged everywhere else.
 pub fn decode_frames(path: &Path) -> Option<Vec<Frame>> {
@@ -202,7 +202,7 @@ mod tests {
         assert!(should_advance(delay, delay));
         assert!(should_advance(Duration::from_millis(51), delay));
         assert!(!should_advance(Duration::from_millis(49), delay));
-        // A zero-delay frame (a still) advances immediately — but stills never
+        // A zero-delay frame (a still) advances immediately, but stills never
         // reach `tick`'s advance path because a one-frame pane returns early.
         assert!(should_advance(Duration::ZERO, Duration::ZERO));
     }

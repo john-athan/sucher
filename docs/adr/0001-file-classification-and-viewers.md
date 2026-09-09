@@ -1,6 +1,6 @@
-# ADR 0001 — Single file-classification registry & viewer routing
+# ADR 0001, Single file-classification registry & viewer routing
 
-Status: **Accepted — 2026-07-04**
+Status: **Accepted, 2026-07-04**
 
 ## Context
 
@@ -14,7 +14,7 @@ that disagreed:
   Archive / Audio / Other).
 
 Because the directory browser opens the selection through `kind_of` while colouring
-it through `classify`, the label and the behaviour diverged — visibly wrong for real
+it through `classify`, the label and the behaviour diverged, visibly wrong for real
 files:
 
 | File | Browser showed | Enter actually did |
@@ -34,7 +34,7 @@ add one previewer, no central change").
 
 ## Decision
 
-**D1 — One registry.** A single `format.rs` module owns classification. One
+**D1, One registry.** A single `format.rs` module owns classification. One
 `Format` enum is rich enough for both jobs; each variant answers both *"which viewer
 opens me"* and *"how does the browser present me"* (colour / glyph / label). The two
 old tables are deleted. Adding a file type touches exactly one place.
@@ -50,9 +50,9 @@ with a thin `classify_path` IO wrapper that reads the head when needed. Pure cor
 unit-tested without the filesystem, matching the discipline used elsewhere in the
 codebase (markdown layout, xlsx search).
 
-**D2 — Markdown is no longer the default for unrecognized text.** Only
-`.md` / `.markdown` / `.mdx` open in the Markdown viewer. All other text — source
-code, `.txt`, `.log`, `.conf`, `.json`, `.svg`, and extension-less UTF-8 files — opens
+**D2, Markdown is no longer the default for unrecognized text.** Only
+`.md` / `.markdown` / `.mdx` open in the Markdown viewer. All other text, source
+code, `.txt`, `.log`, `.conf`, `.json`, `.svg`, and extension-less UTF-8 files, opens
 in a new **Text viewer** (`Format::Text`) that renders the bytes *faithfully*, with
 lightweight syntax highlighting where the language is known and plain styling
 otherwise. Rendering a `.log` or a `.rs` through the Markdown parser corrupted it
@@ -63,34 +63,34 @@ rendering is Sucher's core promise, so the mangling default is removed.
 updated. `v somefile` with no extension now shows the file as text, not as
 speculative Markdown.
 
-**D3 — `.svg` is its own format (superseded).** Originally SVG was classified as
+**D3, `.svg` is its own format (superseded).** Originally SVG was classified as
 Text because the `image` crate cannot rasterise vectors. It now has a dedicated
 `Format::Svg` with an in-tree rasteriser (resvg/usvg/tiny-skia): the viewer shows the
 rendered picture *above* the scrolling XML source, and the browser preview rasterises
 a thumbnail. Terminals without a graphics protocol still get the source; piped output
 is the raw XML. (Historical note: for a time `.svg` deliberately opened in the Text
-viewer — that was this decision's original form.)
+viewer, that was this decision's original form.)
 
-**D4 — csv / tsv open in the grid (Sheet) viewer.** Comma/tab-separated values are
-tabular data, and Sucher already has a grid viewer — that is their correct home, and
+**D4, csv / tsv open in the grid (Sheet) viewer.** Comma/tab-separated values are
+tabular data, and Sucher already has a grid viewer, that is their correct home, and
 it makes the browser's existing green "Spreadsheet" label honest. A `CsvBook` backend
 is added to `sheet.rs`'s `Book` (calamine does not read CSV). See the CSV parsing
 notes in that step.
 
-**D5 — Recognized-but-unopenable types degrade gracefully.** The remaining
-viewerless types — legacy office binaries `Doc` (`.doc/.rtf/.odt/.ppt`) and `Audio`
-— show a concise "no viewer for <kind>" message plus file metadata (size, modified)
+**D5, Recognized-but-unopenable types degrade gracefully.** The remaining
+viewerless types, legacy office binaries `Doc` (`.doc/.rtf/.odt/.ppt`) and `Audio`
+- show a concise "no viewer for <kind>" message plus file metadata (size, modified)
 rather than feeding binary bytes to a text/Markdown renderer. In the browser these
 keep their distinct category colour/label; their preview pane shows metadata.
 
-**D6 — pptx, Keynote, archives, and binary each get a real viewer.** Extending the
+**D6, pptx, Keynote, archives, and binary each get a real viewer.** Extending the
 same one-registry pattern rather than widening the unopenable set:
-`Pptx` (`.pptx`) unzips its slide parts and converts `<a:t>` runs to markdown —
-mirroring the `Docx` path — so the markdown TUI renders it. `Keynote` (`.key`) is an
+`Pptx` (`.pptx`) unzips its slide parts and converts `<a:t>` runs to markdown,
+mirroring the `Docx` path, so the markdown TUI renders it. `Keynote` (`.key`) is an
 iWork package whose IWA-protobuf body we do not decode; instead we extract its
 embedded QuickLook preview image and hand it to the image viewer, an honest visual
 without a bespoke parser. `Archive` (`.zip/.tar/.tar.gz/.tgz/.gz`) opens a read-only,
-scrolling table of contents (path + size) — Sucher lists, it does not extract; types
+scrolling table of contents (path + size), Sucher lists, it does not extract; types
 with no in-tree decoder (`.7z/.rar/.xz/.bz2/.zst`) report that honestly. `Binary` (any
 unrecognized non-text file) opens a scrolling canonical hexdump. Each new viewer is
 one module plus one dispatch arm; `opens()` now returns true for these four.
@@ -109,16 +109,16 @@ one module plus one dispatch arm; `opens()` now returns true for these four.
 
 Landed by:
 
-- `src/format.rs` — new: the single `Format` registry with the pure, unit-tested
+- `src/format.rs`, new: the single `Format` registry with the pure, unit-tested
   `classify` / `looks_textual` core and the `classify_path` IO wrapper, plus
   `label` / `glyph` / `color` / `opens` methods.
-- `src/main.rs` — deleted the old `Format` enum and `kind_of`; `main` and
+- `src/main.rs`, deleted the old `Format` enum and `kind_of`; `main` and
   `open_interactive` now route through `format::classify_path`. Unopenable files
   print a "no viewer for …" notice with a size/modified metadata line
   (`unsupported`) instead of being fed to a renderer.
-- `src/dir.rs` — deleted the `Kind` enum, its `classify` free fn, and the
+- `src/dir.rs`, deleted the `Kind` enum, its `classify` free fn, and the
   `color` / `label` / `glyph` methods; `Entry.kind` is now `Format`, the browser
   classifies by extension only (no per-entry read), and `activate` refuses to
   open a file whose `Format` does not `opens()`.
-- `README.md` — Supported-formats table, Text-viewer keys, and How-it-works
+- `README.md`, Supported-formats table, Text-viewer keys, and How-it-works
   updated for the single registry.

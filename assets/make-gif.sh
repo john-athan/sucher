@@ -18,7 +18,7 @@ set -euo pipefail
 src=${1:-}
 if [[ -z "$src" ]]; then
   src=$(ls -t "$HOME/Desktop/"*.mov 2>/dev/null | head -1 || true)
-  [[ -n "$src" ]] || { echo "no .mov on Desktop — record with Cmd+Shift+5 first"; exit 1; }
+  [[ -n "$src" ]] || { echo "no .mov on Desktop, record with Cmd+Shift+5 first"; exit 1; }
   echo "using newest recording: $src"
 fi
 [[ -f "$src" ]] || { echo "not found: $src"; exit 1; }

@@ -1,4 +1,4 @@
-// sucher — a fast terminal viewer for files that are awkward in a browser:
+// sucher, a fast terminal viewer for files that are awkward in a browser:
 // markdown, source/plain text, spreadsheets (incl. csv/tsv), PDF, images, video,
 // docx, pptx, Keynote, archives, binary (hex), and directories. One command
 // dispatches by a single classification registry (`format.rs`) to a per-type
@@ -56,7 +56,7 @@ use std::{env, fs};
 fn main() -> ExitCode {
     let code = run();
     // Flush the animation frame-stats (opt-in via `SUCHER_ANIM_STATS`) only now,
-    // after every viewer has restored the terminal — printing to stderr while the
+    // after every viewer has restored the terminal, printing to stderr while the
     // alternate screen was live would corrupt the TUI (ADR 0006). A no-op when
     // the env var is unset, so a normal run stays byte-for-byte silent.
     anim::dump_stats();
@@ -80,7 +80,7 @@ fn version_line() -> String {
 fn run() -> ExitCode {
     let mut plain_flag = false;
     let mut path: Option<String> = None;
-    // Theme/icons overrides from the command line (highest precedence — see
+    // Theme/icons overrides from the command line (highest precedence, see
     // `config::load`). Both flags take the following argument.
     let mut cli_theme: Option<String> = None;
     let mut cli_icons: Option<String> = None;
@@ -130,8 +130,8 @@ fn run() -> ExitCode {
         cli_animate,
     );
     theme::init(config.palette);
-    // Install the navigation-animation toggle beside the palette so any viewer —
-    // including the config-less in-process `imgview` — can gate on `anim::enabled()`.
+    // Install the navigation-animation toggle beside the palette so any viewer,
+    // including the config-less in-process `imgview`, can gate on `anim::enabled()`.
     anim::set_enabled(config.animate);
     // Same reasoning for pointer input: the browser opens viewers in-process and
     // they never see a `Config`, so `--no-mouse` travels as a global too.
@@ -190,7 +190,7 @@ fn run() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             } else {
-                // Piped: SVG is XML source — dump it faithfully like any text.
+                // Piped: SVG is XML source, dump it faithfully like any text.
                 return emit(&text::dump(&path));
             }
         }
@@ -361,10 +361,21 @@ fn unsupported(path: &str, format: Format, interactive: bool) -> ExitCode {
 }
 
 /// Write a one-shot dump to stdout for piped/non-TTY output. A closed downstream
-/// pipe (`v big.md | head`) is a normal, clean exit — treat `BrokenPipe` as
-/// success rather than letting the `print!` macro panic on it. The buffer is
+/// pipe (`v big.md | head`) is a normal, clean exit, so `BrokenPipe` is treated
+/// as success rather than letting the `print!` macro panic on it. The buffer is
 /// flushed here so there is no late broken-pipe panic during process teardown.
+///
+/// Control characters are stripped on the way out ([`util::strip_control`]).
+/// Every dump that reaches here is file-derived text with no styling of its
+/// own, so the rule is the safe default and a dump added later inherits it. The
+/// one deliberately styled path, `plain::render`, writes through
+/// [`emit_styled`] and sanitises the file's own text itself.
 fn emit(s: &str) -> ExitCode {
+    emit_styled(&util::strip_control(s))
+}
+
+/// [`emit`] without the sanitising, for the one caller that emits ANSI on purpose.
+fn emit_styled(s: &str) -> ExitCode {
     use std::io::Write;
     let mut out = io::stdout();
     match out.write_all(s.as_bytes()).and_then(|()| out.flush()) {
@@ -404,7 +415,7 @@ fn render_markdown(
             return ExitCode::FAILURE;
         }
     } else {
-        return emit(&plain::render(&src));
+        return emit_styled(&plain::render(&src));
     }
     ExitCode::SUCCESS
 }

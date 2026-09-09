@@ -24,7 +24,7 @@ const IDLE_POLL: Duration = Duration::from_millis(1000);
 pub fn run(title: String, path: String) -> io::Result<()> {
     // Animated GIF? Decode its frames and loop them. `decode_frames` returns
     // None for a non-animated / oversized / undecodable GIF, so we fall through
-    // to the ordinary single-image decode — a static first frame in that case.
+    // to the ordinary single-image decode, a static first frame in that case.
     if is_gif(&path) {
         if let Some(frames) = media::decode_frames(Path::new(&path)) {
             return show_frames(title, frames, Some(path));
@@ -57,7 +57,7 @@ fn is_gif(path: &str) -> bool {
 
 /// Display an already-decoded still image interactively. Shared by the image
 /// viewer and by formats that surface an embedded raster (e.g. Keynote previews).
-/// `open` is the on-disk file `x` should hand to the OS default app — the source
+/// `open` is the on-disk file `x` should hand to the OS default app, the source
 /// document, which for an extracted preview (Keynote) is *not* the decoded image.
 pub fn show(title: String, img: DynamicImage, open: Option<String>) -> io::Result<()> {
     let (w, h) = (img.width(), img.height());
@@ -101,7 +101,7 @@ fn main_loop(
     // Full-view OPEN: zoom the picture up from a small centred box to full before
     // the static/animated display begins (ADR 0006 D3). Gated on the global
     // toggle, so `animate = false` skips it and the viewer shows the image at once
-    // exactly as it always has. For a GIF this grows frame 0 in place — we do not
+    // exactly as it always has. For a GIF this grows frame 0 in place, we do not
     // tick during the intro; the main loop below resumes ticking as usual.
     if anim::enabled() {
         zoom_in(term, pane, title, w, h)?;
@@ -129,7 +129,7 @@ fn main_loop(
                     if matches!(key.code, KeyCode::Char('q') | KeyCode::Esc | KeyCode::Left) {
                         // Full-view CLOSE: mirror the intro, shrinking the current
                         // frame back down, then exit (ADR 0006 D3). Teardown is
-                        // unchanged — `run_pane` still calls `ratatui::restore()`
+                        // unchanged, `run_pane` still calls `ratatui::restore()`
                         // after we return. `animate = false` exits immediately.
                         if anim::enabled() {
                             zoom_out(term, pane, title, w, h)?;
@@ -143,7 +143,7 @@ fn main_loop(
         } else if animated {
             // Poll timed out with no input: advance the animation. `tick` redraws
             // only on a real frame change, so we redraw exactly when the picture
-            // moved. (Stills never take this arm — `animated` is false.)
+            // moved. (Stills never take this arm, `animated` is false.)
             if pane.tick(Instant::now()) {
                 dirty = true;
             }
@@ -153,8 +153,8 @@ fn main_loop(
 
 /// The static display frame: the picture filling the pane area with the status
 /// line split off the bottom. Implemented as the `t = 1` case of [`draw_zoom`],
-/// which guarantees the intro's settle frame is pixel-identical to this one —
-/// `zoom_rect(area, 1.0) == area` — so there is no jump when the zoom hands off.
+/// which guarantees the intro's settle frame is pixel-identical to this one,
+/// `zoom_rect(area, 1.0) == area`, so there is no jump when the zoom hands off.
 fn render(f: &mut RtFrame, pane: &mut ImagePane, title: &str, w: u32, h: u32, can_open: bool) {
     let hint = if can_open { "  [x] open" } else { "" };
     draw_zoom(f, pane, title, w, h, 1.0, hint);
@@ -191,12 +191,12 @@ fn draw_zoom(
 // PTY, which for a non-trivial image routinely blows the 8.3 ms/120 Hz budget. So
 // unlike the cheap cell-fade in `dir.rs`, these run encode/transmit-bound and the
 // `SUCHER_ANIM_STATS` FPS for `open-zoom`/`close-zoom` is expected to sit well
-// below the folder-fade's — the honest proof that the graphics path cannot hit
+// below the folder-fade's, the honest proof that the graphics path cannot hit
 // 120 Hz for general images. We add **no** artificial cap beyond the ~4 ms poll:
 // the zoom is time-based (fixed duration), so a fast terminal simply emits more
 // frames and a slow one fewer, over the same wall-clock span. Intermediate frames
-// are cheaper by construction — a smaller `zoom_rect` means a smaller image to
-// encode — which is a bonus, not a target.
+// are cheaper by construction, a smaller `zoom_rect` means a smaller image to
+// encode, which is a bonus, not a target.
 
 /// Duration of the open zoom. Slightly longer than the close so the reveal reads
 /// as deliberate while the dismissal feels snappy.
@@ -210,7 +210,7 @@ const ZOOM_POLL: Duration = Duration::from_millis(4);
 /// Grow the picture from a small centred box to full over [`ZOOM_IN_DUR`], eased.
 /// Time-based via [`Anim`], so the duration is constant regardless of achieved
 /// FPS. A keypress during the intro ends it immediately and is **left unread**, so
-/// the main loop that follows reads and handles it normally (ADR 0006 D2 — motion
+/// the main loop that follows reads and handles it normally (ADR 0006 D2, motion
 /// never adds latency). Records the achieved emission FPS for the stats sink.
 fn zoom_in(
     term: &mut DefaultTerminal,
@@ -257,7 +257,7 @@ fn zoom_out(
         if anim.done(now) {
             break;
         }
-        // A second key ends the close immediately; consume it — we're exiting, so
+        // A second key ends the close immediately; consume it, we're exiting, so
         // it must not linger for whatever runs after us.
         if event::poll(ZOOM_POLL)? {
             let _ = event::read()?;

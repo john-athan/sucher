@@ -4,7 +4,7 @@
 // `cargo install` copies only the compiled binary, so a sidecar library or a
 // `make` step can't reach those users. Instead we download the *pinned,
 // checksum-verified* pdfium shared library for the build target, place it in
-// OUT_DIR, and let the crate `include_bytes!` it — the binary carries its own
+// OUT_DIR, and let the crate `include_bytes!` it, the binary carries its own
 // engine and writes it to a cache dir on first use (see `src/pdfium.rs`).
 //
 // Every failure path is soft: an unsupported target, no network (offline builds,

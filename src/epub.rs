@@ -2,9 +2,9 @@
 // at an OPF package file whose `<manifest>` lists every part (id → href +
 // media-type) and whose `<spine>` gives the ordered `<itemref>` reading sequence.
 // We resolve the spine to its content documents, read each one, reduce it with
-// the shared HTML→markdown reducer (`html::markdown_from_str` — epub content is
+// the shared HTML→markdown reducer (`html::markdown_from_str`, epub content is
 // XHTML, so it applies directly), and concatenate the chapters in spine order so
-// the existing markdown TUI renders the book — no new UI (mirrors docx/pptx/html).
+// the existing markdown TUI renders the book, no new UI (mirrors docx/pptx/html).
 //
 // The href-resolution logic (container → OPF path, manifest+spine join) is
 // factored into PURE functions unit-tested against inline XML; `to_markdown` and
@@ -53,13 +53,13 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
 
     // 3. Reduce each chapter to markdown and concatenate in spine order, a `---`
     //    rule between chapters. The *total* output is bounded too (ADR 0009): a
-    //    book with thousands of chapters — each individually under the cap — could
+    //    book with thousands of chapters, each individually under the cap, could
     //    still blow up unbounded, so we stop appending past the cap and mark it.
     let mut out = String::new();
     let mut truncated = false;
     for href in &hrefs {
         let Ok(member) = zip.by_name(href) else {
-            continue; // spine referenced a href not present in the zip — skip it.
+            continue; // spine referenced a href not present in the zip, skip it.
         };
         let Ok(xml) = crate::util::read_to_string_capped(member, crate::util::MAX_DECODE_BYTES)
         else {
@@ -99,7 +99,7 @@ fn attr(e: &BytesStart, name: &str) -> Option<String> {
 }
 
 /// The OPF package file's full path from `META-INF/container.xml`: the
-/// `full-path` of the first `<rootfile>`. PURE — unit-tested. None when the XML
+/// `full-path` of the first `<rootfile>`. PURE, unit-tested. None when the XML
 /// has no rootfile (a malformed / non-epub container).
 fn opf_path_from_container(xml: &str) -> Option<String> {
     let mut r = Reader::from_str(xml);
@@ -132,7 +132,7 @@ fn opf_dir_of(full_path: &str) -> &str {
     }
 }
 
-/// The ordered, zip-relative hrefs of the spine's content documents. PURE —
+/// The ordered, zip-relative hrefs of the spine's content documents. PURE,
 /// unit-tested. Joins the `<manifest>` (id → href + media-type) with the
 /// `<spine>` (`<itemref idref=…>` order): each itemref is resolved to its
 /// manifest item, kept only when that item is an XHTML/HTML content document, and
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn spine_orders_content_and_resolves_relative_to_opf_dir() {
         // Only the two XHTML content docs survive, in spine order, resolved under
-        // the OPF's OEBPS/ directory — the css (wrong type), the missing idref,
+        // the OPF's OEBPS/ directory, the css (wrong type), the missing idref,
         // and the image/ncx (never in the spine) drop out.
         let hrefs = spine_hrefs(OPF, "OEBPS");
         assert_eq!(

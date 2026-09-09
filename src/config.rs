@@ -1,8 +1,8 @@
 // User configuration: the one place Sucher resolves "what theme and icons do I
 // use", from (highest priority first) a CLI flag, an environment variable, a
 // TOML file, and finally a built-in default (ADR 0003, D2). The output is a
-// fully-resolved [`Config`] — the theme is already a concrete [`Palette`], not a
-// name — so the rest of the app never re-derives it.
+// fully-resolved [`Config`], the theme is already a concrete [`Palette`], not a
+// name, so the rest of the app never re-derives it.
 //
 // A missing or malformed config file is deliberately non-fatal: a broken TOML
 // line must never stop you opening a file, so every parse error silently falls
@@ -20,7 +20,7 @@ use std::time::Duration;
 
 /// The resolved configuration the app runs with. The theme is already a
 /// concrete [`Palette`] (auto-detection and name lookup done); `icons` selects
-/// the browser's glyph rendering (its use lands in a later phase — D5).
+/// the browser's glyph rendering (its use lands in a later phase, D5).
 #[derive(Clone, Copy, Debug)]
 pub struct Config {
     pub palette: Palette,
@@ -36,7 +36,7 @@ pub struct Config {
     /// Whether navigation animations run (ADR 0006, D4): the ~120 ms fade-in of
     /// the current pane on a directory change (and, in a later phase, the
     /// full-view zoom). On by default; `false` makes every transition instant and
-    /// no animation code executes — behaviour is byte-for-byte the pre-feature UI.
+    /// no animation code executes, behaviour is byte-for-byte the pre-feature UI.
     pub animate: bool,
 }
 
@@ -45,7 +45,7 @@ pub struct Config {
 /// a safe `Unicode` default that renders everywhere.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum IconMode {
-    /// The built-in geometric glyphs — the default, renders in any font.
+    /// The built-in geometric glyphs, the default, renders in any font.
     #[default]
     Unicode,
     /// Per-extension Nerd Font glyphs (opt-in; needs a patched font).
@@ -72,7 +72,7 @@ impl FromStr for IconMode {
 /// and `Double` force the choice. The runtime `M` key cycles between them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Layout {
-    /// Miller when wide enough, double-pane when narrow — the friendly default.
+    /// Miller when wide enough, double-pane when narrow, the friendly default.
     #[default]
     Auto,
     /// Always attempt `parent | current | preview` (still collapses to two when
@@ -287,7 +287,7 @@ fn apply_color_overrides(
 }
 
 /// Read and parse the config file, or `None` if it is absent or malformed.
-/// Never propagates an error — a broken config uses defaults (D2).
+/// Never propagates an error, a broken config uses defaults (D2).
 fn read_file_config() -> Option<FileConfig> {
     let path = config_path()?;
     let text = std::fs::read_to_string(path).ok()?;

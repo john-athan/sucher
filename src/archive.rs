@@ -1,4 +1,4 @@
-// Archive listing viewer — a read-only table of contents.
+// Archive listing viewer, a read-only table of contents.
 //
 // Sucher does not extract; it shows what an archive *holds* (path, size) so you
 // can see inside without unpacking. Backends by extension:
@@ -7,8 +7,8 @@
 //   * tar.gz / tgz / gz-tar  -> `tar` over a gzip decoder
 //   * plain .gz (one file)   -> a single synthesised entry
 // Formats we have no decoder for (7z/rar/xz/bz2/zst) report honestly rather than
-// pretending. The viewer presents the flat entry list as a navigable tree —
-// Enter descends into a folder, Backspace goes up, a breadcrumb shows the path —
+// pretending. The viewer presents the flat entry list as a navigable tree,
+// Enter descends into a folder, Backspace goes up, a breadcrumb shows the path,
 // with sub-folders derived from path prefixes so archives that omit explicit
 // directory entries still browse correctly. `dump` (piped output) stays flat.
 
@@ -145,7 +145,7 @@ pub fn entries(path: &str) -> Result<Vec<Entry>, String> {
         zip_entries(path)?
     } else if lower.ends_with(".tar") {
         // A plain .tar is bounded by file size, but listing streams the whole
-        // file to read names — unbounded over an S3/GCS mount. Cap the read too
+        // file to read names, unbounded over an S3/GCS mount. Cap the read too
         // (ADR 0009); a huge tar then lists partially (with a marker) rather than
         // reading forever.
         let f = fs::File::open(path).map_err(|e| e.to_string())?;
@@ -191,7 +191,7 @@ fn tar_entries<R: Read>(reader: io::Take<R>) -> Result<Vec<Entry>, String> {
     let mut ar = tar::Archive::new(reader);
     let mut out = Vec::new();
     // A failing `entries()` means we could not start reading a tar at all (not a
-    // tar / corrupt) — propagate it so the bare-.gz path can fall back to a
+    // tar / corrupt), propagate it so the bare-.gz path can fall back to a
     // single synthesised entry. A *mid-stream* per-entry error means the input
     // ended early, which is exactly what our inflation/read cap (ADR 0009) does
     // to a huge or bomb archive: stop and return what we listed, degrading to a
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn children_derives_folders_without_explicit_dir_entries() {
-        // No explicit "src/" entry — it must still appear as a folder at root.
+        // No explicit "src/" entry, it must still appear as a folder at root.
         let entries = vec![
             e("README.md", false),
             e("src/main.rs", false),

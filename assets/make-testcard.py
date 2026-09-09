@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the sample graphics test card (1600x1000).
 
-Written to samples/picture.jpg and samples/testcard.png — a colour/contrast
+Written to samples/picture.jpg and samples/testcard.png, a colour/contrast
 reference used to show off the image viewer's real-pixel rendering. Run from
 the repo root:  python3 assets/make-testcard.py
 """

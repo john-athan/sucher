@@ -9,8 +9,8 @@ use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Hard cap on the bytes any decoder reads from a single untrusted source
-/// (ADR 0009). 32 MiB is generous for a real document — far larger than any
-/// hand-written HTML page, Word body, or slide part — yet small enough that a
+/// (ADR 0009). 32 MiB is generous for a real document, far larger than any
+/// hand-written HTML page, Word body, or slide part, yet small enough that a
 /// bounded parse stays sub-second and a decompression bomb inflates at most this
 /// much before we stop and report honestly instead of OOM-ing.
 pub const MAX_DECODE_BYTES: usize = 32 * 1024 * 1024;
@@ -28,7 +28,7 @@ pub const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
 /// reach the next header (a gzip stream can't be seeked). 256 MiB lists the vast
 /// majority of real archives in full while still bounding a gzip bomb's CPU to a
 /// one-shot, cached ~second; past it the listing is truncated *with an explicit
-/// marker row* — never silently (see `tar_entries`).
+/// marker row*, never silently (see `tar_entries`).
 pub const MAX_ARCHIVE_INFLATE: usize = 256 * 1024 * 1024;
 
 /// Maximum image dimension (px, per axis) any decoder will accept (ADR 0009).
@@ -74,7 +74,7 @@ pub fn image_limits() -> image::Limits {
 /// metadata) fails to decode. `with_guessed_format` sniffs the magic bytes and
 /// overrides the extension, so misnamed-but-valid images preview correctly.
 /// Pixel limits (ADR 0009) are applied before the caller decodes. Sucher still
-/// *classifies* by extension (ADR 0001 D1) — this only governs decoding once a
+/// *classifies* by extension (ADR 0001 D1), this only governs decoding once a
 /// file is already routed as a raster image.
 pub fn open_image_reader(
     path: &Path,
@@ -107,9 +107,9 @@ pub const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(10);
 /// to the same graceful "no preview"/degraded path as any other spawn failure.
 ///
 /// Deadlock avoidance: stdout and stderr are each drained on their own thread
-/// *while* the child runs, so a tool that emits more than a pipe buffer (~64 KiB)
-/// — `pdftotext -` dumping a large document, or ffmpeg writing a full rawvideo
-/// frame to stdout — cannot wedge itself by blocking on a full pipe that we only
+/// *while* the child runs. A tool that emits more than a pipe buffer (~64 KiB),
+/// `pdftotext -` dumping a large document, or ffmpeg writing a full rawvideo
+/// frame to stdout, therefore cannot wedge itself by blocking on a full pipe we only
 /// read after `wait`. We poll `try_wait` on a short sleep instead of blocking in
 /// `wait`, so the deadline is enforced even for a child that never exits; after a
 /// kill the pipes reach EOF and the reader threads join cleanly.
@@ -165,10 +165,10 @@ pub fn run_with_timeout(mut cmd: Command, timeout: Duration) -> io::Result<Outpu
 /// Make `path` safe to pass as a positional argument to a subprocess tool
 /// (poppler/ffmpeg) that would parse a leading `-` as an option (ADR 0009 / S4).
 /// An absolute path (starting `/`) is returned unchanged; anything else is
-/// prefixed with `./` so it can never begin with `-` and be misread as an option
-/// — e.g. `sucher -x.pdf` yields `./-x.pdf`. A path already starting with `./` is
+/// prefixed with `./` so it can never begin with `-` and be misread as an
+/// option: `sucher -x.pdf` yields `./-x.pdf`. A path already starting with `./` is
 /// left as-is to avoid a redundant `././` (still correct, just tidier). Not shell
-/// injection (no shell is used) — this guards direct invocation and globs.
+/// injection (no shell is used), this guards direct invocation and globs.
 pub fn cmd_path_arg(path: &str) -> String {
     if path.starts_with('/') || path.starts_with("./") {
         path.to_string()
@@ -178,8 +178,8 @@ pub fn cmd_path_arg(path: &str) -> String {
 }
 
 /// Hand a **local file the user is already viewing** to the OS's default
-/// application ("open in native app"). Unlike [`is_safe_url`] — which gates
-/// *untrusted* link targets embedded in a document (ADR 0009 / S5) — the path
+/// application ("open in native app"). Unlike [`is_safe_url`], which gates
+/// *untrusted* link targets embedded in a document (ADR 0009 / S5), the path
 /// here is one the user explicitly selected or opened in sucher, so no scheme
 /// allow-list applies; the file's own default handler is what "open externally"
 /// means. Still guards the `-`-leading case ([`cmd_path_arg`]) so the path is
@@ -227,6 +227,36 @@ pub fn is_safe_url(url: &str) -> bool {
 /// That is ADR 0009's "an honest error, never a silent truncation" pointed
 /// outward.
 pub const MAX_CLIPBOARD_BYTES: usize = 64 * 1024;
+
+/// Remove every control character a terminal could act on, keeping newline and
+/// tab. This is the inbound counterpart to [`osc52_sequence`]'s outbound
+/// guarantee: that function proves nothing from a filename can *escape* a
+/// sequence sucher writes, and this one proves nothing from a file can *start*
+/// one.
+///
+/// It matters because sucher's non-interactive output goes straight to stdout.
+/// The TUI is safe by construction, since ratatui renders into a cell grid and
+/// a zero-width ESC never reaches a cell, but `sucher notes.md | less -R`,
+/// `sucher some-dir`, and `sucher sheet.csv > out` all wrote file bytes through
+/// unchanged. A markdown file holding a literal `ESC ] 52 ; c ; …  BEL`
+/// therefore rewrote the reader's clipboard, and `ESC [ 2 J` cleared the screen
+/// on the way past. A *filename* could do it too, which is the worse half: the
+/// directory listing is not the file you asked to read.
+///
+/// What goes: C0 (`0x00..=0x1f`) except `\n` and `\t`, DEL, and the C1 range
+/// (`U+0080..=U+009F`), whose members a terminal in 8-bit mode reads as
+/// introducers in their own right (`0x9b` is CSI). Carriage return goes with
+/// them: on its own it returns the cursor to the start of the line, which lets
+/// content overwrite what was printed before it and hide itself. That does mean
+/// a CRLF file dumps as LF, which is the intended trade: sucher is a viewer,
+/// and `cat` is one command away for anyone who wants the bytes.
+/// `char::is_control` is exactly Unicode category Cc, which is those three
+/// ranges and nothing else, so the whole rule is one predicate.
+pub fn strip_control(s: &str) -> String {
+    s.chars()
+        .filter(|&c| c == '\n' || c == '\t' || !c.is_control())
+        .collect()
+}
 
 /// Ask the terminal to put `text` on the **system** clipboard using OSC 52, the
 /// escape sequence a terminal answers on the user's behalf (ADR 0017 D4). This
@@ -402,7 +432,7 @@ fn extract_zip_images(archive: &str, keep: impl Fn(&str) -> bool) -> Vec<PathBuf
 }
 
 /// Does this archive member name end in a raster image extension the `image`
-/// crate can decode? (SVG/EMF/WMF vector media are skipped — no in-tree decoder.)
+/// crate can decode? (SVG/EMF/WMF vector media are skipped, no in-tree decoder.)
 fn is_raster_name(name: &str) -> bool {
     let n = name.to_lowercase();
     [
@@ -414,7 +444,7 @@ fn is_raster_name(name: &str) -> bool {
 
 /// Decode an XML `Text` event's bytes to a string. quick-xml (≥ 0.37) emits
 /// entity references as separate [`Event::GeneralRef`](quick_xml::events::Event)
-/// events, so a `Text` event never contains `&…;` — decoding is all that's
+/// events, so a `Text` event never contains `&…;`, decoding is all that's
 /// needed here; see [`xml_ref`] for the entity side. Empty on a decode error.
 pub fn xml_text(t: &BytesText) -> String {
     t.as_ref().to_owned()
@@ -497,6 +527,31 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn strip_control_keeps_the_two_characters_text_needs() {
+        assert_eq!(strip_control("a\nb\tc"), "a\nb\tc");
+        assert_eq!(strip_control("plain text"), "plain text");
+        // Text, not bytes: multi-byte characters are untouched.
+        assert_eq!(strip_control("Grüße ✓ 日本"), "Grüße ✓ 日本");
+    }
+
+    #[test]
+    fn strip_control_defuses_what_a_file_could_aim_at_the_terminal() {
+        // OSC 52 writes the reader's clipboard; CSI 2J clears their screen.
+        let hostile = "before\x1b]52;c;ZXZpbA==\x07after\x1b[2Jcleared";
+        let clean = strip_control(hostile);
+        assert_eq!(clean, "before]52;c;ZXZpbA==after[2Jcleared");
+        assert!(!clean.chars().any(|c| c.is_control()));
+
+        // Carriage return goes too: on its own it lets the tail of a line
+        // overwrite its own beginning and hide what was printed.
+        assert_eq!(strip_control("visible\rhidden"), "visiblehidden");
+
+        // C1 is category Cc as well, and 0x9b is CSI to a terminal in 8-bit mode.
+        assert_eq!(strip_control("a\u{9b}2Jb"), "a2Jb");
+        assert_eq!(strip_control("a\u{7f}b"), "ab");
+    }
+
+    #[test]
     fn human_size_scales_units() {
         assert_eq!(human_size(0), "0 B");
         assert_eq!(human_size(512), "512 B");
@@ -564,7 +619,7 @@ mod tests {
     fn capped_stops_a_bomb_without_unbounded_allocation() {
         // A reader that would yield ~1 TiB if drained. `read_to_string_capped`
         // must `take` it to max+1 first, so at most max+1 bytes are ever
-        // allocated before it detects the overflow and returns Err — never a
+        // allocated before it detects the overflow and returns Err, never a
         // truncated string and never an OOM.
         let bomb = std::io::repeat(b'a').take(1 << 40);
         let max = 1024;

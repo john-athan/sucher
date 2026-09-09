@@ -56,7 +56,7 @@ impl MemBook {
     fn open(path: &str) -> Result<Self, String> {
         // Bound calamine, which materialises the whole workbook. Prechecking the
         // on-disk size caps a plain .xls outright; for the zip-based .ods/.xlsb
-        // it bounds only the COMPRESSED input — calamine 0.35 exposes no
+        // it bounds only the COMPRESSED input, calamine 0.35 exposes no
         // decompression limit, so a crafted sub-cap decompression bomb remains a
         // residual documented in ADR 0009.
         let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
@@ -96,7 +96,7 @@ impl MemBook {
     ///     capped at `crate::xlsx::ROW_CAP`. Hitting either bound truncates the
     ///     sheet and reports `capped`, so a huge csv opens as an honest prefix
     ///     rather than exhausting memory.
-    ///   * `.csv` is comma-only — no semicolon or delimiter auto-detection; `.tsv`
+    ///   * `.csv` is comma-only, no semicolon or delimiter auto-detection; `.tsv`
     ///     is tab-only. The delimiter is chosen by the caller from the extension.
     ///   * Decoding is lossy UTF-8 (invalid bytes become U+FFFD).
     ///
@@ -137,14 +137,14 @@ impl MemBook {
     }
 }
 
-/// RFC-4180-style parser for delimited text — pure (no IO), so it is unit-tested
+/// RFC-4180-style parser for delimited text, pure (no IO), so it is unit-tested
 /// directly. Fields are separated by `delim` and records by `\n`. A field may be
 /// double-quoted; inside quotes `delim`, newlines and `\r` are literal, and a
 /// doubled `""` is an escaped quote. A quote is only special at the start of a
 /// field. On an unquoted field end a trailing `\r` is stripped, so CRLF line
 /// endings are tolerated. A final line without a trailing newline still yields a
 /// record; a trailing newline does not add an empty record. Rows may be ragged
-/// (differing field counts) and are preserved as-is — the grid tolerates it.
+/// (differing field counts) and are preserved as-is, the grid tolerates it.
 fn parse_delimited(text: &str, delim: char) -> Vec<Vec<String>> {
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
@@ -218,7 +218,7 @@ fn is_data_ext(lower: &str) -> bool {
 enum Book {
     Stream(StreamBook),
     Mem(MemBook),
-    // The DuckDB-backed data-file book (ADR 0016) — Parquet, JSONL, SQLite,
+    // The DuckDB-backed data-file book (ADR 0016), Parquet, JSONL, SQLite,
     // DuckDB. Feature-gated: without `data` these extensions never reach here.
     #[cfg(feature = "data")]
     Data(crate::data::DataBook),
@@ -341,7 +341,7 @@ impl Book {
         }
     }
 
-    /// Whether this backend accepts the `:` SQL prompt — the grid's first
+    /// Whether this backend accepts the `:` SQL prompt, the grid's first
     /// capability that varies by backend (ADR 0016). Only the DuckDB `Data` book
     /// is queryable; the spreadsheet backends are not.
     fn supports_sql(&self) -> bool {
@@ -356,7 +356,7 @@ impl Book {
     /// result (or clearing the override on empty input). Delegates to the `Data`
     /// book; kept total for the other backends, which never reach here because
     /// the key is gated on `supports_sql`. (Without the `data` feature only the
-    /// non-queryable arms remain, so `sql` goes unread — allowed explicitly.)
+    /// non-queryable arms remain, so `sql` goes unread, allowed explicitly.)
     #[cfg_attr(not(feature = "data"), allow(unused_variables))]
     fn set_sql(&mut self, sql: &str) -> Result<(), String> {
         match self {
@@ -366,7 +366,7 @@ impl Book {
         }
     }
 
-    /// The running `:` query for the active sheet, if any — for the status line's
+    /// The running `:` query for the active sheet, if any, for the status line's
     /// live-query indicator. `None` for the non-queryable backends.
     fn active_sql(&self) -> Option<String> {
         match self {
@@ -452,7 +452,7 @@ pub fn dump(path: &str) -> String {
         let (rows, ncols, _, capped) = b.dims();
         // Bound the dump uniformly for EVERY backend: the data book reports an
         // uncapped real count, so cap the materialised rows at ROW_CAP here to
-        // keep a pipe of a billion-row Parquet from exhausting memory — an honest
+        // keep a pipe of a billion-row Parquet from exhausting memory, an honest
         // cap consistent with how the streaming/CSV backends already truncate.
         let dump_rows = rows.min(crate::xlsx::ROW_CAP);
         out.push_str(&format!("# {name}\n"));
@@ -468,7 +468,7 @@ pub fn dump(path: &str) -> String {
     out
 }
 
-/// First rows/cols of a spreadsheet for the directory preview pane — bounded and
+/// First rows/cols of a spreadsheet for the directory preview pane, bounded and
 /// synchronous, so it never blocks on the streaming loader. csv/tsv are parsed
 /// straight from the file; other formats (xlsx/xls/ods/xlsb) go through calamine
 /// for their first worksheet only. Returns `None` on error or an empty sheet.
@@ -476,7 +476,7 @@ pub fn preview_grid(path: &str, max_rows: usize, max_cols: usize) -> Option<Vec<
     let lower = path.to_lowercase();
     // Data files (ADR 0016): open the DuckDB book and take its first rows, with
     // the real column names prepended as a header row so the preview is
-    // meaningful. Bounded and synchronous — DuckDB reads only the window asked
+    // meaningful. Bounded and synchronous, DuckDB reads only the window asked
     // for. Any error (bad file, missing table) degrades to no preview.
     #[cfg(feature = "data")]
     if is_data_ext(&lower) {
@@ -503,14 +503,14 @@ pub fn preview_grid(path: &str, max_rows: usize, max_cols: usize) -> Option<Vec<
             .ok()?;
         parse_delimited(&String::from_utf8_lossy(&bytes), delim)
     } else if lower.ends_with(".xlsx") || lower.ends_with(".xlsm") {
-        // Bounded, synchronous first-rows read — never materialises the whole
+        // Bounded, synchronous first-rows read, never materialises the whole
         // sheet the way calamine's `worksheet_range` would (ADR 0009).
         crate::xlsx::preview_rows(path, max_rows, max_cols).ok()?
     } else {
         // xls/ods/xlsb via calamine, which materialises the whole sheet. Precheck
         // the on-disk size: a plain .xls is bounded outright; for the zip-based
         // .ods/.xlsb this bounds only the COMPRESSED input, since calamine 0.35
-        // exposes no decompression limit — a sub-cap bomb is a residual noted in
+        // exposes no decompression limit, a sub-cap bomb is a residual noted in
         // ADR 0009.
         let len = std::fs::metadata(path).ok()?.len();
         if len > crate::util::MAX_DECODE_BYTES as u64 {
@@ -637,7 +637,7 @@ impl SheetApp {
     }
 
     /// The `:` SQL prompt, paralleling `key_search`. `Esc` cancels (view
-    /// unchanged); `Enter` runs the query — on success the cursor and offsets
+    /// unchanged); `Enter` runs the query, on success the cursor and offsets
     /// reset and matches clear, on a bind/parse error we STAY in the prompt with
     /// the user's text intact so they can fix it. There is no query history.
     fn key_sql(&mut self, code: KeyCode) -> bool {
@@ -832,7 +832,7 @@ impl SheetApp {
         } else if done {
             format!("{nrows} rows")
         } else {
-            format!("{nrows} rows — loading…")
+            format!("{nrows} rows, loading…")
         };
 
         // Search input takes over the bar while typing.

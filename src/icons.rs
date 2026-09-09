@@ -1,7 +1,7 @@
 // Per-extension icons + accent tints (ADR 0003, D5).
 //
 // This module answers a question `Format` deliberately does not: *what glyph and
-// colour identify THIS specific language / file type* — a `.rs` and a `.py` are
+// colour identify THIS specific language / file type*, a `.rs` and a `.py` are
 // both [`Format::Text`], yet they should read as Rust and Python. So icons layer
 // ABOVE `Format`: we key on the lowercased extension for a rich, per-language
 // look and fall back to the file's `Format` for anything unlisted.
@@ -11,17 +11,17 @@
 // file type is one table row here, mirrored against the same lowercased-extension
 // convention `classify_path` uses.
 //
-// The glyphs are Nerd Font code points (Unicode Private Use Area) — the widely
+// The glyphs are Nerd Font code points (Unicode Private Use Area), the widely
 // shared `nf-*` set used by eza / lsd / vscode-icons. They render only when the
 // terminal is using a patched Nerd Font, which is exactly why they sit behind the
 // opt-in [`crate::config::IconMode::Nerd`] (D5): guessing wrong prints mojibake.
 //
 // Colour policy (D5): a language's brand colour is *identity*, not a theme role,
-// so per-language tints are literal `Color::Rgb(...)` — they should look like
+// so per-language tints are literal `Color::Rgb(...)`, they should look like
 // "Rust orange" / "TypeScript blue" under every palette, not shift with the
 // theme. Anything without a brand identity (images, video, archives, plain docs,
 // unknown types) instead falls back to `fmt.color()`, which DOES read from
-// `theme::palette()` — so those keep tracking the active theme's roles.
+// `theme::palette()`, so those keep tracking the active theme's roles.
 
 use crate::format::Format;
 use ratatui::style::Color;
@@ -31,7 +31,7 @@ use ratatui::style::Color;
 ///
 /// Directories win outright (a folder can carry a dotted name), then the
 /// per-extension table, then a `Format`-based default. Never returns an empty
-/// string or a bare ASCII letter — an unlisted extension still yields a
+/// string or a bare ASCII letter, an unlisted extension still yields a
 /// meaningful category glyph via [`fallback_glyph`].
 pub fn nerd_glyph(ext: &str, fmt: Format) -> &'static str {
     if fmt == Format::Directory {
@@ -117,7 +117,7 @@ fn fallback_glyph(fmt: Format) -> &'static str {
 /// The accent colour identifying a file, keyed on its lowercased extension with a
 /// [`Format`] fallback. PURE.
 ///
-/// Listed languages get a literal brand tint (identity — see the module note);
+/// Listed languages get a literal brand tint (identity, see the module note);
 /// everything else defers to [`Format::color`], which reads the active
 /// [`crate::theme::palette`] so image / video / archive / doc rows still track
 /// the theme. Tints are chosen to stay legible on a dark background.
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(nerd_color("go", Format::Text), Color::Rgb(0, 173, 216));
         assert_eq!(nerd_color("ts", Format::Text), Color::Rgb(49, 120, 198));
         assert_eq!(nerd_color("html", Format::Text), Color::Rgb(227, 101, 66));
-        // Two Format::Text languages get DISTINCT tints — the whole point of D5.
+        // Two Format::Text languages get DISTINCT tints, the whole point of D5.
         assert_ne!(
             nerd_color("rs", Format::Text),
             nerd_color("py", Format::Text)

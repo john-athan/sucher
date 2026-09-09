@@ -2,8 +2,8 @@
 //
 // Parsing produces "logical lines" (paragraphs, headings, code, rules, table
 // rows) plus a TOC and link table, keyed by logical-line index. A width-aware
-// `layout` step word-wraps logical lines into display lines — applying
-// blockquote gutters and list indentation — and returns a logical->display
+// `layout` step word-wraps logical lines into display lines, applying
+// blockquote gutters and list indentation, and returns a logical->display
 // index map so the TOC can jump to the right row.
 
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
@@ -39,7 +39,7 @@ enum Kind {
     Normal,
     Heading,
     Code,
-    Pre, // preformatted, no wrap (tables) — tokens carry their own styles
+    Pre, // preformatted, no wrap (tables), tokens carry their own styles
     Rule,
     Blank,
 }

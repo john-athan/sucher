@@ -2,15 +2,15 @@
 
 Images referenced by the top-level `README.md`.
 
-- `demo.gif` — short screen recording of the browser + viewers.
-- `browser.png`, `markdown.png`, `video.png` — still screenshots (these were
+- `demo.gif`, short screen recording of the browser + viewers.
+- `browser.png`, `markdown.png`, `video.png`, still screenshots (these were
   pulled straight from the recording with
   `ffmpeg -ss <t> -i <rec.mov> -frames:v 1 out.png`).
 
 ## Capture in a graphics-capable terminal
 
 sucher draws **real pixels** via the kitty / iTerm2 / sixel graphics protocols.
-Record in a terminal that supports one — **kitty, ghostty, WezTerm, iTerm2** —
+Record in a terminal that supports one, **kitty, ghostty, WezTerm, iTerm2**,
 so images, PDF pages, and video posters show as actual pixels.
 
 > Don't use vhs/asciinema here: they render the terminal with xterm.js in a

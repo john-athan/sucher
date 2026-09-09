@@ -10,7 +10,7 @@ rather than opening a public issue. I'll aim to respond within a few days.
 
 sucher opens files you point it at and, for some formats, shells out to local
 tools (`pdftocairo`, `pdftotext`, `ffmpeg`, `ffprobe`). External commands are
-invoked with arguments passed directly — never through a shell — so file names
+invoked with arguments passed directly, never through a shell, so file names
 cannot inject commands.
 
 Treat untrusted documents with the same caution as any viewer: a malicious file

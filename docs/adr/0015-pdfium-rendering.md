@@ -1,4 +1,4 @@
-# 0015 — pdfium for PDF rendering (with a poppler fallback)
+# 0015, pdfium for PDF rendering (with a poppler fallback)
 
 Status: accepted
 Date: 2026-07-21
@@ -7,14 +7,14 @@ Date: 2026-07-21
 
 The PDF viewer rasterised each page by shelling out to poppler's `pdftocairo`
 (ADR 0001; `pdf.rs` carried an explicit "no native linking" note). That path is
-slow in a way tuning cannot fix, and it showed badly on real documents — a
+slow in a way tuning cannot fix, and it showed badly on real documents, a
 scanned iOS-exported PDF in the user's `~/UG` archive took **~4.5 seconds per
 page** to open.
 
 Measured breakdown (on that file, `pdftocairo -scale-to-x 1600`):
 
 - Each page is a **fresh subprocess** that dynamically links libpoppler + cairo +
-  freetype + fontconfig and **re-parses the whole document** — there is no shared
+  freetype + fontconfig and **re-parses the whole document**, there is no shared
   state between pages, confirmed by a flat ~50 ms floor even on a trivial PDF with
   no warm-cache effect across spawns.
 - The page is a full-page **JPEG scan** (1655×2537). cairo resamples it in
@@ -37,7 +37,7 @@ the same files:
 | full-document parse | re-done every spawn | **0.2 ms, once** |
 
 That is ~90–140× on the case that hurt, at full fidelity (annotations,
-highlights, fonts all correct — it is Chrome's renderer).
+highlights, fonts all correct, it is Chrome's renderer).
 
 ## Decision
 
@@ -49,7 +49,7 @@ fallback.**
   multi-GB, non-reproducible build). So `libpdfium` is loaded at runtime via
   `libloading` through `pdfium-render`.
 - **Embedded so `cargo install sucher` is self-contained.** `cargo install`
-  copies only the binary — a sidecar library or a `make` step can't reach those
+  copies only the binary, a sidecar library or a `make` step can't reach those
   users. So `build.rs` downloads the **pinned, checksum-verified** release
   (`chromium/7961`) for the build target and the crate `include_bytes!`s it; at
   first use the bytes are written to a cache file (`dlopen` needs a real path) and
@@ -58,21 +58,21 @@ fallback.**
   build still succeeds (→ poppler at runtime). Offline/CI builds can supply the
   library locally via `SUCHER_PDFIUM_LIB` or `vendor/pdfium/<lib>`, or opt out
   with `SUCHER_PDFIUM_NO_EMBED=1`. Resolution order at runtime: `$SUCHER_PDFIUM_LIB`
-  → next to the executable → system lib dirs → the embedded copy — so an external
+  → next to the executable → system lib dirs → the embedded copy, so an external
   library always overrides the bundled one.
 - **One service thread.** pdfium's bindings/document handles are `!Send` and its
   library must be initialised exactly once per process, so all rendering runs on a
   single dedicated thread that owns the `Pdfium` instance and caches the
   most-recently-opened `PdfDocument`. `pdf.rs` and the browser preview submit
-  `(path, page, width)` jobs and get back an in-memory `DynamicImage` — no PNG, no
+  `(path, page, width)` jobs and get back an in-memory `DynamicImage`, no PNG, no
   /tmp, no subprocess.
 - **Fallback is structural, not conditional cruft.** `pdf::render` tries pdfium
   (when `pdfium::available()`) and falls through to the existing `render_page`
-  (poppler) on *any* failure — library absent, or a specific document pdfium
+  (poppler) on *any* failure, library absent, or a specific document pdfium
   rejects that poppler can still draw. A `cargo install` without the `make` step,
   or a platform we don't ship the lib for, simply keeps the old behaviour.
 
-This reverses the "no native linking" stance of ADR 0001 for PDFs — softened to
+This reverses the "no native linking" stance of ADR 0001 for PDFs, softened to
 "runtime dynamic load with graceful fallback", so the build stays simple and no
 platform loses the feature outright.
 

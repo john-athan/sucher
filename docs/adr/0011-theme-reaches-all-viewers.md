@@ -1,4 +1,4 @@
-# 0011 — The theme palette reaches every viewer
+# 0011, The theme palette reaches every viewer
 
 Status: proposed (decided; implementation is follow-up work)
 Date: 2026-07-09
@@ -11,13 +11,13 @@ found the palette is only half-wired: it re-skins the browser chrome
 (`dir.rs`, `format.rs` kind colours) and `text.rs`'s highlight tokens, but the
 content viewers paint **hardcoded** `Color::Rgb(...)` literals:
 
-- `markdown.rs:13-18` — `SKY`/`AMBER`/`MINT`/`LINK`/`GRAY`/`WHITE` consts drive the
+- `markdown.rs:13-18`, `SKY`/`AMBER`/`MINT`/`LINK`/`GRAY`/`WHITE` consts drive the
   flagship markdown/docx/pptx/html rendering.
 - `tui.rs` status/help/link colours (`:443`, `:468`, `:487`, `:507`, `:523`).
 - `sheet.rs`, `pdf.rs`, `video.rs`, `imgview.rs`, `svg.rs` status lines.
 
 Two problems follow. First, `--theme light` produces wrong-looking output in the
-very viewers users spend the most time in — fixed dark-theme RGB on a light
+very viewers users spend the most time in, fixed dark-theme RGB on a light
 terminal. Second, there is literal **drift**: the hardcoded "dim" grey
 `Rgb(140,140,150)` in `tui.rs` does not even equal the palette's `dim`
 `Rgb(120,120,132)` (`theme.rs:95`), so the same semantic colour has two values.
@@ -32,7 +32,7 @@ Route every viewer's colours through `theme::palette()`; delete the hardcoded
 - Where the markdown renderer needs hues the palette lacks (heading, emphasis,
   link, code, blockquote), **extend the palette** with those semantic fields
   (defaulted in both the dark and light built-in palettes and overridable in
-  config, exactly like the existing fields) rather than hardcoding — so a theme
+  config, exactly like the existing fields) rather than hardcoding, so a theme
   can restyle prose, and ADR 0003's "runtime theme" promise finally holds
   end-to-end.
 - The palette is a process-global read after startup, so viewers on worker
@@ -45,7 +45,7 @@ the genuinely viewer-specific colours remain to convert.
 ## Consequences
 
 - `--theme light` and custom palettes work in every viewer, not just the browser
-  — the feature ADR 0003 documented is actually delivered.
+  - the feature ADR 0003 documented is actually delivered.
 - One definition per semantic colour; the `dim` drift disappears.
 - The palette grows a few prose-oriented fields; the built-in dark palette keeps
   today's exact RGB so the default look is byte-for-byte unchanged.

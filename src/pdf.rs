@@ -1,5 +1,5 @@
 // PDF viewer. Rasterizes pages via pdfium when its runtime library is present
-// (ADR 0015 — Chrome's engine, ~100× faster on scanned pages), falling back to
+// (ADR 0015, Chrome's engine, ~100× faster on scanned pages), falling back to
 // poppler's `pdftocairo` otherwise. Displays pages via the terminal graphics
 // protocol and pages with the keyboard; renders happen off-thread with the
 // neighbours prefetched. Falls back to `pdftotext` for the non-interactive dump.
@@ -56,7 +56,7 @@ fn page_count(path: &str) -> usize {
 fn render_page(path: &str, page: usize, target_w: u32) -> Result<image::DynamicImage, String> {
     let prefix: PathBuf =
         std::env::temp_dir().join(format!("sucher-pdf-{}-{}", std::process::id(), page));
-    // pdftocairo (cairo backend) over pdftoppm (splash) — splash renders some
+    // pdftocairo (cairo backend) over pdftoppm (splash), splash renders some
     // PDFs (e.g. certain reportlab output) as blank pages; cairo is robust.
     // Render straight to the display width instead of 150dpi + downscale.
     let mut cmd = Command::new("pdftocairo");
@@ -112,7 +112,7 @@ struct PdfApp {
     err: Option<String>,
     cache: HashMap<usize, image::DynamicImage>,
     order: VecDeque<usize>,
-    /// Pages a worker is currently rendering — coalesces so the same page is
+    /// Pages a worker is currently rendering, coalesces so the same page is
     /// never spawned twice (a re-visit while its first render is in flight).
     pending: HashSet<usize>,
     /// Current page requested but not yet in `cache`: the pane still shows the

@@ -172,6 +172,15 @@ impl Renderer {
 }
 
 pub fn render(src: &str) -> String {
+    // Sanitised once, here, rather than at each of the five places a fragment of
+    // the file lands in the output. This function is the one that keeps its own
+    // ANSI, so `emit` cannot clean up after it, and the file's text reaches
+    // stdout inside escape sequences: a link URL goes between `ESC ] 8 ; ;` and
+    // its terminator, so an ESC in the URL ends the sequence early and whatever
+    // follows is read as a command. Markdown has no use for a control character
+    // that is not a newline or a tab, so removing them costs nothing.
+    let src = crate::util::strip_control(src);
+    let src = src.as_str();
     let sizing = supports_sizing();
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_STRIKETHROUGH);
@@ -185,4 +194,41 @@ pub fn render(src: &str) -> String {
     };
     r.run(Parser::new_ext(src, opts));
     r.out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The only ESC bytes in the output must be ones this module wrote. Anything
+    /// the file itself contributed is inert text by the time it gets here.
+    #[test]
+    fn nothing_from_the_file_reaches_the_terminal_as_a_command() {
+        let hostile = concat!(
+            "# Head\x1b[2J\n\n",
+            "before\x1b]52;c;ZXZpbA==\x07after\n\n",
+            "`code\x1b[31m`\n\n",
+            "```\nblock\x1b]52;c;ZXZpbA==\x07\n```\n\n",
+            "[label](http://example.com\x1b]52;c;ZXZpbA==\x07)\n",
+        );
+        let out = render(hostile);
+
+        // Every OSC introduced by the file is gone, terminators included.
+        assert!(!out.contains("\x1b]52"), "an OSC 52 survived: {out:?}");
+        assert!(!out.contains('\x07'), "a BEL survived: {out:?}");
+        // And the payload survives only as ordinary characters.
+        assert!(out.contains("]52;c;ZXZpbA=="));
+
+        // The module's own styling is untouched: a link is still a link.
+        assert!(out.contains("\x1b]8;;http://example.com"));
+        assert!(out.contains("label"));
+    }
+
+    #[test]
+    fn ordinary_markdown_still_renders() {
+        let out = render("# Title\n\nA *word* and `code`.\n");
+        assert!(out.contains("Title"));
+        assert!(out.contains("word"));
+        assert!(out.contains("code"));
+    }
 }

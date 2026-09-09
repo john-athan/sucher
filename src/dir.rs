@@ -306,7 +306,7 @@ enum MetaCol {
     /// Right-aligned compact relative modified age (`3h`, `2d`, …); directories
     /// show their mtime too.
     Modified,
-    /// No trailing column at all — the parent pane, which reclaims the width.
+    /// No trailing column at all, the parent pane, which reclaims the width.
     None,
 }
 
@@ -323,7 +323,7 @@ impl MetaCol {
 }
 
 /// The key the entry listing is ordered by (the browser's analogue of yazi's
-/// sort modes). Directories are ALWAYS grouped first regardless of key — that
+/// sort modes). Directories are ALWAYS grouped first regardless of key, that
 /// invariant predates this feature and is preserved by [`sort_cmp`]; the key
 /// only decides the order *within* each group. `Name` is the default and, with
 /// `reverse: false`, reproduces the old fixed ordering byte-for-byte.
@@ -336,7 +336,7 @@ enum SortKey {
     /// By modified time, oldest first (reverse for newest first). Missing mtimes
     /// sort as oldest.
     Modified,
-    /// By file extension (lower-cased), then name — groups like files together.
+    /// By file extension (lower-cased), then name, groups like files together.
     Ext,
 }
 
@@ -386,8 +386,8 @@ impl Sort {
 }
 
 /// The raw extension slice of a file name (the part after the last dot), or `""`
-/// when it has none. NOT lower-cased — the caller compares it through
-/// [`cmp_name_ci`], so folding here would just allocate. Pure — unit-tested. Used
+/// when it has none. NOT lower-cased, the caller compares it through
+/// [`cmp_name_ci`], so folding here would just allocate. Pure, unit-tested. Used
 /// only by [`SortKey::Ext`]; kept a free fn so the comparator and its tests share
 /// one definition.
 fn name_ext(name: &str) -> &str {
@@ -400,9 +400,9 @@ fn name_ext(name: &str) -> &str {
 
 /// Case-insensitive comparison of two strings WITHOUT allocating. Folds each side
 /// to lowercase lazily, char by char, through `char::to_lowercase()` (which can
-/// expand one char to several — the flattened iterators handle full Unicode case
+/// expand one char to several, the flattened iterators handle full Unicode case
 /// folding), and compares the two streams lexicographically. When one side runs
-/// out of chars first it sorts first, exactly like `str::cmp`. Pure — unit-tested.
+/// out of chars first it sorts first, exactly like `str::cmp`. Pure, unit-tested.
 /// This is the allocation-free replacement for `a.to_lowercase().cmp(&b.to_lowercase())`,
 /// which [`sort_cmp`] calls ~2·N·log N times per sort.
 fn cmp_name_ci(a: &str, b: &str) -> Ordering {
@@ -453,7 +453,7 @@ impl Sortable for Entry {
 
 impl Sortable for crate::search::Hit {
     /// Sort by the relative path (not the bare file name) so the flat result list
-    /// reads in a folder-grouped order — `sub/a.rs` sorts beside its siblings, not
+    /// reads in a folder-grouped order, `sub/a.rs` sorts beside its siblings, not
     /// scattered among every other `a.*` in the tree.
     fn sort_name(&self) -> &str {
         &self.rel
@@ -469,16 +469,16 @@ impl Sortable for crate::search::Hit {
     }
 }
 
-/// Total order over anything [`Sortable`] for a given [`Sort`]. Pure — unit-tested
+/// Total order over anything [`Sortable`] for a given [`Sort`]. Pure, unit-tested
 /// without any filesystem. Directories always sort before files (the pre-feature
 /// invariant); the `Sort` only orders within each group, and every key breaks ties
 /// by case-insensitive [`Sortable::sort_name`] so the order is deterministic.
-/// `reverse` flips the within-group order (directories stay first — reversing name
+/// `reverse` flips the within-group order (directories stay first, reversing name
 /// gives Z→A, not files-before-dirs), matching how file managers reverse.
 fn sort_cmp<T: Sortable>(a: &T, b: &T, sort: Sort) -> Ordering {
     let dirs_first = b.sort_is_dir().cmp(&a.sort_is_dir());
     if dirs_first != Ordering::Equal {
-        return dirs_first; // group boundary — never affected by key or reverse
+        return dirs_first; // group boundary, never affected by key or reverse
     }
     let by_name = || cmp_name_ci(a.sort_name(), b.sort_name());
     let ord = match sort.key {
@@ -505,7 +505,7 @@ enum Pv {
 
 /// What the async raster worker ships back over the channel (ADR 0005 D1). A
 /// still is a single decoded image (cached in `img_cache`); an animated GIF is a
-/// frame set the pane loops (never cached — frame sets are large; reselecting
+/// frame set the pane loops (never cached, frame sets are large; reselecting
 /// re-decodes off-thread). Widening this from a bare `Option<DynamicImage>` is
 /// what lets one worker feed both the still and the animated install paths while
 /// still never touching `pane`/`img_cache` itself.
@@ -537,7 +537,7 @@ enum SlideDir {
 /// *Cell-granularity ceiling (ADR 0006 D3):* a terminal can only translate content
 /// in whole character cells, so the slide has at most `inner_width` (~40) distinct
 /// positions; beyond ~250 fps extra frames repeat a position. The slide's
-/// smoothness is bounded by column width, not refresh rate — the continuous part
+/// smoothness is bounded by column width, not refresh rate, the continuous part
 /// is the colour fade layered on top.
 struct Slide {
     anim: crate::anim::Anim,
@@ -547,7 +547,7 @@ struct Slide {
 }
 
 /// The live state of the recursive-search mode (ADR 0007). Present on `App.search`
-/// (as `Some`) only while `Mode::Search` is active — `None` in browse/filter, so
+/// (as `Some`) only while `Mode::Search` is active, `None` in browse/filter, so
 /// the search paths are strictly additive and cost nothing off-mode. Distinct from
 /// the browse filter in every field (own text, own selection, own walk): search and
 /// the local `/` filter are two operations, not a hybrid (D1).
@@ -556,12 +556,12 @@ struct SearchState {
     /// by [`App::restart_search`] into a `query::Query`. Its OWN buffer, never the
     /// browse `filter`, so the local filter path (D1) is byte-for-byte untouched.
     query: String,
-    /// The running background tree walk, or `None` when the query is empty — a
+    /// The running background tree walk, or `None` when the query is empty, a
     /// blank query must not walk the whole tree (D3 / [`query::Query::is_empty`]).
     /// Dropping it cancels the walk, so replacing it (a query edit) or clearing it
     /// (leaving search) stops the superseded walk promptly (D3).
     engine: Option<crate::search::Search>,
-    /// Hits received so far, kept sorted by the active [`Sort`] — the walk streams
+    /// Hits received so far, kept sorted by the active [`Sort`], the walk streams
     /// them live and [`App::pump_search`] re-sorts on each drain (the walker itself
     /// surfaces them in nondeterministic arrival order).
     results: Vec<crate::search::Hit>,
@@ -572,7 +572,7 @@ struct SearchState {
     /// Whether the walk has sent its terminal `Msg::Done` (streaming finished).
     /// Drives the `searching…` vs `N results` status text and the fast-poll gate.
     done: bool,
-    /// Whether the walk stopped at the result cap. Surfaced in the status line —
+    /// Whether the walk stopped at the result cap. Surfaced in the status line,
     /// never a silent truncation (D3).
     capped: bool,
 }
@@ -617,7 +617,7 @@ struct App {
     // false, `git` below stays `None` everywhere and no `git` subprocess runs.
     git_enabled: bool,
     // The current directory's git status map (name → state), recomputed on every
-    // `load`. `None` when git is disabled, git is absent, or `cwd` isn't a repo —
+    // `load`. `None` when git is disabled, git is absent, or `cwd` isn't a repo,
     // in which case the gutter is not drawn and the layout is the pre-git render.
     git: Option<std::collections::HashMap<String, GitStatus>>,
     // The repo HEAD (branch / detached oid / ahead-behind) shown right-aligned on
@@ -626,11 +626,11 @@ struct App {
     head: Option<git::RepoHead>,
     all: Vec<Entry>,
     view: Vec<usize>, // indices into `all` matching the filter
-    // The parent directory's entries, already ordered by `sort` — the cache
+    // The parent directory's entries, already ordered by `sort`, the cache
     // behind the Miller parent pane (perf). Recomputed once per directory change
     // in `load` (a single `read_dir` + sort) and re-sorted in place by `resort`,
     // so `render_parent` reads this slice instead of re-listing the parent on
-    // every render frame — which, on a remote S3/GCS mount, was a network LIST
+    // every render frame, which, on a remote S3/GCS mount, was a network LIST
     // per keystroke and per animation frame. Empty when `cwd` has no parent.
     parent: Vec<Entry>,
     state: ListState,
@@ -652,7 +652,7 @@ struct App {
     img_cache: Vec<(PathBuf, DynamicImage)>,
     // Async rasteriser (image/PDF/video posters). The worker never touches
     // `img_cache` or `pane`; it decodes on a thread and ships the finished
-    // `Rastered` (Send) — a still image or an animated GIF's frames — back over
+    // `Rastered` (Send), a still image or an animated GIF's frames, back over
     // the channel to the main thread, which installs it.
     raster_tx: Sender<(PathBuf, Option<Rastered>)>,
     raster_rx: Receiver<(PathBuf, Option<Rastered>)>,
@@ -662,7 +662,7 @@ struct App {
     // ticked (ADR 0005 D1). Set only when an `Animated` raster installs; cleared
     // by `build_preview` on any new selection and by installing a still. `main_loop`
     // gates its per-frame tick on this AND `pv == Image`, so a still (or nothing)
-    // being previewed never ticks — no idle churn off the animated path.
+    // being previewed never ticks, no idle churn off the animated path.
     preview_animated: bool,
     // Which trailing metadata column the current pane draws (ADR 0005 D2).
     // Starts at `Size` (byte-for-byte the pre-feature look); the `t` key cycles
@@ -674,7 +674,7 @@ struct App {
     // when mouse capture is off); consumed by `crumb_hit` on a left-click.
     crumb_hits: Vec<(Range<u16>, PathBuf)>,
     // The CURRENT entry-list pane's on-screen rectangle, recorded every `render`
-    // (ADR 0005 D2). This is the click-hit-test surface for the file list —
+    // (ADR 0005 D2). This is the click-hit-test surface for the file list,
     // analogous to `crumb_hits` for the breadcrumb: written unconditionally
     // (harmless with mouse off) and read only on a left-click, where
     // `row_to_index` maps a clicked row inside it to a `view` index. It is
@@ -686,8 +686,8 @@ struct App {
     // is simply impossible there.
     parent_area: Option<Rect>,
     // Braille-spinner frame counter for the `Loading` preview (ADR 0004 D3). It
-    // advances ONLY while a raster is live (pending or wanted) — never on an idle
-    // redraw — so the spinner animates during real work without the fully-idle
+    // advances ONLY while a raster is live (pending or wanted), never on an idle
+    // redraw, so the spinner animates during real work without the fully-idle
     // browser ever churning the CPU. See the tick in `main_loop`.
     spin: usize,
     // Whether navigation animations run (config `animate`, ADR 0006 D4). Snapshot
@@ -707,7 +707,7 @@ struct App {
     // listing's inner content, taken at navigation time before the new listing
     // loads. Armed alongside `fade` (only when `animate` AND a real pane rect
     // exists), and driven/cleared beside it in `main_loop`; a keypress clears it
-    // so the next render is the settled state. Only the current pane slides — in
+    // so the next render is the settled state. Only the current pane slides, in
     // Miller the parent/preview panes stay static (D3).
     slide: Option<Slide>,
     // The recursive-search mode's live state (ADR 0007), or `None` in browse/filter.
@@ -715,18 +715,18 @@ struct App {
     // it, so browse/filter/typeahead are strictly unaffected (D1).
     search: Option<SearchState>,
     // The results-list pane rect, recorded every `render_search` (ADR 0007 §9). The
-    // click-hit-test surface for search rows — the search analogue of `list_area` —
+    // click-hit-test surface for search rows, the search analogue of `list_area`,
     // read on a left-click by `row_to_index` against the search results. Inert
     // outside search mode (no search mouse events are routed there).
     search_area: Rect,
     // The active sort for the entry listing (feature: yazi-style sort modes). The
     // current and parent panes both order through `sort_cmp` with this; `o`
     // cycles the key and `O` toggles reverse. Starts at the default (name,
-    // ascending) — byte-for-byte the pre-feature ordering.
+    // ascending), byte-for-byte the pre-feature ordering.
     sort: Sort,
     // Whether the which-key help overlay is up. Toggled by `?` in browse mode and
     // dismissed by the next keypress (which-key convention). Only ever true in
-    // browse mode — every mode change dismisses it first (see `handle_key`).
+    // browse mode, every mode change dismisses it first (see `handle_key`).
     help: bool,
     // The multi-select set a later file operation will act on (ADR 0017 D2/D3).
     // Keyed by absolute path and deliberately NOT cleared on a directory change:
@@ -775,7 +775,7 @@ enum CharAction {
     Bottom,
     Open,
     /// Hand the selected entry to the OS default application ("open in native
-    /// app"). Bound to `x`. Works on any entry — including ones sucher has no
+    /// app"). Bound to `x`. Works on any entry, including ones sucher has no
     /// in-app viewer for (legacy .doc, audio) and directories (opens the file
     /// manager).
     OpenExternal,
@@ -851,7 +851,7 @@ fn browse_char(c: char) -> Option<CharAction> {
         'h' => CharAction::Parent,
         '/' => CharAction::Filter,
         // Enter recursive search (ADR 0007). Capital `S`; binding it here also
-        // keeps typeahead correct — a bound char never starts a name search.
+        // keeps typeahead correct, a bound char never starts a name search.
         'S' => CharAction::Search,
         '.' => CharAction::ToggleHidden,
         // Cycle the pane layout (auto→miller→double→auto). Binding `M` here also
@@ -911,7 +911,7 @@ fn browse_char(c: char) -> Option<CharAction> {
 /// its teardown on drop (ADR 0005 D2). Wrapping the mode in an RAII guard makes
 /// the "the shell must never be left in capture mode" invariant structural: the
 /// guard is created right after `ratatui::init()` and explicitly dropped right
-/// before `ratatui::restore()`, so capture is off on every exit — quit, the
+/// before `ratatui::restore()`, so capture is off on every exit, quit, the
 /// open-and-return round trip, an error return, or a panic (drop still runs
 /// while unwinding). A disabled guard (`on == false`) is inert both ways.
 struct MouseGuard(bool);
@@ -975,7 +975,7 @@ pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) ->
         spin: 0,
         // Read the animate toggle once from the process global (installed in
         // `main` beside the palette), consistent with how the browser reads the
-        // theme — no new parameter threaded through `run`.
+        // theme, no new parameter threaded through `run`.
         animate: crate::anim::enabled(),
         fade: None,
         fade_frames: 0,
@@ -1027,7 +1027,7 @@ pub fn run(start: String, icons: IconMode, layout: Layout, git_enabled: bool) ->
 /// surface is active: the browsed listing, or (in search mode) the selected hit.
 /// [`App::build_preview`] and the preview-change check source from here so a
 /// search hit renders through the exact same preview pipeline as a browsed file
-/// (ADR 0007 D5) — the whole point of the feature. Owned (not a borrow) so the
+/// (ADR 0007 D5), the whole point of the feature. Owned (not a borrow) so the
 /// caller is free to mutate `self` while building the preview.
 struct Sel {
     name: String,
@@ -1042,7 +1042,7 @@ impl App {
     /// search mode the selected hit (its file name derived from the hit path, or
     /// its `rel` when the path has no final component), otherwise the browsed entry
     /// (ADR 0007 D5). `None` when nothing is selected (empty listing, or a search
-    /// with no results yet). Browse/filter behave exactly as `selected()` — this is
+    /// with no results yet). Browse/filter behave exactly as `selected()`, this is
     /// purely additive; `selected()` itself is unchanged.
     fn cur_sel(&self) -> Option<Sel> {
         if let Some(search) = self.search.as_ref() {
@@ -1077,14 +1077,14 @@ impl App {
         // Cache the parent listing once for the whole time we're in this directory
         // (perf): `render_parent` reads this slice every frame instead of re-listing
         // the parent, so the Miller parent pane costs one `read_dir` per navigation
-        // rather than one per render — critical on remote mounts. Empty when there
+        // rather than one per render, critical on remote mounts. Empty when there
         // is no parent (the parent pane is a no-op then anyway).
         self.parent = match self.cwd.parent() {
             Some(p) => read_entries(p, self.sort),
             None => Vec::new(),
         };
         // Refresh the git gutter for the new directory (cheap, correct after a
-        // dir change — D2). Disabled, git-absent, or non-repo dirs yield `None`,
+        // dir change, D2). Disabled, git-absent, or non-repo dirs yield `None`,
         // which the pane renderer treats as "no gutter" (byte-for-byte pre-git).
         self.git = if self.git_enabled {
             git::status_map(&self.cwd)
@@ -1126,13 +1126,13 @@ impl App {
     /// filtered view. Uses the SAME comparator as `read_entries`, so an in-place
     /// re-sort and a fresh directory read can never disagree. Cheaper than a full
     /// `load` (no `read_dir`, no git subprocess) since the entries themselves are
-    /// unchanged — only their order is. Selection is re-clamped by `refilter`.
+    /// unchanged, only their order is. Selection is re-clamped by `refilter`.
     fn resort(&mut self) {
         let sort = self.sort;
         self.all.sort_by(|a, b| sort_cmp(a, b, sort));
         // Re-order the cached parent listing with the SAME comparator so the parent
         // pane reflects the new sort without a re-read (the cwd didn't change, so
-        // the parent's entries are unchanged — only their order is).
+        // the parent's entries are unchanged, only their order is).
         self.parent.sort_by(|a, b| sort_cmp(a, b, sort));
         self.refilter();
         self.status = Some(self.sort.label());
@@ -1194,7 +1194,7 @@ impl App {
         // and slide into place (ADR 0006 D3). Both are time-based `Anim`s started
         // at the same instant with the same duration, so they run in lockstep: the
         // incoming listing slides in while its colours fade up. Only when
-        // animations are enabled — otherwise the transition stays instant and no
+        // animations are enabled, otherwise the transition stays instant and no
         // anim state is ever created. The slide is additionally gated on a valid
         // old snapshot (skipped on the first navigation, before any render).
         if self.animate {
@@ -1231,9 +1231,9 @@ impl App {
     /// folder slide's "old" layer (ADR 0006 D3). Built from the live
     /// `all`/`view`/`state` at FULL colour (`fade_t: None`) through the exact same
     /// item path as the normal render, so the outgoing layer looks identical to
-    /// what was on screen. Returns `None` when there's no real pane rect yet — the
+    /// what was on screen. Returns `None` when there's no real pane rect yet, the
     /// first navigation happens before any render sets `list_area`, and snapshotting
-    /// a zero-sized region would be garbage — in which case the caller skips the
+    /// a zero-sized region would be garbage, in which case the caller skips the
     /// slide and the transition is instant (the fade still resolves the new colours).
     fn snapshot_current_inner(&self) -> Option<Buffer> {
         let area = self.list_area;
@@ -1304,7 +1304,7 @@ impl App {
     }
 
     /// Restart the background walk after a query edit (ADR 0007 §4). Parses the raw
-    /// text: a blank query drops the engine and shows the empty prompt state (D3 —
+    /// text: a blank query drops the engine and shows the empty prompt state (D3,
     /// never walk the whole tree for nothing); otherwise a fresh walk is started
     /// from `cwd`. Assigning the new engine (or `None`) drops the OLD one first,
     /// which cancels the superseded walk (D3) before the next begins. Either way the
@@ -1333,12 +1333,12 @@ impl App {
     /// cap flag and drops the engine (the walk is over). Keeps the growing list
     /// **sorted** by the active [`Sort`] (via [`sort_cmp`]) so results present in a
     /// deterministic, folder-grouped order rather than nondeterministic walk-arrival
-    /// order — the parallel walker surfaces hits in whatever order its worker threads
+    /// order, the parallel walker surfaces hits in whatever order its worker threads
     /// finish, which two runs need not agree on. Returns whether anything changed
     /// (→ redraw).
     fn pump_search(&mut self) -> bool {
         // Read the app-wide sort before borrowing `self.search` (search results
-        // inherit whatever sort the browser is set to — one sort preference).
+        // inherit whatever sort the browser is set to, one sort preference).
         let sort = self.sort;
         let Some(search) = self.search.as_mut() else {
             return false;
@@ -1368,7 +1368,7 @@ impl App {
         // at the 5000-hit cap, and it lets a late-arriving hit slot into its correct
         // position rather than tacking onto the end. Cheap for two reasons: after
         // Fix 1 `sort_cmp` allocates nothing per comparison, and Rust's stable sort
-        // is adaptive — the vec is already sorted from the previous drain with only
+        // is adaptive, the vec is already sorted from the previous drain with only
         // a short appended run, which it merges in near-linear time. So a full
         // re-sort each drain is correct and performant; no hand-rolled merge needed.
         search.results.sort_by(|a, b| sort_cmp(a, b, sort));
@@ -2001,7 +2001,7 @@ impl App {
     }
 
     /// Activate the selected hit (ADR 0007 §8). A directory hit leaves search and
-    /// navigates into it; an openable file returns `Action::Open` — `App` state
+    /// navigates into it; an openable file returns `Action::Open`, `App` state
     /// (search included) survives the open-and-return round trip (`run`'s outer
     /// loop), so quitting the viewer lands back in the live results. An unopenable
     /// kind just reports it.
@@ -2011,7 +2011,7 @@ impl App {
             self.exit_search();
             self.enter_dir(sel.path, SlideDir::FromRight);
             // Opening a dir HIT is a jump to an arbitrary (possibly deep) descendant,
-            // not a sibling step — and the browse pane wasn't even on screen (search
+            // not a sibling step, and the browse pane wasn't even on screen (search
             // was). `enter_dir` armed a slide from the stale pre-search snapshot; drop
             // it so only the (background-anchored) colour fade plays. A slide implying
             // spatial adjacency would be a lie here.
@@ -2030,7 +2030,7 @@ impl App {
         loop {
             // Drain the recursive-search stream (ADR 0007 §5): append newly-arrived
             // hits and notice completion. Run BEFORE the preview recompute so the
-            // first hit — which both arrives and sets the initial selection here —
+            // first hit, which both arrives and sets the initial selection here,
             // has its preview built in this same iteration, not one loop (≤60 ms)
             // later. Inert (an early `false`) when not searching.
             if self.pump_search() {
@@ -2062,7 +2062,7 @@ impl App {
             }
             // Drive the folder fade (ADR 0006 D3). While a fade is live, redraw
             // every loop so the eased colours advance, counting frames for the
-            // stats proof. On completion, record the achieved FPS and clear it —
+            // stats proof. On completion, record the achieved FPS and clear it,
             // the very next render (with `fade == None`) is the final, identity
             // frame, so a fade always settles on the exact non-animated colours.
             // Independent of the raster/GIF arms: a fade and a GIF preview coexist.
@@ -2078,7 +2078,7 @@ impl App {
             }
             // Drive the folder slide in lockstep with the fade (ADR 0006 D3). Same
             // shape: redraw every loop while live, count frames for the stats
-            // proof, and on completion record the achieved FPS and clear it — the
+            // proof, and on completion record the achieved FPS and clear it, the
             // next render (with `slide == None`) is the settled frame, which the
             // offset maths make identical to the normal render. `done` is read
             // before the `&mut` borrow so `self.slide` can be cleared cleanly.
@@ -2110,7 +2110,7 @@ impl App {
             // image installs promptly AND the braille spinner ticks) OR while an
             // animated GIF preview is on screen (so it loops); otherwise idle at
             // the normal 1 s cadence. These are the ONLY conditions under which a
-            // bare timeout does any work — a fully idle browser (still image,
+            // bare timeout does any work, a fully idle browser (still image,
             // text, or nothing selected) blocks the full second and does nothing.
             let raster_active = self.raster_pending.is_some() || self.raster_want.is_some();
             let animating = self.preview_animated && matches!(self.pv, Pv::Image);
@@ -2129,7 +2129,7 @@ impl App {
             // (ADR 0006 D2); the heavier raster/GIF paths keep their 60 ms cadence.
             // The blocks above already cleared `fade`/`slide` if they just
             // completed, so a fully idle browser (no fade, no slide, no raster, no
-            // GIF) still blocks the full second and does nothing — no new idle
+            // GIF) still blocks the full second and does nothing, no new idle
             // churn. A live slide emits at the same ~4 ms cadence as the fade
             // (they run together), so the two share the fast-poll arm.
             let fading = self.fade.is_some() || self.slide.is_some();
@@ -2145,7 +2145,7 @@ impl App {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
                         // Interrupt any in-flight fade AND slide: complete them at
-                        // once so the next render is the final state (ADR 0006 D2 —
+                        // once so the next render is the final state (ADR 0006 D2,
                         // motion never adds latency). A key that changes directory
                         // re-arms a fresh fade+slide inside `handle_key`/`enter_dir`.
                         // Dropping the slide here also frees its owned snapshot buffer.
@@ -2232,7 +2232,7 @@ impl App {
                             ) {
                                 // Single-click SELECTS a different row; a click on
                                 // the ALREADY-selected row OPENS it. One click moves
-                                // the cursor and a second on it activates — this is
+                                // the cursor and a second on it activates, this is
                                 // discoverable and avoids the accidental opens a
                                 // click-to-open-anything rule would cause (and it
                                 // mirrors the keyboard: land, then Enter). Opening a
@@ -2335,7 +2335,7 @@ impl App {
 
         if let Mode::Search = self.mode {
             // Recursive search is a text-input surface like the filter; typeahead
-            // never applies (ADR 0007 D1 — its own mode, own key buffer). Input
+            // never applies (ADR 0007 D1, its own mode, own key buffer). Input
             // handling MIRRORS the filter's, but the semantics differ: a keystroke
             // restarts a background tree walk rather than narrowing the listing.
             let half = (self.viewport_h / 2).max(1) as isize;
@@ -2364,7 +2364,7 @@ impl App {
         }
 
         // The which-key overlay is up (only reachable in browse mode): the next
-        // key dismisses it and is otherwise swallowed — the which-key convention.
+        // key dismisses it and is otherwise swallowed, the which-key convention.
         // Handling it here also keeps `help` a browse-only invariant: any key that
         // would enter filter/search is consumed by the dismiss first.
         if self.help {
@@ -2539,7 +2539,7 @@ impl App {
                 self.refilter();
             }
             CharAction::Search => {
-                // Enter search with a blank prompt and no walk yet — the first
+                // Enter search with a blank prompt and no walk yet, the first
                 // keystroke starts one (a blank query must not walk; ADR 0007 D3).
                 self.mode = Mode::Search;
                 self.search = Some(SearchState::new());
@@ -2621,7 +2621,7 @@ impl App {
     }
 
     /// Move the cursor to the first entry matching the current buffer, echoing
-    /// it in the status. A miss keeps the buffer and leaves the cursor put — a
+    /// it in the status. A miss keeps the buffer and leaves the cursor put, a
     /// silent no-op that still shows what was typed (ADR 0002 D3).
     fn apply_typeahead(&mut self) {
         let idx = {
@@ -2666,7 +2666,7 @@ impl App {
     /// Install an animated GIF's frames into the pane as the live preview and
     /// mark it animated so `main_loop` ticks it. Deliberately NOT cached in
     /// `img_cache` (bounded, and frame sets are large); reselecting the GIF
-    /// re-decodes off-thread — cheap and backgrounded (ADR 0005 D1).
+    /// re-decodes off-thread, cheap and backgrounded (ADR 0005 D1).
     fn show_animation(&mut self, frames: Vec<media::Frame>) {
         if let Some(pane) = self.pane.as_mut() {
             pane.set_animation(frames);
@@ -2676,8 +2676,8 @@ impl App {
     }
 
     /// Drive the single-worker async rasteriser. Runs every main-loop tick:
-    /// drains finished posters, retires the in-flight job, and — if the worker
-    /// is idle — starts the latest wanted raster (or installs it straight from
+    /// drains finished posters, retires the in-flight job, and, if the worker
+    /// is idle, starts the latest wanted raster (or installs it straight from
     /// cache). Returns true if the preview changed and a redraw is due.
     fn pump_raster(&mut self) -> bool {
         let mut dirty = false;
@@ -2689,7 +2689,7 @@ impl App {
         let cur = self.cur_sel().map(|s| s.path);
 
         // 1. Drain completed rasters. Cache every finished STILL (animations are
-        //    never cached — see `show_animation`); only touch the pane when the
+        //    never cached, see `show_animation`); only touch the pane when the
         //    finished path is still the current selection.
         while let Ok((path, result)) = self.raster_rx.try_recv() {
             if let Some(Rastered::Still(img)) = &result {
@@ -2699,7 +2699,7 @@ impl App {
                 self.raster_pending = None;
             }
             if Some(&path) != cur.as_ref() {
-                continue; // stale: scrolled away — keep it cached, leave the pane
+                continue; // stale: scrolled away, keep it cached, leave the pane
             }
             match result {
                 Some(Rastered::Still(img)) => self.show_image(img),
@@ -2721,7 +2721,7 @@ impl App {
         if self.raster_pending.is_none() {
             if let Some((path, kind)) = self.raster_want.take() {
                 if let Some((_, img)) = self.img_cache.iter().find(|(p, _)| *p == path) {
-                    // Became available while waiting — install without a worker.
+                    // Became available while waiting, install without a worker.
                     if Some(&path) == cur.as_ref() {
                         let img = img.clone();
                         self.show_image(img);
@@ -2778,7 +2778,7 @@ impl App {
         self.preview.clear();
         self.pv = Pv::Text;
         // A new selection is not (yet) an animation; clear the flag so any prior
-        // GIF's ticking stops the moment the cursor moves off it — no idle churn
+        // GIF's ticking stops the moment the cursor moves off it, no idle churn
         // on the next selection until an `Animated` raster actually installs.
         self.preview_animated = false;
         // A new selection redefines what wants rastering; drop any stale want so
@@ -2887,8 +2887,8 @@ impl App {
             Format::Sheet | Format::Data => self.preview_sheet(&path),
             Format::Archive => self.preview_archive(&path),
             Format::Binary => self.preview_hex(&path),
-            // Everything else — including Image/Pdf/Video whose pixel attempt
-            // failed above — shows the file head; `head_text` self-guards and
+            // Everything else, including Image/Pdf/Video whose pixel attempt
+            // failed above, shows the file head; `head_text` self-guards and
             // yields "No preview" for binary/NUL content.
             _ => self.preview_text_head(&path),
         }
@@ -2948,9 +2948,10 @@ impl App {
     }
 
     /// Spreadsheet preview: the first rows/cols rendered as an aligned grid (the
-    /// first row styled as a header). Covers both the binary workbooks — which
-    /// otherwise fell through to the text-head previewer and showed "No preview"
-    /// — and csv/tsv, which now format as a table instead of raw delimited text.
+    /// first row styled as a header). Covers both the binary workbooks, which
+    /// otherwise fell through to the text-head previewer and showed "No
+    /// preview", and csv/tsv, which now format as a table instead of raw
+    /// delimited text.
     fn preview_sheet(&mut self, path: &Path) {
         const MAX_COLS: usize = 20;
         const COL_CAP: usize = 18; // max display width of any one column
@@ -3091,11 +3092,11 @@ impl App {
         // The eased fade factor for the CURRENT pane after a directory change
         // (ADR 0006 D3): eased progress in 0..1, or `None` when no fade is live.
         // Read once here at the render edge (the clock lives only at the edges).
-        // Only the current pane fades — the parent (Miller) pane didn't change, so
+        // Only the current pane fades, the parent (Miller) pane didn't change, so
         // it always gets `None`. At progress 1.0 the eased factor is 1.0 and every
         // lerp is the identity, so the final frame equals the non-animated render.
         // Read the clock once at this render edge and reuse it for both the fade
-        // and the slide (the clock lives only at the edges — ADR 0006).
+        // and the slide (the clock lives only at the edges, ADR 0006).
         let now = Instant::now();
         let fade_t = self
             .fade
@@ -3116,7 +3117,7 @@ impl App {
             self.list_area = cols[1];
             self.parent_area = Some(cols[0]);
             // `viewport_h` drives half-page paging and must track the CURRENT
-            // pane — the middle column here.
+            // pane, the middle column here.
             self.viewport_h = cols[1].height.saturating_sub(2);
             // Build the view from direct fields (not a `&self` helper) so the
             // shared borrows of `all`/`view` stay disjoint from `&mut state`.
@@ -3153,7 +3154,7 @@ impl App {
             }
             self.render_preview(f, cols[2]);
         } else {
-            // Double: current | preview — the classic, byte-for-byte split.
+            // Double: current | preview, the classic, byte-for-byte split.
             let cols = RtLayout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
@@ -3198,7 +3199,7 @@ impl App {
         self.render_status(f, rows[2]);
 
         // The which-key overlay draws last, over everything (ADR 0007's search
-        // frame returns early above, so this is browse/filter only — and `help` is
+        // frame returns early above, so this is browse/filter only, and `help` is
         // browse-only anyway). `Clear` punches a hole so the popup isn't see-through.
         if self.help {
             render_browse_help(f, area, self.sort);
@@ -3214,7 +3215,7 @@ impl App {
     }
 
     /// Render the parent-directory pane (Miller's left column): the siblings of
-    /// `cwd` with the current directory highlighted. Navigation context only —
+    /// `cwd` with the current directory highlighted. Navigation context only,
     /// always inactive (dim border), no size column, no git, no preview. A no-op
     /// when there is no parent (the caller only reaches three columns when one
     /// exists, but stay honest).
@@ -3254,18 +3255,18 @@ impl App {
             // set from the current listing, which is exactly why this pane also
             // carries `MetaCol::None` and no git gutter.
             marks: None,
-            meta: MetaCol::None, // no trailing column — cleaner context pane.
-            fade_t: None,        // the parent pane didn't change — never fades (D3).
+            meta: MetaCol::None, // no trailing column, cleaner context pane.
+            fade_t: None,        // the parent pane didn't change, never fades (D3).
         };
         // The parent context pane didn't change on this navigation, so it never
-        // fades — always `None` in the view (ADR 0006 D3).
+        // fades, always `None` in the view (ADR 0006 D3).
         render_entry_list(f, area, &view, &mut state, false, false, self.icons);
     }
 
     fn render_crumb(&mut self, f: &mut Frame, area: Rect) {
         // Clickable, two-tone breadcrumb (ADR 0005 D2). The path is laid out as a
         // sequence of segments joined by `/`: every parent segment recedes in
-        // `dim`, the final segment — the directory you're actually in — pops in
+        // `dim`, the final segment, the directory you're actually in, pops in
         // accent + BOLD, preserving the prior two-tone look (e.g. `~/foo/` dim +
         // `bar` accent). As each label is placed we record its exact column span
         // and absolute target so a left-click there navigates to it (`crumb_hit`).
@@ -3284,7 +3285,7 @@ impl App {
         let mut prev_ends_slash = false;
         for (idx, (label, target)) in segments.iter().enumerate() {
             // Separator between segments, except after a label that already ends
-            // in '/' (the filesystem-root `/` segment) — avoids a doubled slash.
+            // in '/' (the filesystem-root `/` segment), avoids a doubled slash.
             if idx > 0 && !prev_ends_slash {
                 spans.push(Span::styled("/".to_string(), Style::default().fg(dim)));
                 x = x.saturating_add(1);
@@ -3304,10 +3305,10 @@ impl App {
         f.render_widget(Paragraph::new(Line::from(spans)), area);
 
         // Repo HEAD readout, right-aligned on the same row (ADR 0004, D2
-        // amendment): `⎇ branch ↑a ↓b ●` — branch (or detached short oid),
+        // amendment): `⎇ branch ↑a ↓b ●`, branch (or detached short oid),
         // ahead/behind vs upstream when set, and a dirty dot when the status map
         // is non-empty. Dropped whole when it would collide with the crumbs (the
-        // path always wins) — `x` is the column right after the last crumb.
+        // path always wins), `x` is the column right after the last crumb.
         if let Some(head) = &self.head {
             let dirty = self.git.as_ref().is_some_and(|m| !m.is_empty());
             let git_spans = head_spans(head, dirty, self.icons);
@@ -3338,7 +3339,7 @@ impl App {
             }
             Pv::Loading => {
                 // Placeholder while the background worker rasters. Never render
-                // the (possibly stale) pane here — only a caption + dim note. The
+                // the (possibly stale) pane here, only a caption + dim note. The
                 // braille spinner frame is picked by `spin`, which `main_loop`
                 // advances every ~60 ms while the raster is live (ADR 0004 D3).
                 let block = preview_block(caption_title(&self.caption, area));
@@ -3471,7 +3472,7 @@ impl App {
     /// Render the recursive-search frame (ADR 0007 §10): row 0 an input line, the
     /// middle a horizontal [results | preview] split, row 2 the status. The frame
     /// shape mirrors the browse layout for consistency, and the RIGHT pane is the
-    /// browse preview reused verbatim (D5) — it reads `self.preview`/`self.pv`/
+    /// browse preview reused verbatim (D5), it reads `self.preview`/`self.pv`/
     /// `self.pane`, already populated by `build_preview` via `cur_sel`.
     fn render_search(&mut self, f: &mut Frame) {
         let area = f.area();
@@ -3505,14 +3506,14 @@ impl App {
                 format!(" ⌕ {query}"),
                 Style::default().fg(accent).add_modifier(Modifier::BOLD),
             ),
-            // Trailing cursor block, accent-tinted (palette only — themeable).
+            // Trailing cursor block, accent-tinted (palette only, themeable).
             Span::styled("█", Style::default().fg(accent)),
         ]);
         f.render_widget(Paragraph::new(line), area);
     }
 
     /// The results list: a bordered `List` (accent border, the active surface) whose
-    /// rows are drawn SPECIALISED by [`App::search_items`] — relative path + optional
+    /// rows are drawn SPECIALISED by [`App::search_items`], relative path + optional
     /// snippet (ADR 0007 D5). Rendered through the search `ListState` so the scroll
     /// offset and selection persist across frames. Records `search_area` +
     /// `viewport_h` for mouse hit-testing and half-page paging (§9/§7).
@@ -3541,7 +3542,7 @@ impl App {
         };
         let (new_offset, window) = visible_window(offset, selected, len, inner.height as usize);
         // Build items first (borrows `&self`), then render through the state (borrows
-        // `&mut self.search`) — sequential, so no aliasing.
+        // `&mut self.search`), sequential, so no aliasing.
         let items = self.search_items(area.width, window.clone());
         // The same soft selection tint + accent cursor gutter the browse list uses
         // (see `entry_list`), so the two surfaces read as one system.
@@ -3564,13 +3565,13 @@ impl App {
     }
 
     /// Build the result rows as `ListItem`s (ADR 0007 D5). Each row is drawn
-    /// SPECIALISED — the kind glyph (same icon/colour convention as `entry_items`),
+    /// SPECIALISED, the kind glyph (same icon/colour convention as `entry_items`),
     /// the hit's path RELATIVE to cwd (coloured by `hit.kind.color()`), and for a
     /// content match a dimmed ` N: text` snippet. The whole line is length-budgeted
     /// to the inner width so a row never wraps (reusing `truncate`/`snippet_suffix`).
     ///
     /// Only the `window` slice of the results is materialised (perf: list
-    /// virtualisation) — the width budget depends only on `width`, so every row that
+    /// virtualisation), the width budget depends only on `width`, so every row that
     /// IS built is identical whatever the window; the caller sizes `window` with
     /// [`visible_window`] and renders it through a local state at offset 0.
     fn search_items(&self, width: u16, window: std::ops::Range<usize>) -> Vec<ListItem<'static>> {
@@ -3579,7 +3580,7 @@ impl App {
         };
         let dim = theme::palette().dim;
         // Width reserved before the path: 2 border + 2 selection-cursor gutter, plus
-        // a 2-cell glyph column in the glyphed modes (dropped by `IconMode::None`) —
+        // a 2-cell glyph column in the glyphed modes (dropped by `IconMode::None`),
         // the same chrome arithmetic as `entry_items`.
         let chrome_w = match self.icons {
             IconMode::None => 4,
@@ -3669,7 +3670,7 @@ const MILLER_MIN: u16 = 100;
 
 /// The duration of a folder-navigation animation (ADR 0006 D3): the colour fade
 /// and the directional slide are both started at the same instant with this
-/// duration, so they run in lockstep — the incoming listing slides into place
+/// duration, so they run in lockstep, the incoming listing slides into place
 /// while its colours resolve up from the background, and both settle together.
 const NAV_ANIM: Duration = Duration::from_millis(150);
 
@@ -3726,7 +3727,7 @@ struct EntryListView<'a> {
     /// (ADR 0006, D3): `Some(t)` (t in 0..1) lerps every entry colour from
     /// [`FADE_BG`] toward its true value; `None` draws the normal colours. Only
     /// the current pane ever sets `Some` (right after a directory change); the
-    /// parent context pane — which didn't change — always passes `None`.
+    /// parent context pane, which didn't change, always passes `None`.
     fade_t: Option<f32>,
     /// Optional multi-select state for the mark gutter (ADR 0017 D3). `Some` for
     /// the current pane and ONLY while the set is non-empty, which is what makes
@@ -3784,7 +3785,7 @@ fn entry_chrome_w(icons: IconMode, git: bool, marks: bool) -> u16 {
 /// Decide the effective column count for a frame: three (Miller) only when the
 /// layout asks for it, the frame is wide enough, AND a parent exists; otherwise
 /// two. A pure function so the collapse policy is unit-tested without a terminal.
-/// `Auto` behaves as Miller here — the width gate is what makes it collapse when
+/// `Auto` behaves as Miller here, the width gate is what makes it collapse when
 /// narrow, so no separate branch is needed.
 fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
     let wants_miller = match layout {
@@ -3806,7 +3807,7 @@ fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
 ///
 /// A free function, not a method, because the current pane must render through
 /// the persistent `App.state` (preserving its scroll offset byte-for-byte) while
-/// the parent renders through a throwaway state — passing `state` in lets both
+/// the parent renders through a throwaway state, passing `state` in lets both
 /// share the body without aliasing `self`.
 ///
 /// - `active` lights the border with the accent (and the title accent+BOLD);
@@ -3814,7 +3815,7 @@ fn effective_columns(layout: Layout, width: u16, has_parent: bool) -> u8 {
 ///   shifts the border to the filter yellow (`doc`), matching the status line.
 /// - `view.git` reserves a 2-cell gutter only when `Some` (the current pane in a
 ///   repo); when `None` (parent pane, non-repo, or git off) it costs zero width
-///   and the name reclaims it — so two-column output is byte-for-byte pre-git.
+///   and the name reclaims it, so two-column output is byte-for-byte pre-git.
 fn render_entry_list(
     f: &mut Frame,
     area: Rect,
@@ -3848,7 +3849,7 @@ fn render_entry_list(
     let items = entry_items(area, view, icons, window.clone());
     let list = entry_list(items, view.fade_t);
     // Render through a LOCAL state at offset 0 with the selection rebased into the
-    // window, so ratatui — which only sees the window's rows — never re-scrolls.
+    // window, so ratatui, which only sees the window's rows, never re-scrolls.
     let mut local = ListState::default();
     local.select(window_selection(view.selected, &window));
     render_items_into(f.buffer_mut(), inner, list, &mut local);
@@ -3860,8 +3861,8 @@ fn render_entry_list(
 
 /// Rebase a listing selection (an index into the full `order`) into a virtualised
 /// window (perf: list virtualisation): `Some(local)` when the selection falls
-/// inside `window` — as it always does once [`visible_window`] has scrolled to
-/// keep it visible — else `None`. The local index is what the windowed `ListState`
+/// inside `window`, as it always does once [`visible_window`] has scrolled to
+/// keep it visible, else `None`. The local index is what the windowed `ListState`
 /// highlights, since that state renders only the window at offset 0.
 fn window_selection(selected: Option<usize>, window: &std::ops::Range<usize>) -> Option<usize> {
     selected
@@ -3874,7 +3875,7 @@ fn window_selection(selected: Option<usize>, window: &std::ops::Range<usize>) ->
 /// rendered NEW inner buffer are blitted into the frame, each translated
 /// horizontally by the eased offset and clipped to the inner rect. At progress 1.0
 /// the new content lands exactly in `inner` (offset 0) and the old is fully
-/// off-screen, so the settle frame is byte-for-byte the normal render — the very
+/// off-screen, so the settle frame is byte-for-byte the normal render, the very
 /// reason the loop can clear the slide on completion and let `render_entry_list`
 /// draw the final frame.
 ///
@@ -3904,7 +3905,7 @@ fn render_entry_slide(
     // inner's GLOBAL coordinates, matching the snapshot and the frame, so the blit
     // is a straight column shift.
     // Same virtualised window as the settled render (perf), computed from the same
-    // state offset — so the sliding-in content is byte-for-byte the settle frame.
+    // state offset, so the sliding-in content is byte-for-byte the settle frame.
     let (_, window) = visible_window(
         state.offset(),
         view.selected,
@@ -3946,7 +3947,7 @@ fn fade_color(fade_t: Option<f32>, c: Color) -> Color {
 }
 
 /// Build a pane's STATIC border block (ADR 0006 D3): a rounded border plus the
-/// styled title. Never fades — during a folder slide the frame stays put while
+/// styled title. Never fades, during a folder slide the frame stays put while
 /// only the inner items translate, so the border/title are drawn once per frame at
 /// full colour and the sliding content passes beneath them.
 ///
@@ -3979,8 +3980,8 @@ fn entry_block(view: &EntryListView, active: bool, filter: bool) -> Block<'stati
 
 /// The scroll offset and the index range of rows actually visible in a list pane
 /// (perf: list virtualisation). Replays ratatui's `List` scroll clamp for the
-/// uniform 1-cell rows this browser draws — given the PREVIOUS `offset`, the
-/// `selected` index, the total `len`, and the viewport `height` — so a caller can
+/// uniform 1-cell rows this browser draws, given the PREVIOUS `offset`, the
+/// `selected` index, the total `len`, and the viewport `height`, so a caller can
 /// build `ListItem`s for ONLY the visible window instead of the whole listing, yet
 /// render a buffer byte-for-byte identical to feeding ratatui the full list.
 ///
@@ -4018,12 +4019,12 @@ fn visible_window(
 
 /// Build a pane's rows as `ListItem`s (ADR 0004 D1): icon + optional git gutter +
 /// name + optional trailing meta column, each colour passed through the fade tint
-/// from `view.fade_t`. `area` is the OUTER pane rect — its width drives the exact
+/// from `view.fade_t`. `area` is the OUTER pane rect, its width drives the exact
 /// same chrome/name arithmetic as before the block/items split, so the produced
 /// items are byte-for-byte identical to the pre-refactor renderer.
 ///
 /// Only the `window` slice of `view.order` is materialised (perf: list
-/// virtualisation) — the width arithmetic depends solely on `area.width`, not on
+/// virtualisation), the width arithmetic depends solely on `area.width`, not on
 /// how many rows are built, so every row that IS built is identical whatever the
 /// window. The caller sizes the window with [`visible_window`] and renders it
 /// through a local `ListState` at offset 0, so the on-screen buffer matches a
@@ -4031,7 +4032,7 @@ fn visible_window(
 ///
 /// - `view.git` reserves a 2-cell gutter only when `Some` (the current pane in a
 ///   repo); when `None` (parent pane, non-repo, or git off) it costs zero width
-///   and the name reclaims it — so two-column output is byte-for-byte pre-git.
+///   and the name reclaims it, so two-column output is byte-for-byte pre-git.
 /// - `view.marks` reserves a second 2-cell gutter under the same rule (ADR 0017
 ///   D3): `Some` only for the current pane with a non-empty selection, so a
 ///   browser with nothing marked reserves nothing and looks exactly as it did.
@@ -4050,7 +4051,7 @@ fn entry_items(
     let inner_w = area.width.saturating_sub(chrome_w) as usize;
     let size_w = 8usize;
     // The trailing metadata column reserves ` {value:>8}` (9 cells) for both
-    // `Size` and `Modified` — they share the width so columns align across a
+    // `Size` and `Modified`, they share the width so columns align across a
     // `t` toggle; `None` reserves nothing so the name fills the context column.
     let size_reserve = if view.meta == MetaCol::None {
         0
@@ -4058,7 +4059,7 @@ fn entry_items(
         size_w + 1
     };
     let name_w = inner_w.saturating_sub(size_reserve).max(4);
-    // Read the clock once for the whole list — display-only, so a render-time
+    // Read the clock once for the whole list, display-only, so a render-time
     // read is fine (ADR 0005 D2); only consulted in `Modified` mode.
     let now = SystemTime::now();
 
@@ -4068,8 +4069,8 @@ fn entry_items(
             let e = &view.entries[i];
             let name = truncate(&e.name, name_w);
             // The trailing column's text per mode: byte size (dirs blank),
-            // relative modified age (dirs included; missing mtime blank), or —
-            // for `None` — nothing (the column isn't drawn at all below).
+            // relative modified age (dirs included; missing mtime blank), or,
+            // for `None`, nothing (the column isn't drawn at all below).
             let meta_str = match view.meta {
                 MetaCol::Size => {
                     if e.kind == Format::Directory {
@@ -4160,7 +4161,7 @@ fn entry_items(
 }
 
 /// Wrap items into the `List` widget with the faded selection highlight and the
-/// cursor gutter, WITHOUT a block — the block is drawn separately so it can stay
+/// cursor gutter, WITHOUT a block, the block is drawn separately so it can stay
 /// static during a slide (ADR 0006 D3). The selection background lerps from
 /// [`FADE_BG`] with the rest of the listing and settles on the exact `selection`
 /// colour at progress 1.0, replacing the old harsh reverse-video bar with a soft
@@ -4186,13 +4187,13 @@ fn render_items_into(buf: &mut Buffer, inner: Rect, list: List, state: &mut List
 
 /// Whole-cell horizontal offsets for the two layers of a folder slide at eased
 /// factor `t` over an inner pane `w` cells wide (ADR 0006 D3). Returns
-/// `(old_dx, new_dx)` — how far to translate the OLD snapshot and the NEW content.
+/// `(old_dx, new_dx)`, how far to translate the OLD snapshot and the NEW content.
 ///
 /// `FromRight` (entered a child): the old listing slides left (`-round(t*w)`) while
 /// the new one enters from the right (`+round((1-t)*w)`). `FromLeft` (went to the
 /// parent) mirrors both. The endpoints are the whole point:
 /// - `t = 0` → old at `0` (in place), new at `±w` (fully off-screen);
-/// - `t = 1` → old at `∓w` (fully off), new at `0` — so the settle frame lands the
+/// - `t = 1` → old at `∓w` (fully off), new at `0`, so the settle frame lands the
 ///   new content exactly in `inner`, identical to the normal render.
 ///
 /// Pure so the offset maths is unit-tested without a terminal.
@@ -4232,7 +4233,7 @@ fn blit_shifted(dst: &mut Buffer, src: &Buffer, inner: Rect, dx: i32) {
 }
 
 /// Read a directory's entries, classified by extension and ordered by `sort`
-/// (directories always first — see [`sort_cmp`]) — the one lister shared by the
+/// (directories always first, see [`sort_cmp`]), the one lister shared by the
 /// current pane, the parent pane, and `App::load` (ADR 0004, D1). Pure of app
 /// state beyond the passed `sort`; the only IO is the `read_dir`. An unreadable
 /// directory yields an empty list rather than erroring, matching the browser's
@@ -4258,7 +4259,7 @@ fn read_entries(dir: &Path, sort: Sort) -> Vec<Entry> {
             });
         }
     }
-    // Directories first (invariant), then by the requested key — the one place
+    // Directories first (invariant), then by the requested key, the one place
     // the listing order is decided, shared with in-place re-sorts (`App::resort`)
     // and the search results (`App::pump_search`) via `sort_cmp`.
     entries.sort_by(|a, b| sort_cmp(a, b, sort));
@@ -4281,7 +4282,7 @@ fn centered_rect(area: Rect, pct_w: u16, pct_h: u16) -> Rect {
 /// Draw the which-key help overlay: a centred, bordered popup grouping every
 /// browser binding under headings, plus a live line echoing the current sort so
 /// the overlay doubles as the sort indicator. `Clear` first so the panes behind
-/// don't bleed through. Content is a single authored table — the one reference a
+/// don't bleed through. Content is a single authored table, the one reference a
 /// new user reaches for; the bindings themselves stay sourced from `browse_char`.
 fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
     let popup = centered_rect(area, 60, 80);
@@ -4295,7 +4296,7 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
             Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ))
     };
-    // `keys` in accent, `desc` dim — the two-tone look the breadcrumb/list use.
+    // `keys` in accent, `desc` dim, the two-tone look the breadcrumb/list use.
     let row = |keys: &str, desc: &str| {
         Line::from(vec![
             Span::styled(format!("  {keys:<12}"), Style::default().fg(accent)),
@@ -4377,7 +4378,7 @@ fn render_browse_help(f: &mut Frame, area: Rect, sort: Sort) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(accent))
         .title(Line::from(Span::styled(
-            " Keys — any key to close ",
+            " Keys, any key to close ",
             Style::default().fg(accent).add_modifier(Modifier::BOLD),
         )));
     f.render_widget(Paragraph::new(Text::from(lines)).block(block), popup);
@@ -5341,7 +5342,7 @@ fn head_text(path: &Path, max_bytes: usize, max_lines: usize) -> Option<String> 
 /// the mapping is unit-tested without a terminal.
 ///
 /// When `cwd` is under `home`, the first segment is `~` (target = `home`) and
-/// each further path component follows, its target the cumulative path — so
+/// each further path component follows, its target the cumulative path, so
 /// `/Users/j/src` with home `/Users/j` yields `[("~", /Users/j), ("src",
 /// /Users/j/src)]`, rendering as `~/src` (the prior `pretty_path` look). A path
 /// outside home is root-anchored: the first segment is `/` (target = `/`) and
@@ -5354,7 +5355,7 @@ fn head_text(path: &Path, max_bytes: usize, max_lines: usize) -> Option<String> 
 ///   under Unicode, and the ASCII label `git:` under None (which also swaps
 ///   `↑/↓/●` for `+n/-n/*` so the row stays pure ASCII).
 /// - Identity is the branch name, or `@<short-oid>` when HEAD is detached; an
-///   unborn repo (no branch, no commit — not reachable via porcelain, but
+///   unborn repo (no branch, no commit, not reachable via porcelain, but
 ///   defensive) yields an empty vec, which the caller draws as nothing.
 /// - Ahead/behind arrows appear only when the upstream exists AND the count is
 ///   non-zero; `dirty` appends the dot when the status map has entries.
@@ -5431,7 +5432,7 @@ fn crumb_segments(cwd: &Path, home: Option<&Path>) -> Vec<(String, PathBuf)> {
 
 /// Resolve a breadcrumb click at column `x` to the target directory of whichever
 /// recorded segment span contains it, or `None` if the click missed every label
-/// (a separator or empty space). Pure — the geometry is built in `render_crumb`
+/// (a separator or empty space). Pure, the geometry is built in `render_crumb`
 /// but the hit test itself is unit-tested here (ADR 0005 D2).
 fn crumb_hit(hits: &[(Range<u16>, PathBuf)], x: u16) -> Option<PathBuf> {
     hits.iter()
@@ -5440,7 +5441,7 @@ fn crumb_hit(hits: &[(Range<u16>, PathBuf)], x: u16) -> Option<PathBuf> {
 }
 
 /// Resolve a left-click at screen cell `(row, col)` to an index into the current
-/// pane's `view`, or `None` when the click misses an entry (ADR 0005 D2). Pure —
+/// pane's `view`, or `None` when the click misses an entry (ADR 0005 D2). Pure,
 /// the geometry (`list_area`, the `ListState` scroll `offset`, and the visible
 /// entry count `view_len`) is captured at render time, but the mapping itself is
 /// unit-tested here without a terminal.
@@ -5452,7 +5453,7 @@ fn crumb_hit(hits: &[(Range<u16>, PathBuf)], x: u16) -> Option<PathBuf> {
 /// entry position is `offset + (row - (list_area.y + 1))`. The click must fall
 /// within the pane's inner rows AND inside its x-span (a click in a NEIGHBOURING
 /// pane on the same row must not select here), and the resolved index must be a
-/// real entry (`< view_len`) — a click below the last entry, on a border, or
+/// real entry (`< view_len`), a click below the last entry, on a border, or
 /// outside the column range all yield `None`.
 /// Whether a screen cell `(col, row)` lies within `r` (borders included). Used to
 /// route a left-click to the Miller parent pane (ADR 0005 D2).
@@ -5591,7 +5592,7 @@ fn browse_hint(width: u16, show_hidden: bool) -> String {
 /// Clamp a search-results selection move (ADR 0007 §7): from the current selection,
 /// a signed `delta`, and the result count `len`, return the new selection. `None`
 /// when there are no results; otherwise the moved index clamped into `0..len`
-/// (mirrors [`App::move_sel`]). Pure — unit-tested without a walk.
+/// (mirrors [`App::move_sel`]). Pure, unit-tested without a walk.
 fn search_sel(cur: Option<usize>, delta: isize, len: usize) -> Option<usize> {
     if len == 0 {
         return None;
@@ -5602,7 +5603,7 @@ fn search_sel(cur: Option<usize>, delta: isize, len: usize) -> Option<usize> {
 
 /// The dimmed trailing snippet segment for a content hit's result row (ADR 0007 D5):
 /// ` N: text` (a leading gap separating it from the path), or empty when the hit
-/// carries no snippet (a pure name/metadata match). Pure — unit-tested without a
+/// carries no snippet (a pure name/metadata match). Pure, unit-tested without a
 /// render.
 fn snippet_suffix(snippet: Option<&(u64, String)>) -> String {
     match snippet {
@@ -5633,7 +5634,7 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
-    /// Build a bare `Entry` for comparator tests — only the fields `sort_cmp`
+    /// Build a bare `Entry` for comparator tests, only the fields `sort_cmp`
     /// reads (`name`, `kind`, `size`, `modified`) matter; `path` is a throwaway.
     fn entry(name: &str, kind: Format, size: u64, mtime: Option<SystemTime>) -> Entry {
         Entry {
@@ -5654,7 +5655,7 @@ mod tests {
     #[test]
     fn dirs_always_sort_before_files_regardless_of_key_or_reverse() {
         // A big-sized dir and a small file: under size sort (and its reverse) the
-        // directory must still lead — the group boundary is never crossed.
+        // directory must still lead, the group boundary is never crossed.
         let v = || {
             vec![
                 entry("zzz.txt", Format::Text, 1, None),
@@ -5786,7 +5787,7 @@ mod tests {
     #[test]
     fn ext_sort_order_is_case_insensitive() {
         // The Ext key folds case via `cmp_name_ci`, so `.RS` and `.rs` group and
-        // order together — the raw slices differ in case but the order does not.
+        // order together, the raw slices differ in case but the order does not.
         let v = vec![
             entry("b.RS", Format::Text, 0, None),
             entry("a.rs", Format::Text, 0, None),
@@ -5807,7 +5808,7 @@ mod tests {
     #[test]
     fn search_hits_sort_by_relative_path_grouped_by_folder() {
         // Hits sort by `rel` (their Sortable name), so the flat result list reads
-        // folder-grouped — every `src/…` before `zzz.txt`, siblings adjacent —
+        // folder-grouped, every `src/…` before `zzz.txt`, siblings adjacent,
         // rather than in nondeterministic walk-arrival order.
         let hit = |rel: &str| crate::search::Hit {
             path: PathBuf::from(rel),
@@ -6067,13 +6068,13 @@ mod tests {
         // matches the normal render pixel-for-pixel.
         assert_eq!(slide_offsets(SlideDir::FromRight, 1.0, 40), (-40, 0));
         // Midpoint: old has travelled round(0.5*40)=20 left, new is round(0.5*40)=20
-        // still to the right — the two layers tile the inner width.
+        // still to the right, the two layers tile the inner width.
         assert_eq!(slide_offsets(SlideDir::FromRight, 0.5, 40), (-20, 20));
 
         // FromLeft (went to the parent): mirror image of FromRight.
         // t = 0 → old in place (0), new fully off to the left (-w).
         assert_eq!(slide_offsets(SlideDir::FromLeft, 0.0, 40), (0, -40));
-        // t = 1 → old fully off right (+w), new landed in place (0) — the identity.
+        // t = 1 → old fully off right (+w), new landed in place (0), the identity.
         assert_eq!(slide_offsets(SlideDir::FromLeft, 1.0, 40), (40, 0));
         // Midpoint mirrored.
         assert_eq!(slide_offsets(SlideDir::FromLeft, 0.5, 40), (20, -20));

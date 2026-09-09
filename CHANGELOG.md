@@ -190,23 +190,23 @@ correct.
   in the existing spreadsheet grid, backed by a new `DataBook` with two native,
   fully-static engines behind one interface: **DuckDB** (statically bundled from
   vendored source) reads Parquet/JSONL/DuckDB, and **rusqlite**'s bundled
-  libsqlite reads SQLite — each format read by the engine that owns it, both
+  libsqlite reads SQLite, each format read by the engine that owns it, both
   offline. Databases are opened **read-only** and each table becomes a sheet
   (switch with `Tab`); Parquet/JSONL are a single sheet named for the file stem.
   Columns keep their real names, and dates/timestamps render as ISO text with
-  NULL shown blank — no serial-number date wart. Press `:` in the grid for a live
+  NULL shown blank, no serial-number date wart. Press `:` in the grid for a live
   **SQL prompt** over the current file: the result replaces the view (schema,
   rows, and `/` search follow it), you can `FROM <stem>` a single-file source or
   `FROM <table>`/join across a database's tables, a parse/bind error keeps your
   text and the previous view intact, and empty input reverts to the base table.
-  Reads are **lazy and uncapped** — the grid windows rows on demand (`LIMIT`/
+  Reads are **lazy and uncapped**, the grid windows rows on demand (`LIMIT`/
   `OFFSET` + prefetch) and takes the schema from `DESCRIBE` without executing, so
   a file opens instantly regardless of size and scrolls to the end with no row
   cap (unlike the streaming `.xlsx`/CSV backends). It is **fully offline**: both
   engines are statically compiled in and every DuckDB connection disables
   extension autoinstall/autoload, so reading a data file never touches the
   network. Behind the **default-on `data` Cargo
-  feature** — `cargo install sucher` includes it (release binary ~65 MB with
+  feature**, `cargo install sucher` includes it (release binary ~65 MB with
   DuckDB bundled), and `cargo install --no-default-features` builds the lean
   ~26 MB binary without it. Arrow/Feather files are deliberately excluded (the
   bundled build lacks the Arrow file reader; Parquet covers the columnar need).
@@ -218,7 +218,7 @@ correct.
 - **The fast pdfium PDF path is now self-contained.** `build.rs` fetches the
   pinned, checksum-verified `libpdfium` for the build target and embeds it in the
   binary (materialised to a cache dir on first use), so a plain `cargo install
-  sucher` gets the ~100× render speed with no extra steps — no `make`, no sidecar.
+  sucher` gets the ~100× render speed with no extra steps, no `make`, no sidecar.
   Build-time fetch is soft: offline builds, docs.rs, an unsupported target, or
   `SUCHER_PDFIUM_NO_EMBED=1` skip embedding and fall back to poppler. An external
   `libpdfium` (via `SUCHER_PDFIUM_LIB` or beside the binary) still overrides the
@@ -227,12 +227,12 @@ correct.
 ## [0.3.0] - 2026-07-21
 
 ### Added
-- **Open in native app** — `x` hands the selected/open file to the OS default
+- **Open in native app**, `x` hands the selected/open file to the OS default
   application, from the directory browser and from every fullscreen viewer. The
   *source* file is opened, not the rendered form (docx → the `.docx`, Keynote →
   the `.key`); works even for formats sucher has no in-app viewer for (ADR 0014).
 - Repo HEAD readout on the browser's breadcrumb row: current branch (or
-  detached commit), ahead/behind vs upstream, and a dirty dot — `⎇ main ↑2 ↓1 ●`
+  detached commit), ahead/behind vs upstream, and a dirty dot, `⎇ main ↑2 ↓1 ●`
   (ADR 0004 amendment). Follows the existing `git` toggle.
 
 ### Changed
@@ -244,7 +244,7 @@ correct.
   it beside the binary; `SUCHER_PDFIUM_LIB` overrides the path.
 - PDF pages render on a background thread and the current page's neighbours are
   prefetched into the cache, so stepping through a PDF no longer blocks the UI on
-  each render — navigation is near-instant once neighbours are warm.
+  each render, navigation is near-instant once neighbours are warm.
 
 ### Fixed
 - New clippy 1.97 lints (`bool_assert_comparison`, `type_complexity`,
@@ -273,5 +273,5 @@ correct.
 ## [0.1.0] - 2026-06-21
 
 - Initial release: a fast terminal viewer for files that are awkward in a
-  browser — markdown, spreadsheets, PDF, images, video, docx, pptx, Keynote,
+  browser, markdown, spreadsheets, PDF, images, video, docx, pptx, Keynote,
   archives, and binary.

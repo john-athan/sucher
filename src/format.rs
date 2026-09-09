@@ -65,9 +65,9 @@ pub fn classify(key: &str, is_dir: bool, head: Option<&[u8]>) -> Format {
         "md" | "markdown" | "mdx" => Format::Markdown,
         // HTML is reduced to markdown (ADR 0008), not shown as source.
         "html" | "htm" | "xhtml" => Format::Html,
-        // Tabular data — including csv/tsv — belongs in the grid viewer.
+        // Tabular data, including csv/tsv, belongs in the grid viewer.
         "xlsx" | "xls" | "xlsm" | "xlsb" | "ods" | "csv" | "tsv" => Format::Sheet,
-        // Data files (ADR 0016): the DuckDB-backed grid — Parquet, JSONL, SQLite,
+        // Data files (ADR 0016): the DuckDB-backed grid, Parquet, JSONL, SQLite,
         // DuckDB. Feature-gated: without `data` these fall through to their prior
         // handling (parquet → Binary hexdump, jsonl → Text), so the classifier is
         // honest about what this build can actually open.
@@ -175,7 +175,7 @@ impl Format {
             Format::Audio => "♪",
             Format::Pdf => "▤",
             Format::Sheet => "▤",
-            // A distinct glyph from Sheet's — same grid viewer, different family
+            // A distinct glyph from Sheet's, same grid viewer, different family
             // (queryable data files vs spreadsheets).
             Format::Data => "▨",
             Format::Keynote => "▦",
@@ -199,7 +199,7 @@ impl Format {
             Format::Image | Format::Svg | Format::Keynote => theme::palette().image,
             Format::Video | Format::Audio => theme::palette().video,
             Format::Pdf => theme::palette().pdf,
-            // Data files share the tabular colour — they open in the same grid.
+            // Data files share the tabular colour, they open in the same grid.
             Format::Sheet | Format::Data => theme::palette().sheet,
             Format::Markdown
             | Format::Html
@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn svg_is_its_own_format() {
-        // Now rasterisable (resvg) *and* shown as source — its own viewer.
+        // Now rasterisable (resvg) *and* shown as source, its own viewer.
         assert_eq!(by_ext("svg"), Format::Svg);
         assert!(by_ext("svg").opens());
     }
@@ -302,14 +302,14 @@ mod tests {
     #[cfg(feature = "data")]
     #[test]
     fn data_files_are_their_own_format() {
-        // ADR 0016: DuckDB-backed grid — Parquet, JSONL, SQLite, DuckDB.
+        // ADR 0016: DuckDB-backed grid, Parquet, JSONL, SQLite, DuckDB.
         for e in [
             "parquet", "pq", "jsonl", "ndjson", "sqlite", "sqlite3", "db", "db3", "duckdb", "ddb",
         ] {
             assert_eq!(by_ext(e), Format::Data, "{e} should be Data");
         }
         assert!(by_ext("parquet").opens());
-        // A `.json` file is usually one document, not a table — it stays Text.
+        // A `.json` file is usually one document, not a table, it stays Text.
         assert_eq!(by_ext("json"), Format::Text);
     }
 

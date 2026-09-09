@@ -12,7 +12,7 @@ categories = ["command-line-utilities", "visualization"]
 exclude = ["assets/", ".github/", "docs/", "Makefile"]
 
 [features]
-# `data` (default-on) is the DuckDB-backed data-file family — Parquet, JSONL,
+# `data` (default-on) is the DuckDB-backed data-file family, Parquet, JSONL,
 # SQLite, DuckDB (ADR 0016). It bundles DuckDB (a C++ build; ~46 MB of binary),
 # so `cargo install sucher --no-default-features` yields the lean ~29 MB viewer
 # without it. `cargo install sucher` gets it.
@@ -38,7 +38,7 @@ resvg = "0.48"
 toml = "1.1"
 dirs = "6"
 serde = { version = "1", features = ["derive"] }
-# Jupyter notebook (.ipynb) parsing — a JSON document of cells.
+# Jupyter notebook (.ipynb) parsing, a JSON document of cells.
 serde_json = "1"
 # Recursive search (ADR 0007): ripgrep's own walker + line searcher.
 ignore = "0.4"
@@ -57,7 +57,7 @@ pdfium-render = "0.9.3"
 # Data files (ADR 0016). DuckDB reads Parquet, JSONL and native DuckDB databases;
 # its Parquet/JSON readers are statically linked via the `parquet`/`json` features
 # (NOT loadable extensions), so they work with zero network. `bundled` compiles
-# DuckDB from vendored source — no build-time download, no runtime install.
+# DuckDB from vendored source, no build-time download, no runtime install.
 duckdb = { version = "1", features = ["bundled", "parquet", "json"], optional = true }
 # SQLite is read with rusqlite's statically-bundled libsqlite, NOT DuckDB: DuckDB's
 # sqlite_scanner is a loadable extension only (no static feature exists) and would
