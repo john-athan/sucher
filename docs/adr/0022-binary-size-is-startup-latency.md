@@ -23,7 +23,7 @@ at `_dyld_start + 0`: the process is blocked in the kernel on exec, mapping and
 code-signature-validating a 76 MB image, before one instruction of sucher runs.
 The same binary run twice costs 1.24 s then 0.01 s, and pre-reading it with `cat`
 (page cache warm, signature still unvalidated) gives 0.66 s, so the cost splits
-roughly half disk I/O, half page hashing. Neither halves is reachable from our
+roughly half disk I/O, half page hashing. Neither half is reachable from our
 code.
 
 The decisive measurement is what the cost attaches to. A 0.3 MB test binary and
@@ -102,11 +102,58 @@ unsupported target or a failed download.
   name. A future formula shipping its own libpdfium would collide at link time;
   sucher prefers the copy beside its own executable, so the collision is
   reportable rather than silent.
-- The same reasoning applies with ~5x the weight to DuckDB (~570 ms). That is a
-  larger change, because `data.rs` uses the `duckdb` crate's Rust API
-  (`Connection`, `prepare`, `query`, `rows`) and runtime loading needs a shim
-  over the C API; no crate provides one (`loadable-extension` is the inverse,
-  for building extensions DuckDB loads). DuckDB publishes prebuilt
-  `libduckdb-*.zip` for every target sucher targets, in the same shape as the
-  pdfium assets `build.rs` already fetches, so the build-side machinery carries
-  over unchanged.
+
+## DuckDB, the other ~570 ms
+
+Same decision, five times the weight, and it needed more than a feature flag.
+`data.rs` used the `duckdb` crate's Rust API, which links `libduckdb-sys`
+statically; no crate offers a runtime-loaded DuckDB (`loadable-extension` is the
+inverse, for building extensions DuckDB loads), so the binding is hand-written:
+`src/duckdyn.rs`, ~15 entry points over the C API behind `libloading`.
+
+It stays small because of a property `data.rs` already had. Every value it reads
+goes through `CAST(... AS VARCHAR)`, since the grid renders strings, and every
+result set is bounded, by `LIMIT`, by `FIND_CAP`, or by being schema metadata. So
+the binding needs one value accessor and can materialise results eagerly, which
+removes the streaming/statement/lifetime layer a general-purpose binding needs.
+`duckdb` and `libduckdb-sys` leave the dependency tree entirely, and with them the
+DuckDB C++ compile, which dominated build times.
+
+Two behaviours were verified rather than assumed, because the offline guarantee
+(ADR 0016) depends on them and neither is visible in the type system:
+
+- The official prebuilt library has the parquet and json readers built in.
+  `read_parquet` and `read_json_auto` both work with `autoinstall_known_extensions`
+  and `autoload_known_extensions` false, and `sqlite_scan` is still refused rather
+  than downloaded. `offline_reads_parquet_without_network` keeps proving it.
+- `duckdb_query` executes *every* statement in a `;`-separated batch, not just the
+  first. `open_conn` sets both offline pragmas in one batch, so a version that ran
+  only the first would silently leave autoloading on.
+  `execute_batch_runs_every_statement` asserts both statements take effect.
+
+Distribution differs from pdfium's, because homebrew-core already ships a `duckdb`
+formula providing `/opt/homebrew/lib/libduckdb.dylib`, which is where
+`duckdyn::resolve_library_path` looks anyway. The formula depends on it instead of
+installing a second copy into a prefix that formula owns, and `build.rs` skips its
+own download when a system copy is already present. There is no homebrew-core
+`pdfium`, which is why that one remains a staged sidecar.
+
+## Consequences of the DuckDB half
+
+- Startup drops from 0.86 s to **0.38 s** median, and the binary from 55 MB to
+  19 MB. Against the 76 MB starting point: 1.16 s to 0.38 s.
+- Opening a Parquet, JSONL or DuckDB file now costs a one-time `dlopen` of a
+  ~57 MB library, once per process. Browsing folders, which is the common case,
+  never pays it.
+- Without the library, data files report `libduckdb.dylib not found; install it
+  beside the sucher binary or set SUCHER_DUCKDB_LIB` and everything else works
+  unchanged. SQLite is unaffected either way: rusqlite stays statically bundled,
+  for the reason ADR 0016 gives (DuckDB's SQLite scanner is a network-only
+  extension).
+- sucher now follows whatever DuckDB 1.x the system provides rather than a
+  version compiled into it. The binding uses a small, long-stable slice of the C
+  API, and `duckdb_result`'s layout is asserted in a unit test, so a drift shows
+  up as a test failure rather than as memory corruption.
+- `cargo install sucher` no longer yields a self-contained data viewer. There is
+  no `embed-duckdb` counterpart to `embed-pdfium`, deliberately: embedding
+  ~38 MB would restore exactly the cost this ADR removes.

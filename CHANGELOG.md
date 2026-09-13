@@ -7,7 +7,7 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 ## [Unreleased]
 
 ### Changed
-- **Startup drops from ~1.5 s to ~0.9 s, by taking weight out of the binary.**
+- **Startup drops from ~1.2 s to ~0.4 s, by taking weight out of the binary.**
   Starting sucher cost 1 to 2 seconds whatever the file, and none of it was
   sucher's: stage timestamps put 1336 ms between the shell's `exec` and `main()`,
   against ~13 ms for everything sucher itself does, and `sample` parks every
@@ -16,8 +16,22 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
   measured at roughly 15 ms per MB: a test binary carrying 40 MB that no code
   path reads starts 0.63 s slower than the same binary without it. So
   `[profile.release]` now sets `strip = true` (the symbol table was ~16 MB that
-  never executes), and libpdfium is no longer baked into the binary. See ADR
-  0022.
+  never executes), and neither libpdfium nor DuckDB is baked into the binary any
+  more. 76 MB to 19 MB. See ADR 0022.
+- **DuckDB is loaded at runtime instead of linked, which is most of the win.**
+  Statically linked it was ~38 MB of the binary and ~570 ms of every start, for
+  an engine most runs never touch. `src/duckdyn.rs` is a hand-written binding
+  over DuckDB's C API behind `libloading`, because no crate offers a
+  runtime-loaded DuckDB; it stays small because `data.rs` already reads every
+  value through `CAST(... AS VARCHAR)` and every result set it asks for is
+  bounded, so one value accessor and eager materialisation cover it. The
+  `duckdb` and `libduckdb-sys` crates leave the dependency tree, and with them
+  the DuckDB C++ compile. The offline guarantee is unchanged and still tested:
+  the official library has the parquet and json readers built in, and
+  `sqlite_scan` is still refused rather than downloaded. Homebrew depends on the
+  `duckdb` formula for the library; elsewhere `build.rs` stages it beside the
+  binary, and without it data files say so and everything else works. SQLite is
+  untouched, rusqlite stays statically bundled. See ADR 0022.
 - **libpdfium is resolved beside the binary; embedding it is now opt-in.**
   `src/pdfium.rs` already looked for the library next to the executable before
   falling back to the embedded copy (ADR 0015), so only the fallback changes:

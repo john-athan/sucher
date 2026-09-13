@@ -12,12 +12,15 @@ categories = ["command-line-utilities", "visualization"]
 exclude = ["assets/", ".github/", "docs/", "Makefile"]
 
 [features]
-# `data` (default-on) is the DuckDB-backed data-file family, Parquet, JSONL,
-# SQLite, DuckDB (ADR 0016). It bundles DuckDB (a C++ build; ~46 MB of binary),
-# so `cargo install sucher --no-default-features` yields the lean ~29 MB viewer
-# without it. `cargo install sucher` gets it.
+# `data` (default-on) is the data-file family, Parquet, JSONL, SQLite, DuckDB
+# (ADR 0016). DuckDB is no longer linked in: it is loaded at runtime from a
+# sidecar library (ADR 0022), because ~38 MB of statically linked engine cost
+# ~570 ms of startup on EVERY run, not just the ones that open a data file. So
+# this feature now costs ~3 MB of binary rather than ~46 MB, and turning it off
+# mainly drops SQLite (rusqlite is still statically bundled, by design: its
+# DuckDB scanner is a network-only extension, see the note on `rusqlite`).
 default = ["data"]
-data = ["dep:duckdb", "dep:rusqlite"]
+data = ["dep:rusqlite", "dep:libloading"]
 # `embed-pdfium` bakes the fetched libpdfium into the binary (build.rs) instead of
 # resolving it beside the executable at runtime. Off by default because macOS
 # charges for the whole image at exec, not for the pages that run: 7.2 MB of
@@ -67,11 +70,14 @@ markup5ever_rcdom = "0.39"
 # cache dir on first use), so `cargo install sucher` is self-contained; poppler
 # remains the fallback when embedding is skipped.
 pdfium-render = "0.9.3"
-# Data files (ADR 0016). DuckDB reads Parquet, JSONL and native DuckDB databases;
-# its Parquet/JSON readers are statically linked via the `parquet`/`json` features
-# (NOT loadable extensions), so they work with zero network. `bundled` compiles
-# DuckDB from vendored source, no build-time download, no runtime install.
-duckdb = { version = "1", features = ["bundled", "parquet", "json"], optional = true }
+# Data files (ADR 0016). DuckDB reads Parquet, JSONL and native DuckDB databases.
+# DuckDB is reached through `src/duckdyn.rs`, a hand-written binding over its C
+# API loaded with dlopen (ADR 0022), NOT through the `duckdb` crate, which links
+# `libduckdb-sys` statically and would put ~38 MB back in the binary. `build.rs`
+# fetches the pinned, checksum-verified official library and stages it beside the
+# binary; the parquet and json readers are built into it, so the offline
+# guarantee below is unchanged (verified by `offline_reads_parquet_without_network`).
+libloading = { version = "0.8", optional = true }
 # SQLite is read with rusqlite's statically-bundled libsqlite, NOT DuckDB: DuckDB's
 # sqlite_scanner is a loadable extension only (no static feature exists) and would
 # auto-install over the network on first use, breaking sucher's offline guarantee.
@@ -87,6 +93,9 @@ cfb = "0.14.0"
 sha2 = "0.11"
 flate2 = "1"
 tar = "0.4"
+# DuckDB ships its prebuilt libraries as `.zip`, pdfium as `.tgz`; both are
+# unpacked in build.rs. Same version as the runtime dep, per the note above.
+zip = "8"
 
 [[bin]]
 name = "sucher"

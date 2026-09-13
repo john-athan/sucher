@@ -16,6 +16,9 @@ mod config;
 mod data;
 mod dir;
 mod docx;
+// The runtime DuckDB binding data.rs reads through (ADR 0022).
+#[cfg(feature = "data")]
+mod duckdyn;
 mod email;
 mod epub;
 mod fileop;

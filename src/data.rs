@@ -55,7 +55,7 @@
 // Read-only throughout: DuckDB databases are attached `READ_ONLY`, SQLite files
 // opened `SQLITE_OPEN_READ_ONLY`.
 
-use duckdb::Connection;
+use crate::duckdyn::Connection;
 
 /// Rows fetched around the visible range on either side of a viewport miss, so
 /// ordinary line-by-line scrolling stays a cache hit rather than re-querying.
@@ -360,25 +360,21 @@ impl DuckBook {
             None => return Vec::new(),
         };
         let mut hits = Vec::new();
-        let Ok(mut stmt) = self.conn.prepare(&sql) else {
+        let Ok(table) = self.conn.query(&sql) else {
             return hits;
         };
-        let Ok(mut rows) = stmt.query([]) else {
-            return hits;
-        };
-        while let Ok(Some(row)) = rows.next() {
-            let Ok(rn) = row.get::<usize, i64>(0) else {
-                continue;
-            };
-            let r = rn.max(0) as usize;
+        for row in 0..table.rows().len() {
+            let r = table.int(row, 0).max(0) as usize;
             for c in 0..ncols {
-                let cell: Option<String> = row.get(c + 1).unwrap_or(None);
-                if let Some(text) = cell {
-                    if crate::xlsx::contains_ci(&text, &needle) {
-                        hits.push((r, c));
-                        if hits.len() >= FIND_CAP {
-                            return hits;
-                        }
+                // Column 0 is `__sucher_rn`, so the cells start at 1. A NULL cell
+                // cannot match, and reads as `None` rather than an empty string.
+                let Some(text) = table.rows()[row].get(c + 1).and_then(|v| v.as_deref()) else {
+                    continue;
+                };
+                if crate::xlsx::contains_ci(text, &needle) {
+                    hits.push((r, c));
+                    if hits.len() >= FIND_CAP {
+                        return hits;
                     }
                 }
             }
@@ -431,18 +427,10 @@ fn fetch_duck(
     }
     let proj = cast_projection(schema);
     let sql = format!("SELECT {proj} FROM ({relation}) LIMIT {len} OFFSET {start}");
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let mut line = Vec::with_capacity(ncols);
-        for c in 0..ncols {
-            let v: Option<String> = row.get(c).map_err(|e| e.to_string())?;
-            line.push(v.unwrap_or_default());
-        }
-        out.push(line);
-    }
-    Ok(out)
+    let table = conn.query(&sql)?;
+    Ok((0..table.rows().len())
+        .map(|r| (0..ncols).map(|c| table.text(r, c)).collect())
+        .collect())
 }
 
 /// Open an in-memory DuckDB connection and enforce the offline guarantee
@@ -451,11 +439,10 @@ fn fetch_duck(
 /// `autoload` additionally refuses the on-disk extension cache, so only the
 /// statically-compiled readers (`parquet`, `json`, core) can run.
 fn open_conn() -> Result<Connection, String> {
-    let conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+    let conn = Connection::open_in_memory()?;
     conn.execute_batch(
         "SET autoinstall_known_extensions=false; SET autoload_known_extensions=false;",
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     Ok(conn)
 }
 
@@ -477,8 +464,7 @@ fn register(conn: &Connection, kind: SourceKind, path: &str) -> Result<Vec<Sheet
             &format!("read_json_auto({lit})"),
         )?]),
         SourceKind::DuckDb => {
-            conn.execute_batch(&format!("ATTACH {lit} AS db (READ_ONLY);"))
-                .map_err(|e| e.to_string())?;
+            conn.execute_batch(&format!("ATTACH {lit} AS db (READ_ONLY);"))?;
             attached_sheets(conn)
         }
         SourceKind::Sqlite => {
@@ -492,8 +478,7 @@ fn register(conn: &Connection, kind: SourceKind, path: &str) -> Result<Vec<Sheet
 fn single_view(conn: &Connection, path: &str, reader: &str) -> Result<Sheet, String> {
     let stem = file_stem(path);
     let ident = quote_ident(&stem);
-    conn.execute_batch(&format!("CREATE VIEW {ident} AS SELECT * FROM {reader};"))
-        .map_err(|e| e.to_string())?;
+    conn.execute_batch(&format!("CREATE VIEW {ident} AS SELECT * FROM {reader};"))?;
     Ok(Sheet {
         name: stem,
         relation: format!("SELECT * FROM {ident}"),
@@ -502,46 +487,32 @@ fn single_view(conn: &Connection, path: &str, reader: &str) -> Result<Sheet, Str
 
 /// List the tables/views of the attached `db` database as sheets, in name order.
 fn attached_sheets(conn: &Connection) -> Result<Vec<Sheet>, String> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT table_name FROM information_schema.tables \
-             WHERE table_catalog='db' ORDER BY 1",
-        )
-        .map_err(|e| e.to_string())?;
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-    let mut sheets = Vec::new();
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let name: String = row.get(0).map_err(|e| e.to_string())?;
-        let relation = format!("SELECT * FROM db.{}", quote_ident(&name));
-        sheets.push(Sheet { name, relation });
-    }
-    Ok(sheets)
+    let table = conn.query(
+        "SELECT table_name FROM information_schema.tables \
+         WHERE table_catalog='db' ORDER BY 1",
+    )?;
+    Ok((0..table.rows().len())
+        .map(|r| {
+            let name = table.text(r, 0);
+            let relation = format!("SELECT * FROM db.{}", quote_ident(&name));
+            Sheet { name, relation }
+        })
+        .collect())
 }
 
 /// `DESCRIBE <relation>` → `(column_name, column_type)` pairs. Binds but does not
 /// execute the relation, so it is instant even on huge files.
 fn describe(conn: &Connection, relation: &str) -> Result<Vec<(String, String)>, String> {
-    let mut stmt = conn
-        .prepare(&format!("DESCRIBE {relation}"))
-        .map_err(|e| e.to_string())?;
-    let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
-    let mut schema = Vec::new();
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let name: String = row.get(0).map_err(|e| e.to_string())?;
-        let ty: String = row.get(1).map_err(|e| e.to_string())?;
-        schema.push((name, ty));
-    }
-    Ok(schema)
+    let table = conn.query(&format!("DESCRIBE {relation}"))?;
+    Ok((0..table.rows().len())
+        .map(|r| (table.text(r, 0), table.text(r, 1)))
+        .collect())
 }
 
 /// One-shot real row count of a relation.
 fn count(conn: &Connection, relation: &str) -> Result<usize, String> {
-    let n: i64 = conn
-        .query_row(&format!("SELECT count(*) FROM ({relation})"), [], |r| {
-            r.get(0)
-        })
-        .map_err(|e| e.to_string())?;
-    Ok(n.max(0) as usize)
+    let table = conn.query(&format!("SELECT count(*) FROM ({relation})"))?;
+    Ok(table.int(0, 0).max(0) as usize)
 }
 
 // ---- SQLite engine: .sqlite / .sqlite3 / .db / .db3 via rusqlite ----
@@ -1342,11 +1313,11 @@ mod tests {
     #[test]
     fn offline_reads_parquet_without_network() {
         // The core offline guarantee: a FRESH connection carrying only the two
-        // both-false pragmas reads a Parquet purely from the statically-compiled
-        // build. To prove the static path even on a CONTAMINATED dev machine
-        // (whose `~/.duckdb/extensions` may already hold a network-installed
-        // parquet extension), we point `extension_directory` at a fresh EMPTY
-        // dir, so only a built-in reader can possibly satisfy the query.
+        // both-false pragmas reads a Parquet purely from the readers built into
+        // the library. To prove that even on a CONTAMINATED dev machine (whose
+        // `~/.duckdb/extensions` may already hold a network-installed parquet
+        // extension), we point `extension_directory` at a fresh EMPTY dir, so
+        // only a built-in reader can possibly satisfy the query.
         let path = make_parquet();
         let p = path.to_str().unwrap();
 
@@ -1365,13 +1336,13 @@ mod tests {
         ))
         .expect("set empty extension_directory");
 
-        let n: i64 = conn
-            .query_row(
-                &format!("SELECT count(*) FROM read_parquet({})", quote_literal(p)),
-                [],
-                |r| r.get(0),
-            )
-            .expect("read_parquet must work offline from the static build");
+        let n = conn
+            .query(&format!(
+                "SELECT count(*) FROM read_parquet({})",
+                quote_literal(p)
+            ))
+            .expect("read_parquet must work offline from the bundled readers")
+            .int(0, 0);
         assert_eq!(n, 3);
 
         std::fs::remove_file(path).ok();

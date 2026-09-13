@@ -10,6 +10,23 @@ dependencies statically, so their notices live in
 release by `cargo about`. The permitted license set is enforced in CI by
 [`deny.toml`](deny.toml).
 
+## Native libraries loaded at runtime
+
+Two libraries are neither written here nor linked into the binary: sucher
+`dlopen`s them at first use (ADR 0022), so `cargo about` does not see them and
+their notices are not in `THIRD_PARTY_LICENSES.md`. They are recorded here
+instead, because a package that installs one alongside the binary is
+redistributing it.
+
+| Library | Upstream | License | Used for |
+| --- | --- | --- | --- |
+| libpdfium | [bblanchon/pdfium-binaries](https://github.com/bblanchon/pdfium-binaries) builds of [PDFium](https://pdfium.googlesource.com/pdfium/) | Apache-2.0 (PDFium is BSD-3-Clause, Copyright 2014 The PDFium Authors) | PDF page rendering (ADR 0015) |
+| libduckdb | [duckdb/duckdb](https://github.com/duckdb/duckdb) | MIT, Copyright 2018-2025 Stichting DuckDB Foundation | Parquet, JSONL and DuckDB files (ADR 0016) |
+
+Both are fetched as pinned, SHA-256-verified release assets by
+[`build.rs`](build.rs), never vendored into this repository. Homebrew takes
+libduckdb from the `duckdb` formula rather than installing its own copy.
+
 ## Color palettes
 
 `src/theme.rs` ships four palettes whose color values are taken from published
