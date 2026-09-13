@@ -18,10 +18,23 @@ exclude = ["assets/", ".github/", "docs/", "Makefile"]
 # without it. `cargo install sucher` gets it.
 default = ["data"]
 data = ["dep:duckdb", "dep:rusqlite"]
+# `embed-pdfium` bakes the fetched libpdfium into the binary (build.rs) instead of
+# resolving it beside the executable at runtime. Off by default because macOS
+# charges for the whole image at exec, not for the pages that run: 7.2 MB of
+# never-executed library costs ~110 ms on EVERY start, including `sucher note.md`.
+# Measured on an M-series laptop, a 40 MB blob that no code reads adds 0.63 s.
+#
+# So packagers install the sidecar (`libpdfium.dylib` beside the binary, or in
+# `/opt/homebrew/lib`) and pay nothing, while `cargo install sucher
+# --features embed-pdfium` still yields one self-contained file, because
+# `cargo install` copies only the binary and cannot place a sidecar. Without
+# either, PDF falls back to poppler (ADR 0015). See `src/pdfium.rs`.
+embed-pdfium = []
 
 [profile.release]
 opt-level = 3
 lto = "thin"
+strip = true
 
 [dependencies]
 pulldown-cmark = "0.13"

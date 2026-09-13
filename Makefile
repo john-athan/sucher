@@ -1,11 +1,16 @@
 CARGO_BIN := $(HOME)/.cargo/bin
 
-# The fast PDF path (pdfium, ADR 0015) needs no Makefile plumbing: build.rs
-# fetches the pinned, checksum-verified libpdfium for the target and embeds it in
-# the binary, so a plain `cargo build` / `cargo install` is self-contained. To
-# build offline, pre-place the library at `vendor/pdfium/<lib>` or point
-# `SUCHER_PDFIUM_LIB` at it; set `SUCHER_PDFIUM_NO_EMBED=1` to skip embedding
-# entirely (PDFs then use the poppler fallback).
+# The fast PDF path (pdfium, ADR 0015) is resolved at runtime from beside the
+# binary, so a plain `cargo build` carries no copy of it and starts ~110 ms
+# faster. Put `libpdfium.dylib` next to the binary or in `/opt/homebrew/lib` to
+# get it; without one, PDFs use the poppler fallback.
+#
+# `cargo install sucher --features embed-pdfium` bakes the pinned,
+# checksum-verified library into the binary instead, for installs that can place
+# no sidecar. That build pays the ~110 ms on every start, PDF or not. To build it
+# offline, pre-place the library at `vendor/pdfium/<lib>` or point
+# `SUCHER_PDFIUM_LIB` at it; `SUCHER_PDFIUM_NO_EMBED=1` skips embedding even with
+# the feature on.
 
 .PHONY: build install link uninstall run notices deny check
 

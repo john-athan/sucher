@@ -1,11 +1,17 @@
-// Fetch + embed libpdfium so `cargo install sucher` gets the fast PDF path with
-// no extra steps (ADR 0015).
+// Fetch + embed libpdfium for the `embed-pdfium` feature (ADR 0015).
 //
-// `cargo install` copies only the compiled binary, so a sidecar library or a
-// `make` step can't reach those users. Instead we download the *pinned,
-// checksum-verified* pdfium shared library for the build target, place it in
-// OUT_DIR, and let the crate `include_bytes!` it, the binary carries its own
-// engine and writes it to a cache dir on first use (see `src/pdfium.rs`).
+// OFF by default, and the default is the interesting part. `cargo install` copies
+// only the compiled binary, so a sidecar library can't reach those users, which
+// is why embedding existed. But macOS charges for the whole image at exec rather
+// than for the pages that execute, so 7.2 MB of never-called library costs ~110 ms
+// on every single start, `sucher note.md` included. Packagers can place a sidecar
+// and pay nothing (`src/pdfium.rs` resolves it beside the binary and in
+// `/opt/homebrew/lib`), so they get the lean binary and only `cargo install sucher
+// --features embed-pdfium` pays for self-containment.
+//
+// When the feature IS on we download the *pinned, checksum-verified* pdfium shared
+// library for the build target, place it in OUT_DIR, and let the crate
+// `include_bytes!` it; the binary writes it to a cache dir on first use.
 //
 // Every failure path is soft: an unsupported target, no network (offline builds,
 // docs.rs), a missing `curl`, or a checksum mismatch just skips embedding with a
@@ -68,9 +74,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SUCHER_PDFIUM_LIB");
     println!("cargo:rerun-if-env-changed=SUCHER_PDFIUM_NO_EMBED");
 
+    let embed = std::env::var_os("CARGO_FEATURE_EMBED_PDFIUM").is_some();
+
     if std::env::var_os("SUCHER_PDFIUM_NO_EMBED").is_some() || std::env::var_os("DOCS_RS").is_some()
     {
-        warn("pdfium embedding skipped (env); PDF will use the poppler fallback");
+        warn("pdfium fetch skipped (env); PDF will use the poppler fallback");
         return;
     }
 
@@ -84,14 +92,38 @@ fn main() {
 
     match ensure_lib(&dest, &out, asset, member, libfile, sha) {
         Ok(()) => {
-            println!("cargo:rustc-cfg=pdfium_embedded");
-            println!("cargo:rustc-env=SUCHER_PDFIUM_EMBEDDED={}", dest.display());
-            println!("cargo:rustc-env=SUCHER_PDFIUM_LIBFILE={libfile}");
+            // Stage the sidecar next to the binary this build produces, so a plain
+            // `cargo build` leaves `sucher` and `libpdfium.dylib` side by side and
+            // `resolve_library_path` finds it with no Makefile plumbing and no
+            // second copy of the pinned version/checksum. Failure is not fatal:
+            // the worst case is the poppler fallback.
+            if let Some(dir) = profile_dir(&out) {
+                let _ = std::fs::copy(&dest, dir.join(libfile));
+            }
+            // Only the opt-in build also carries the bytes inside the executable,
+            // where they cost ~110 ms of startup whether or not a PDF is opened.
+            if embed {
+                println!("cargo:rustc-cfg=pdfium_embedded");
+                println!("cargo:rustc-env=SUCHER_PDFIUM_EMBEDDED={}", dest.display());
+                println!("cargo:rustc-env=SUCHER_PDFIUM_LIBFILE={libfile}");
+            }
         }
         Err(e) => warn(&format!(
             "could not obtain libpdfium ({e}); PDF will use the poppler fallback"
         )),
     }
+}
+
+/// The profile output directory (`target/release`, `target/debug`, ...) that holds
+/// the binary for this build, derived from OUT_DIR
+/// (`<profile>/build/<pkg>-<hash>/out`). `None` if the layout is not that shape,
+/// in which case the sidecar is simply not staged.
+fn profile_dir(out: &Path) -> Option<PathBuf> {
+    let build = out.parent()?.parent()?;
+    if build.file_name()? != "build" {
+        return None;
+    }
+    Some(build.parent()?.to_path_buf())
 }
 
 fn warn(msg: &str) {

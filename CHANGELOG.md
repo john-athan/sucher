@@ -6,6 +6,29 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Changed
+- **Startup drops from ~1.5 s to ~0.9 s, by taking weight out of the binary.**
+  Starting sucher cost 1 to 2 seconds whatever the file, and none of it was
+  sucher's: stage timestamps put 1336 ms between the shell's `exec` and `main()`,
+  against ~13 ms for everything sucher itself does, and `sample` parks every
+  sample at `_dyld_start` while the kernel maps and signature-validates a 76 MB
+  image. macOS charges for the whole image at exec, not for the pages that run,
+  measured at roughly 15 ms per MB: a test binary carrying 40 MB that no code
+  path reads starts 0.63 s slower than the same binary without it. So
+  `[profile.release]` now sets `strip = true` (the symbol table was ~16 MB that
+  never executes), and libpdfium is no longer baked into the binary. See ADR
+  0022.
+- **libpdfium is resolved beside the binary; embedding it is now opt-in.**
+  `src/pdfium.rs` already looked for the library next to the executable before
+  falling back to the embedded copy (ADR 0015), so only the fallback changes:
+  `build.rs` stages the pinned, checksum-verified library into `target/release`
+  next to the binary it builds, and embeds it in the executable only for
+  `cargo install sucher --features embed-pdfium`, which is the case that can
+  place no sidecar. A plain `cargo install` with neither falls back to poppler,
+  as it already did on an unsupported target. The Homebrew formula installs the
+  sidecar, so nothing changes for `brew install sucher` except the ~110 ms it
+  stops paying on every start.
+
 ## [0.8.2] - 2026-09-13
 
 ### Changed

@@ -5,8 +5,12 @@
 // software: a full-page scan takes ~4.5 s. pdfium renders the same page in ~30 ms
 // and hands back an RGBA bitmap in-process, no PNG round-trip, no subprocess.
 //
-// libpdfium is loaded at *runtime* (never linked): `make` fetches the pinned
-// dylib and places it beside the binary; this module resolves it at first use.
+// libpdfium is loaded at *runtime* (never linked): a packager places the pinned
+// dylib beside the binary (or in `/opt/homebrew/lib`) and this module resolves it
+// at first use, so the library costs nothing until someone opens a PDF. Embedding
+// it in the binary instead is the `embed-pdfium` feature, off by default: macOS
+// charges for the whole image at exec, so an embedded copy costs ~110 ms on every
+// start no matter what the file is.
 // pdfium's document/bindings handles are `!Send` and its library must be
 // initialised exactly once per process, so all rendering runs on a single
 // dedicated service thread that owns the `Pdfium` instance and caches the
