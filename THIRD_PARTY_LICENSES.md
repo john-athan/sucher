@@ -16,7 +16,7 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 367 |
+| MIT License | 372 |
 | Apache License 2.0 | 20 |
 | ISC License | 19 |
 | BSD 3-Clause "New" or "Revised" License | 9 |
@@ -4628,7 +4628,7 @@ THE SOFTWARE.
 
 ### MIT License
 
-Used by `dirs-sys 0.5.0`, `dirs 6.0.0`
+Used by `dirs-sys 0.5.0`, `dirs 7.0.0`
 
 ```
 Copyright (c) 2018-2019 dirs-rs contributors
@@ -5982,7 +5982,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `trash 5.2.7`
+Used by `trash 5.2.8`
 
 ```
 Copyright 2019 Artúr Barnabás Kovács
@@ -7141,7 +7141,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `base64-simd 0.8.0`, `chrono 0.4.45`, `duckdb 1.10505.0`, `icy_sixel 0.5.0`, `libm 0.2.16`, `objc2-encode 4.1.0`, `objc2-foundation 0.3.2`, `objc2 0.6.4`, `pdfium-render 0.9.3`, `profiling-procmacros 1.0.18`, `profiling 1.0.18`, `quantette 0.5.1`, `simd_helpers 0.1.0`, `siphasher 1.0.3`, `vsimd 0.8.0`, `wide 0.8.3`, `windows-core 0.56.0`, `windows-core 0.58.0`, `windows-implement 0.56.0`, `windows-implement 0.58.0`, `windows-interface 0.56.0`, `windows-interface 0.58.0`, `windows-link 0.2.1`, `windows-result 0.1.2`, `windows-result 0.2.0`, `windows-strings 0.1.0`, `windows-sys 0.52.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows 0.56.0`, `windows 0.58.0`, `windows_x86_64_gnu 0.52.6`, `windows_x86_64_msvc 0.52.6`, `zune-inflate 0.2.54`
+Used by `base64-simd 0.8.0`, `chrono 0.4.45`, `duckdb 1.10505.0`, `icy_sixel 0.5.0`, `libm 0.2.16`, `objc2-encode 4.1.0`, `objc2-foundation 0.3.2`, `objc2 0.6.4`, `pdfium-render 0.9.4`, `profiling-procmacros 1.0.18`, `profiling 1.0.18`, `quantette 0.5.1`, `simd_helpers 0.1.0`, `siphasher 1.0.3`, `vsimd 0.8.0`, `wide 0.8.3`, `windows-collections 0.3.2`, `windows-core 0.58.0`, `windows-core 0.62.2`, `windows-future 0.3.2`, `windows-implement 0.58.0`, `windows-implement 0.60.2`, `windows-interface 0.58.0`, `windows-interface 0.59.3`, `windows-link 0.2.1`, `windows-numerics 0.3.1`, `windows-result 0.2.0`, `windows-result 0.4.1`, `windows-strings 0.1.0`, `windows-strings 0.5.1`, `windows-sys 0.52.0`, `windows-sys 0.61.2`, `windows-targets 0.52.6`, `windows-threading 0.2.1`, `windows 0.58.0`, `windows 0.62.2`, `windows_x86_64_gnu 0.52.6`, `windows_x86_64_msvc 0.52.6`, `zune-inflate 0.2.54`
 
 ```
 MIT License
@@ -7442,7 +7442,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `adler2 2.0.1`, `anyhow 1.0.103`, `fast-float2 0.2.3`, `fastrand 2.4.1`, `hashify 0.2.9`, `indoc 2.0.7`, `itoa 1.0.18`, `lexical-core 1.0.6`, `lexical-parse-float 1.0.6`, `lexical-parse-integer 1.0.6`, `lexical-util 1.0.7`, `lexical-write-float 1.0.6`, `lexical-write-integer 1.0.6`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `mail-parser 0.11.8`, `once_cell 1.21.4`, `paste 1.0.15`, `pastey 0.1.1`, `proc-macro2 1.0.106`, `quote 1.0.46`, `ref-cast-impl 1.0.25`, `ref-cast 1.0.25`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `serde_json 1.0.151`, `syn 2.0.118`, `syn 3.0.0`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror 1.0.69`, `thiserror 2.0.18`, `typed-path 0.12.3`, `unicode-ident 1.0.24`, `utf8-zero 0.8.1`, `zmij 1.0.21`
+Used by `adler2 2.0.1`, `anyhow 1.0.103`, `fast-float2 0.2.3`, `fastrand 2.4.1`, `hashify 0.2.9`, `indoc 2.0.7`, `itoa 1.0.18`, `lexical-core 1.0.6`, `lexical-parse-float 1.0.6`, `lexical-parse-integer 1.0.6`, `lexical-util 1.0.7`, `lexical-write-float 1.0.6`, `lexical-write-integer 1.0.6`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `mail-parser 0.11.9`, `once_cell 1.21.4`, `paste 1.0.15`, `pastey 0.1.1`, `proc-macro2 1.0.106`, `quote 1.0.46`, `ref-cast-impl 1.0.25`, `ref-cast 1.0.25`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `serde_json 1.0.151`, `syn 2.0.118`, `syn 3.0.0`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror 1.0.69`, `thiserror 2.0.18`, `typed-path 0.12.3`, `unicode-ident 1.0.24`, `utf8-zero 0.8.1`, `zmij 1.0.21`
 
 ```
 Permission is hereby granted, free of charge, to any
