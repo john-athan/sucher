@@ -5403,7 +5403,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `sucher 0.8.2`
+Used by `sucher 0.9.0`
 
 ```
 MIT License

@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-13
+
 ### Changed
 - **Startup drops from ~1.2 s to ~0.4 s, by taking weight out of the binary.**
   Starting sucher cost 1 to 2 seconds whatever the file, and none of it was
