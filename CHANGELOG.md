@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-13
+
 ### Changed
 - **Dependencies bumped, and the notices bumped with them.** `dirs` 7.0.0,
   `trash` 5.2.8, `pdfium-render` 0.9.4 and `mail-parser` 0.11.9. The `dirs`

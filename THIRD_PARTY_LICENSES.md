@@ -7112,7 +7112,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `sucher 0.8.1`
+Used by `sucher 0.8.2`
 
 ```
 MIT License
