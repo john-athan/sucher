@@ -6,6 +6,17 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Changed
+- **Dependencies bumped, and the notices bumped with them.** `dirs` 7.0.0,
+  `trash` 5.2.8, `pdfium-render` 0.9.4 and `mail-parser` 0.11.9. The `dirs`
+  major bump moves nothing here: the only two call sites ask for the home and
+  cache directories, and both resolve to the same paths as before.
+  `THIRD_PARTY_LICENSES.md` is regenerated in the same commit, because the
+  Dependabot pull request carried a lockfile only and `make check` fails when
+  the regenerated notices differ from the tree.
+- **Dependabot opens its pull requests Sunday 06:00 Berlin.** The schedule was
+  interval only, so the slot was random and landed late on Sunday evening.
+
 ## [0.8.1] - 2026-09-09
 
 ### Added
