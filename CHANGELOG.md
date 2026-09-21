@@ -6,6 +6,11 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-21
+
+### Changed
+- Take the safe half of dependabot's blocked bump, and fix README drift from ADR 0022
+
 ## [0.9.0] - 2026-09-13
 
 ### Changed
