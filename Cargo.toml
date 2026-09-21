@@ -77,7 +77,7 @@ pdfium-render = "0.9.3"
 # fetches the pinned, checksum-verified official library and stages it beside the
 # binary; the parquet and json readers are built into it, so the offline
 # guarantee below is unchanged (verified by `offline_reads_parquet_without_network`).
-libloading = { version = "0.8", optional = true }
+libloading = { version = "0.9", optional = true }
 # SQLite is read with rusqlite's statically-bundled libsqlite, NOT DuckDB: DuckDB's
 # sqlite_scanner is a loadable extension only (no static feature exists) and would
 # auto-install over the network on first use, breaking sucher's offline guarantee.

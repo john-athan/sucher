@@ -16,6 +16,15 @@ updates:
           - major
           - minor
           - patch
+    # markup5ever_rcdom has no release matching html5ever 0.40 (crates.io tops
+    # out at 0.39.0+unofficial, which requires html5ever ^0.39), so a minor/major
+    # bump here breaks the build. Delete this entry once a matching release
+    # exists. Patch updates within 0.39 are unaffected and still come through.
+    ignore:
+      - dependency-name: "html5ever"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   - package-ecosystem: github-actions
     directory: "/"

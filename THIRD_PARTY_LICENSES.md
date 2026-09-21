@@ -21,8 +21,8 @@ dependency graph is listed in `THIRD_PARTY.md`.
 | Apache License 2.0 | 7 |
 | BSD 2-Clause "Simplified" License | 5 |
 | zlib License | 3 |
-| ISC License | 2 |
 | MIT No Attribution | 2 |
+| ISC License | 1 |
 | Mozilla Public License 2.0 | 1 |
 | Unicode License v3 | 1 |
 | bzip2 and libbzip2 License v1.0.6 | 1 |
@@ -1395,7 +1395,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### ISC License
 
-Used by `libloading 0.8.9`, `libloading 0.9.0`
+Used by `libloading 0.9.0`
 
 ```
 Copyright © 2015, Simonas Kazlauskas
@@ -4172,7 +4172,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `serde_spanned 1.1.1`, `toml 1.1.5+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
+Used by `serde_spanned 1.1.1`, `toml 1.1.6+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
 
 ```
 Copyright (c) Individual contributors
@@ -4419,7 +4419,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `trash 5.2.8`
+Used by `trash 5.2.9`
 
 ```
 Copyright 2019 Artúr Barnabás Kovács

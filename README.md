@@ -70,8 +70,8 @@ real pixels where one is available.
   being loaded whole.
 - **Queryable data files**, Parquet, JSONL, SQLite, and DuckDB open in the grid:
   each database table becomes a tab, columns keep their real names and types
-  (ISO dates, not serial numbers), and a `:` SQL prompt, powered by an
-  **embedded DuckDB**, turns any of them into a live query over the file. It's
+  (ISO dates, not serial numbers), and a `:` SQL prompt, powered by
+  **DuckDB**, turns any of them into a live query over the file. It's
   **lazy and uncapped**, so a billion-row Parquet opens instantly and scrolls to
   the end. It is also **fully offline**: reading a data file never touches the
   network.
@@ -95,7 +95,7 @@ real pixels where one is available.
 | Name-keyed types | `Dockerfile` (also `Dockerfile.dev`, `web.dockerfile`), `Makefile`, `.gitignore`, `.env` | recognised by file NAME rather than extension, then highlighted like any source file |
 | Spreadsheet | `.xlsx`, `.xlsm` | streaming reader (zip + quick-xml) on a worker thread |
 | Spreadsheet | `.xls`, `.ods`, `.xlsb`, `.csv`, `.tsv` | [`calamine`](https://crates.io/crates/calamine) (eager); csv/tsv parsed into the grid |
-| Data (columnar) | `.parquet` `.pq` | embedded **DuckDB** (`read_parquet`) |
+| Data (columnar) | `.parquet` `.pq` | **DuckDB**, loaded at runtime (`read_parquet`) |
 | Data (line JSON) | `.jsonl` `.ndjson` | DuckDB (`read_json_auto`) |
 | Data (SQLite) | `.sqlite` `.sqlite3` `.db` `.db3` | [`rusqlite`](https://crates.io/crates/rusqlite) bundled libsqlite (read-only); each table a sheet |
 | Data (DuckDB) | `.duckdb` `.ddb` | DuckDB `ATTACH` (read-only); each table a sheet |
@@ -129,9 +129,10 @@ listing for directories).
 
 The files most technical users live in, **Parquet, newline-delimited JSON,
 SQLite and DuckDB databases**, open in the same grid as spreadsheets, backed by
-two native, statically-bundled engines behind one interface: an **embedded
-DuckDB** reads Parquet/JSONL/DuckDB, and **rusqlite**'s bundled libsqlite reads
-SQLite. Real column names sit in the header (not `A`/`B`/`C`),
+two native engines behind one interface: **DuckDB**, resolved at runtime from a
+sidecar library rather than linked in, reads Parquet/JSONL/DuckDB, and
+**rusqlite**'s statically-bundled libsqlite reads SQLite. Real column names sit
+in the header (not `A`/`B`/`C`),
 DuckDB's canonical text gives correct ISO dates and timestamps (NULL renders
 blank), and a database opens **read-only** with each table as its own sheet,
 `Tab` (or `[` / `]`) cycles them, and the SQL prompt can join across them.
@@ -161,19 +162,22 @@ It's **lazy and uncapped.** The grid windows rows on demand (`LIMIT`/`OFFSET`
 plus a prefetch cache) and reads the schema from `DESCRIBE`, which doesn't
 execute the query, so a file opens instantly regardless of size and scrolls to
 the end with **no row cap**, unlike the streaming `.xlsx`/CSV backends. And it's
-**fully offline**: both engines are compiled in statically and DuckDB has
-extension autoinstall/autoload disabled, so reading a data file never reaches for
-the network, in keeping with
-sucher's local-viewer identity.
+**fully offline**: rusqlite is compiled in statically, DuckDB has extension
+autoinstall/autoload disabled once loaded, and neither ever reaches for the
+network, in keeping with sucher's local-viewer identity.
 
-Data files sit behind the **default-on `data` Cargo feature**, so
-`cargo install sucher` includes them out of the box. DuckDB is compiled from
-vendored source and statically bundled: self-contained, with no build-time
-download and no runtime network, which puts the release binary at **~75 MB**
-(measured on macOS arm64; the figure moves with target and toolchain). If you
-don't need it, `cargo install sucher --no-default-features` builds the lean
-~29 MB binary without DuckDB (Parquet then falls back to the hexdump and JSONL
-to the text viewer).
+Data files sit behind the **default-on `data` Cargo feature**, which adds the
+rusqlite engine plus a small `dlopen` binding, about 2 MB on the release
+binary. DuckDB itself isn't linked in: `duckdyn.rs` loads `libduckdb.dylib` (or
+`.so`/`.dll`) at runtime, the same way the fast PDF path loads pdfium below. A
+`cargo build` (or the Homebrew formula, which depends on `duckdb`) resolves a
+copy from beside the binary or from `/opt/homebrew/lib`; a plain
+`cargo install sucher` places no sidecar, so Parquet/JSONL/DuckDB only open if
+a `libduckdb` is already reachable one of those ways or via `SUCHER_DUCKDB_LIB`,
+otherwise the file reports the library missing rather than opening. If you
+don't want even that weight, `cargo install sucher --no-default-features`
+drops the `data` feature entirely (Parquet then falls back to the hexdump and
+JSONL to the text viewer).
 
 ## Install
 
@@ -206,13 +210,19 @@ make install        # builds --release, installs `sucher`, symlinks `s`
 `make install` puts the binary in `~/.cargo/bin` and creates a short `s` symlink
 next to it. (`make uninstall` removes both.)
 
-The fast PDF path is **self-contained**: the build fetches the pinned,
-checksum-verified **`libpdfium`** for your platform and embeds it in the binary
-(materialised to a cache dir on first use), so `cargo install sucher` gets it
-with no extra steps. Offline or sandboxed builds skip the fetch and fall back to
-poppler; pre-place the library at `vendor/pdfium/<lib>` or point
-`SUCHER_PDFIUM_LIB` at one to build the fast path offline, or set
-`SUCHER_PDFIUM_NO_EMBED=1` to opt out.
+The fast PDF path resolves **`libpdfium`** at runtime rather than linking it in,
+the same sidecar model as DuckDB above: `$SUCHER_PDFIUM_LIB`, beside the binary,
+then common system lib dirs. `cargo build --release` fetches the pinned,
+checksum-verified library for your platform and stages a copy beside the binary
+it produces, so a plain build gets the fast path with no extra steps. `cargo
+install` copies only the binary and can place no sidecar, so
+`cargo install sucher` falls back to poppler unless a copy is already reachable;
+`cargo install sucher --features embed-pdfium` bakes the fetched library into
+the binary instead, trading about 7 MB of size for a single self-contained file.
+Offline or sandboxed builds skip the fetch either way; pre-place the library at
+`vendor/pdfium/<lib>` or point `SUCHER_PDFIUM_LIB` at one to build the fast path
+offline, or set `SUCHER_PDFIUM_NO_EMBED=1` to skip embedding even with the
+feature on.
 
 ### Optional runtime dependencies
 
@@ -223,8 +233,10 @@ These are only needed for the formats that shell out to them:
 | PDF (fallback) | poppler (`pdftocairo`, `pdfinfo`, `pdftotext`) | `brew install poppler` |
 | Video | `ffmpeg`, `ffprobe` | `brew install ffmpeg` |
 
-The fast PDF path uses `libpdfium`, embedded in the binary at build time (no
-install step); poppler remains the fallback and still powers `pdfinfo`/`pdftotext`.
+The fast PDF path uses `libpdfium`, resolved at runtime from beside the binary
+(staged there by `cargo build`) or a system lib dir, or embedded in the binary
+when built with `--features embed-pdfium`; poppler remains the fallback and
+still powers `pdfinfo`/`pdftotext`.
 
 For pixel-perfect images / PDF / video, use a terminal with a graphics
 protocol, **kitty, ghostty, WezTerm, iTerm2**, or any sixel-capable terminal.
@@ -453,9 +465,10 @@ ref, value, and load progress.
 when its library is present, a scanned page opens in ~30 ms instead of the
 several seconds poppler's software rasteriser takes, and falls back to poppler
 otherwise. Pages render off-thread with the neighbours prefetched, so stepping
-through is near-instant; visited pages stay cached. `libpdfium` is embedded in
-the binary at build time, so the fast path works out of the box; set
-`SUCHER_PDFIUM_LIB` to override with a specific copy.
+through is near-instant; visited pages stay cached. `libpdfium` is resolved
+beside the binary or a system lib dir when a plain `cargo build` staged or
+found one, or embedded in the binary when built with `--features
+embed-pdfium`; set `SUCHER_PDFIUM_LIB` to override with a specific copy.
 
 **Image**: `x` open in native app · `←`/`q` back.
 
@@ -571,9 +584,11 @@ Design notes:
   (`MemBook`, calamine/CSV), capped-streaming (`StreamBook`, `.xlsx`), and
   lazy-data (`DataBook`, `data.rs`), each the right fit for its source. `DataBook`
   itself holds two native engines behind one interface: DuckDB (Parquet/JSONL/
-  DuckDB) and rusqlite (SQLite), chosen so every format is read by the engine that
-  owns it and stays **offline** (both statically compiled; DuckDB extension
-  autoinstall/autoload off). Data reads are **lazy & uncapped** (window on demand,
+  DuckDB), loaded at runtime via `libloading` rather than linked in
+  (`duckdyn.rs`), and rusqlite (SQLite), statically compiled. Each format is
+  read by the engine that owns it, and both stay **offline** (DuckDB extension
+  autoinstall/autoload off, no runtime network either way). Data reads are
+  **lazy & uncapped** (window on demand,
   schema without executing). The `:` SQL prompt is the grid's first capability
   that varies by backend, a method on `Book`, not a new viewer (ADR 0016).
 - **File operations decide before they act.** The hard part of a file manager is
@@ -648,10 +663,15 @@ text-sizing protocol.
   *file* reader isn't in the bundled build and would need a network extension, so
   it's deliberately excluded (Parquet covers the columnar need). A `find`/search
   over a data file follows the query's scan order, not a stable row order.
-- The release binary is **~75 MB** because DuckDB is compiled in and statically
-  bundled; build the lean ~29 MB binary with
-  `cargo install sucher --no-default-features` (dropping the `data` feature and
-  Parquet/JSONL/SQLite/DuckDB support).
+- The release binary is **~18 MB** (measured on macOS arm64, stripped; the
+  figure moves with target and toolchain). Neither DuckDB nor pdfium is linked
+  in, both are resolved from a sidecar library at runtime, so
+  `cargo install sucher` alone gets neither the fast PDF path nor a working
+  DuckDB/Parquet/JSONL backend unless a copy is already reachable beside the
+  binary or in a system lib dir; see "Data files & SQL" and "Install" above for
+  how to get them. `cargo install sucher --no-default-features` drops the
+  `data` feature (rusqlite plus the DuckDB binding) for a ~16 MB binary and
+  loses Parquet/JSONL/SQLite/DuckDB support.
 - File operations act on **whole paths only**. There is no editing, no archive
   extraction, no writing to a spreadsheet or database, no permission changes, no
   bulk rename through an editor, and no symlink creation on paste. Operations are
