@@ -6600,7 +6600,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `ratatui-image 11.0.8`
+Used by `ratatui-image 11.1.0`
 
 ```
 The MIT License (MIT)
