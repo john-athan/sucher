@@ -6,6 +6,12 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-27
+
+### Changed
+- Bump cfb to 0.15.0 and regenerate the notices
+- Bump ratatui-image to 11.1.0 and regenerate the notices
+
 ## [0.9.1] - 2026-09-21
 
 ### Changed
