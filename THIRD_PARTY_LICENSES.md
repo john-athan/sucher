@@ -4639,7 +4639,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `cfb 0.14.0`
+Used by `cfb 0.15.0`
 
 ```
 MIT License

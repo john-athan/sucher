@@ -85,7 +85,7 @@ libloading = { version = "0.9", optional = true }
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 trash = "5"
 mail-parser = { version = "0.11.8", features = ["full_encoding"] }
-cfb = "0.14.0"
+cfb = "0.15.0"
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.
