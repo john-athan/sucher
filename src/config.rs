@@ -695,4 +695,24 @@ mod tests {
         assert!(broken.is_err());
         // load() would fall back to defaults in this case.
     }
+
+    #[test]
+    fn documented_config_file_parses() {
+        // The README's example file, so a toml upgrade that changes how tables,
+        // booleans or quoted strings decode fails here and not in a user's terminal.
+        let ok: FileConfig = toml::from_str(
+            "theme = \"catppuccin-mocha\"\nicons = \"nerd\"\nlayout = \"auto\"\n\
+             git = true\nmouse = false\nanimate = true\n\n[colors]\naccent = \"#7dd3fc\"\n",
+        )
+        .unwrap();
+        assert_eq!(ok.theme.as_deref(), Some("catppuccin-mocha"));
+        assert_eq!(ok.mouse, Some(false));
+        assert_eq!(
+            ok.colors.unwrap().get("accent").map(String::as_str),
+            Some("#7dd3fc")
+        );
+        // An empty file is valid and leaves every key unset.
+        let empty: FileConfig = toml::from_str("").unwrap();
+        assert!(empty.theme.is_none() && empty.git.is_none());
+    }
 }
