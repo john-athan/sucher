@@ -6,6 +6,12 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-12
+
+### Changed
+- Test the documented config file against the toml parser
+- Bump toml to 1.1.7 and regenerate the notices
+
 ## [0.9.2] - 2026-09-27
 
 ### Changed
