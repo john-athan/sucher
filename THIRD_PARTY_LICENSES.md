@@ -4172,7 +4172,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `serde_spanned 1.1.1`, `toml 1.1.6+spec-1.1.0`, `toml_datetime 1.1.1+spec-1.1.0`, `toml_parser 1.1.3+spec-1.1.0`, `toml_writer 1.1.2+spec-1.1.0`
+Used by `serde_spanned 1.1.2`, `toml 1.1.8+spec-1.1.0`, `toml_datetime 1.1.2+spec-1.1.0`, `toml_parser 1.1.5+spec-1.1.0`, `toml_writer 1.1.3+spec-1.1.0`
 
 ```
 Copyright (c) Individual contributors
