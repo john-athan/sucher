@@ -24,7 +24,11 @@ pub fn to_markdown(path: &str) -> Result<String, String> {
     // Collect slide part names, then order them by their numeric suffix so
     // slide10 sorts after slide2 (lexical order would not).
     let mut slides: Vec<(u32, String)> = (0..zip.len())
-        .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| {
+            zip.by_index(i)
+                .ok()
+                .and_then(|f| f.name().ok().map(|n| n.into_owned()))
+        })
         .filter_map(|name| slide_number(&name).map(|n| (n, name)))
         .collect();
     slides.sort_by_key(|(n, _)| *n);

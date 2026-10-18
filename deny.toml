@@ -7,6 +7,16 @@ yanked = "deny"
 # Only fail on "unmaintained" advisories for our own crates; deep transitive
 # deps (e.g. ttf-parser via resvg/usvg) often have no upgrade path we control.
 unmaintained = "workspace"
+ignore = [
+    # zip 8.6.0 stays in the tree only through calamine 0.36.1, which pins zip 8
+    # and has no release on zip 9 yet. The flaw is in `extract()`, which neither
+    # calamine nor sucher calls: both only read single members. Our own zip use
+    # is on 9. The three advisories below are all about extraction. Drop them
+    # once calamine moves to zip 9.
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+]
 
 [licenses]
 # Permissive/weak-copyleft licenses present in the dependency tree. cargo-deny

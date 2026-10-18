@@ -179,7 +179,12 @@ fn zip_entries(path: &str) -> Result<Vec<Entry>, String> {
     for i in 0..zip.len() {
         let f = zip.by_index(i).map_err(|e| e.to_string())?;
         out.push(Entry {
-            name: f.name().to_string(),
+            // zip 9 refuses a name it cannot decode; list the entry anyway
+            // (lossily) rather than hide it or fail the whole listing.
+            name: f.name().map_or_else(
+                |_| String::from_utf8_lossy(f.name_raw()).into_owned(),
+                |n| n.into_owned(),
+            ),
             size: f.size(),
             is_dir: f.is_dir(),
         });

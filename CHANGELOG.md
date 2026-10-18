@@ -6,6 +6,9 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Changed
+- Move to zip 9, whose entry names are fallible, and bump serde_json and sha2
+
 ## [0.9.3] - 2026-10-12
 
 ### Changed

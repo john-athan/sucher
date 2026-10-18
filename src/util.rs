@@ -409,7 +409,11 @@ fn extract_zip_images(archive: &str, keep: impl Fn(&str) -> bool) -> Vec<PathBuf
         return Vec::new();
     };
     let mut names: Vec<String> = (0..zip.len())
-        .filter_map(|i| zip.by_index(i).ok().map(|f| f.name().to_string()))
+        .filter_map(|i| {
+            zip.by_index(i)
+                .ok()
+                .and_then(|f| f.name().ok().map(|n| n.into_owned()))
+        })
         .filter(|n| keep(n))
         .collect();
     names.sort();
