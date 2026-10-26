@@ -420,13 +420,18 @@ fn extract_zip_images(archive: &str, keep: impl Fn(&str) -> bool) -> Vec<PathBuf
     if names.is_empty() {
         return Vec::new();
     }
+    // A zip member can inflate far past its tiny stored size, and every kept
+    // image is held in memory before it is written, so bound each member and the
+    // running total (ADR 0009). An over-cap member is skipped, not truncated: a
+    // cut-off image would only fail to decode later.
+    let mut total = 0usize;
     let items: Vec<(String, Vec<u8>)> = names
         .into_iter()
         .filter_map(|name| {
-            let mut f = zip.by_name(&name).ok()?;
-            let mut bytes = Vec::new();
-            f.read_to_end(&mut bytes).ok()?;
-            Some((name, bytes))
+            let f = zip.by_name(&name).ok()?;
+            let bytes = read_capped(f, MAX_DECODE_BYTES).ok()?;
+            total += bytes.len();
+            (total <= MAX_ARCHIVE_INFLATE).then_some((name, bytes))
         })
         .collect();
     write_media(&items)

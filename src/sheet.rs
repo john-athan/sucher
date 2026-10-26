@@ -56,7 +56,7 @@ impl MemBook {
     fn open(path: &str) -> Result<Self, String> {
         // Bound calamine, which materialises the whole workbook. Prechecking the
         // on-disk size caps a plain .xls outright; for the zip-based .ods/.xlsb
-        // it bounds only the COMPRESSED input, calamine 0.35 exposes no
+        // it bounds only the COMPRESSED input, calamine 0.37 exposes no
         // decompression limit, so a crafted sub-cap decompression bomb remains a
         // residual documented in ADR 0009.
         let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();

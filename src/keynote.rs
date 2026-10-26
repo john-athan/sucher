@@ -38,10 +38,15 @@ pub fn preview_image(path: &str) -> Result<DynamicImage, String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
     for part in PREVIEW_PARTS {
-        if let Ok(mut f) = zip.by_name(part) {
-            let mut bytes = Vec::new();
-            std::io::Read::read_to_end(&mut f, &mut bytes).map_err(|e| e.to_string())?;
-            return image::load_from_memory(&bytes).map_err(|e| e.to_string());
+        if let Ok(f) = zip.by_name(part) {
+            // The part comes from an untrusted package: bound the inflate and
+            // the decoded pixel size like every other image path (ADR 0009).
+            let bytes = crate::util::read_capped(f, crate::util::MAX_DECODE_BYTES)?;
+            let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+                .with_guessed_format()
+                .map_err(|e| e.to_string())?;
+            reader.limits(crate::util::image_limits());
+            return reader.decode().map_err(|e| e.to_string());
         }
     }
     Err("no embedded preview image in this Keynote file".to_string())
@@ -92,6 +97,15 @@ mod tests {
     fn errors_when_no_preview_part() {
         let path = write_zip("nopreview", &[("Index.zip", b"iwa".to_vec())]);
         assert!(preview_image(path.to_str().unwrap()).is_err());
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn rejects_oversized_preview_part() {
+        let big = vec![0u8; crate::util::MAX_DECODE_BYTES + 1];
+        let path = write_zip("oversize", &[("preview.jpg", big)]);
+        let err = preview_image(path.to_str().unwrap()).unwrap_err();
+        assert!(err.contains("limit"), "{err}");
         std::fs::remove_file(path).ok();
     }
 }
