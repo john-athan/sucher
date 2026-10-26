@@ -5999,7 +5999,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### MIT License
 
-Used by `pulldown-cmark-escape 0.11.0`, `pulldown-cmark 0.13.4`
+Used by `pulldown-cmark-escape 0.11.0`, `pulldown-cmark 0.13.5`
 
 ```
 The MIT License
