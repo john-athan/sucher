@@ -5568,7 +5568,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `sucher 0.9.4`
+Used by `sucher 0.9.5`
 
 ```
 MIT License

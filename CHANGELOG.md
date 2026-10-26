@@ -6,6 +6,12 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-26
+
+### Changed
+- Bound Keynote preview and embedded-image extraction against decompression bombs
+- Fix RUSTSEC-2026-0385 and move to calamine 0.37
+
 ## [0.9.4] - 2026-10-18
 
 ### Changed
