@@ -6,6 +6,15 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Fixed
+- Parquet, JSONL and DuckDB files showed empty cells when Homebrew's duckdb 2.0
+  was installed. sucher now always ships its pinned DuckDB 1.x library, the
+  Homebrew formula installs it into its own libexec, and a 2.x library is
+  refused with a message instead of being used.
+
+### Changed
+- pulldown-cmark 0.13.5
+
 ## [0.9.5] - 2026-10-26
 
 ### Changed
