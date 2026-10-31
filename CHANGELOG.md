@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-10-31
+
 ### Fixed
 - Parquet, JSONL and DuckDB files showed empty cells when Homebrew's duckdb 2.0
   was installed. sucher now always ships its pinned DuckDB 1.x library, the

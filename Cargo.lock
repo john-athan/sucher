@@ -3168,7 +3168,7 @@ dependencies = [
 
 [[package]]
 name = "sucher"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "calamine",
  "cfb",
