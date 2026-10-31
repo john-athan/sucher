@@ -81,25 +81,52 @@ struct Api {
 unsafe impl Send for Api {}
 unsafe impl Sync for Api {}
 
-static API: OnceLock<Option<Api>> = OnceLock::new();
+static API: OnceLock<Result<Api, String>> = OnceLock::new();
 
-fn api() -> Option<&'static Api> {
-    API.get_or_init(load).as_ref()
+fn api() -> Result<&'static Api, String> {
+    API.get_or_init(load).as_ref().map_err(|e| e.clone())
 }
 
-fn load() -> Option<Api> {
-    let path = resolve_library_path()?;
+/// Whether a `duckdb_library_version()` string ("v1.5.5") is one whose C ABI this
+/// file transcribes. `duckdb_result` is caller-allocated, so a library from
+/// another major version can change its layout and return empty or garbage cells
+/// without any error: Homebrew's `duckdb` moved to 2.0 and did exactly that.
+fn version_is_supported(v: &str) -> bool {
+    v.strip_prefix('v').unwrap_or(v).starts_with("1.")
+}
+
+fn load() -> Result<Api, String> {
+    let path = resolve_library_path().ok_or_else(missing_library)?;
     // SAFETY: `dlopen` of a path we resolved, then one `dlsym` per entry point.
     // Each signature is transcribed from `duckdb.h` and pinned by the version
     // `build.rs` fetches; a missing symbol fails the whole load rather than
     // leaving a half-bound Api.
     unsafe {
-        let lib = libloading::Library::new(&path).ok()?;
+        let unusable = || format!("{} is not a usable DuckDB library", path.display());
+        let lib = libloading::Library::new(&path).map_err(|_| unusable())?;
         macro_rules! sym {
             ($name:literal) => {{
-                let s: libloading::Symbol<_> = lib.get($name).ok()?;
+                let s: libloading::Symbol<_> = lib.get($name).map_err(|_| unusable())?;
                 *s
             }};
+        }
+        let version: unsafe extern "C" fn() -> *const c_char = sym!(b"duckdb_library_version");
+        let vp = version();
+        let found = if vp.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(vp).to_string_lossy().into_owned()
+        };
+        if !version_is_supported(&found) {
+            return Err(format!(
+                "{} is DuckDB {}, but sucher needs 1.x; set SUCHER_DUCKDB_LIB to a 1.x libduckdb",
+                path.display(),
+                if found.is_empty() {
+                    "of unknown version"
+                } else {
+                    &found
+                }
+            ));
         }
         let api = Api {
             open: sym!(b"duckdb_open"),
@@ -115,7 +142,7 @@ fn load() -> Option<Api> {
             free: sym!(b"duckdb_free"),
             _lib: lib,
         };
-        Some(api)
+        Ok(api)
     }
 }
 
@@ -230,7 +257,7 @@ impl Connection {
     /// Open an in-memory database. `Err` when the library is missing, which is
     /// how a build without the sidecar reports that data files cannot be opened.
     pub fn open_in_memory() -> Result<Connection, String> {
-        let api = api().ok_or_else(missing_library)?;
+        let api = api()?;
         let mut db: *mut c_void = std::ptr::null_mut();
         let mut con: *mut c_void = std::ptr::null_mut();
         // SAFETY: a NULL path means in-memory; both out-params are written only
@@ -259,7 +286,7 @@ impl Connection {
 
     /// Run one statement and materialise the whole result as text.
     pub fn query(&self, sql: &str) -> Result<Table, String> {
-        let api = api().ok_or_else(missing_library)?;
+        let api = api()?;
         let c_sql = CString::new(sql).map_err(|_| "query contains a NUL byte".to_string())?;
         let mut raw = RawResult::zeroed();
         // SAFETY: `raw` matches `duckdb_result`'s layout and outlives every call
@@ -302,7 +329,7 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        let Some(api) = api() else { return };
+        let Ok(api) = api() else { return };
         // SAFETY: both handles were produced by `open_in_memory` and are dropped
         // exactly once; DuckDB tolerates a null pointer here.
         unsafe {
@@ -325,6 +352,15 @@ mod tests {
         assert_eq!(name, "duckdb.dll");
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         assert_eq!(name, "libduckdb.so");
+    }
+
+    #[test]
+    fn only_duckdb_1x_passes_the_version_gate() {
+        assert!(version_is_supported("v1.5.5"));
+        assert!(version_is_supported("1.0.0"));
+        assert!(!version_is_supported("v2.0.0"));
+        assert!(!version_is_supported("v0.10.2"));
+        assert!(!version_is_supported(""));
     }
 
     #[test]
