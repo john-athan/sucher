@@ -170,8 +170,8 @@ Data files sit behind the **default-on `data` Cargo feature**, which adds the
 rusqlite engine plus a small `dlopen` binding, about 2 MB on the release
 binary. DuckDB itself isn't linked in: `duckdyn.rs` loads `libduckdb.dylib` (or
 `.so`/`.dll`) at runtime, the same way the fast PDF path loads pdfium below. A
-`cargo build` (or the Homebrew formula, which depends on `duckdb`) resolves a
-copy from beside the binary or from `/opt/homebrew/lib`; a plain
+`cargo build` stages the pinned 1.x library beside the binary, and the Homebrew
+formula installs that copy into its own `libexec`; a plain
 `cargo install sucher` places no sidecar, so Parquet/JSONL/DuckDB only open if
 a `libduckdb` is already reachable one of those ways or via `SUCHER_DUCKDB_LIB`,
 otherwise the file reports the library missing rather than opening. Only a

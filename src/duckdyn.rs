@@ -169,7 +169,10 @@ fn lib_file_name() -> &'static str {
 ///    installs it),
 /// 3. one directory up, which is where a `cargo test` binary sits relative to the
 ///    profile directory the staged copy lands in (`target/debug/deps/…`),
-/// 4. common system library directories.
+/// 4. `libexec` beside the real (symlink-resolved) executable, where the
+///    Homebrew formula puts its 1.x copy: Homebrew's own `duckdb` owns
+///    `lib/libduckdb.dylib` and is 2.x, which the version gate refuses,
+/// 5. common system library directories.
 ///
 /// Returns `None` if not found; the caller then reports the data file as
 /// unopenable. Mirrors `pdfium::resolve_library_path`.
@@ -188,6 +191,13 @@ fn resolve_library_path() -> Option<PathBuf> {
             if let Some(up) = d.parent() {
                 dirs.push(up.to_path_buf());
             }
+        }
+        if let Some(keg) = std::fs::canonicalize(&exe).ok().and_then(|real| {
+            real.parent()
+                .and_then(|d| d.parent())
+                .map(|k| k.join("libexec"))
+        }) {
+            dirs.push(keg);
         }
     }
     #[cfg(target_os = "macos")]

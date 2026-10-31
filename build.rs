@@ -179,13 +179,9 @@ fn stage_duckdb(out: &Path, skip: bool) {
         warn("no prebuilt libduckdb for this target; data files will not open");
         return;
     };
-    // A system copy is what `duckdyn::resolve_library_path` falls back to, and
-    // Homebrew's own `duckdb` formula installs exactly that. Downloading 34 MB to
-    // stage a second copy beside the binary would be pure duplication, so when
-    // one is already there, do nothing and let the runtime resolver find it.
-    if system_lib_dirs().iter().any(|d| d.join(libfile).is_file()) {
-        return;
-    }
+    // Always stage the pinned copy, even when a system one exists: Homebrew's
+    // `duckdb` is 2.x now, whose deprecated value accessors return empty cells,
+    // and the staged copy beside the binary is found before any system one.
     let dest = out.join(libfile);
     let url = format!("https://github.com/duckdb/duckdb/releases/download/{DUCKDB_TAG}/{asset}");
     match ensure_lib(&dest, out, &url, Archive::Zip, member, asset, sha) {
@@ -207,22 +203,6 @@ fn stage_duckdb(out: &Path, skip: bool) {
 fn stage_beside_binary(out: &Path, src: &Path, libfile: &str) {
     if let Some(dir) = profile_dir(out) {
         let _ = std::fs::copy(src, dir.join(libfile));
-    }
-}
-
-/// Where a system-installed copy of a library would be, matching the tail of
-/// `duckdyn::resolve_library_path` (and `pdfium::resolve_library_path`).
-fn system_lib_dirs() -> Vec<PathBuf> {
-    match std::env::var("CARGO_CFG_TARGET_OS")
-        .unwrap_or_default()
-        .as_str()
-    {
-        "macos" => vec![
-            PathBuf::from("/opt/homebrew/lib"),
-            PathBuf::from("/usr/local/lib"),
-        ],
-        "windows" => Vec::new(),
-        _ => vec![PathBuf::from("/usr/local/lib"), PathBuf::from("/usr/lib")],
     }
 }
 
