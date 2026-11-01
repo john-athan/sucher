@@ -16,7 +16,7 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 342 |
+| MIT License | 344 |
 | BSD 3-Clause "New" or "Revised" License | 13 |
 | Apache License 2.0 | 7 |
 | BSD 2-Clause "Simplified" License | 5 |
@@ -449,7 +449,7 @@ Used by `moxcms 0.8.1`, `pxfm 0.1.29`
 
 ### Apache License 2.0
 
-Used by `lzma-rust2 0.22.0`
+Used by `lzma-rust2 0.23.0`
 
 ```
                                  Apache License
@@ -1942,7 +1942,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `libsqlite3-sys 0.38.2`, `rusqlite 0.40.2`
+Used by `libsqlite3-sys 0.39.1`, `rusqlite 0.41.1`
 
 ```
 Copyright (c) 2014 The rusqlite developers
@@ -4500,7 +4500,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `resvg 0.48.1`, `usvg 0.48.1`
+Used by `resvg 0.49.0`, `usvg 0.49.0`
 
 ```
 Copyright 2017 the Resvg Authors
@@ -5778,6 +5778,32 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
+Used by `simdutf8 0.1.5`
+
+```
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### MIT License
+
 Used by `half 2.7.1`, `ident_case 1.0.1`
 
 ```
@@ -5898,7 +5924,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `adler2 2.0.1`, `anyhow 1.0.103`, `fast-float2 0.2.3`, `fastrand 2.4.1`, `hashify 0.2.9`, `indoc 2.0.7`, `itoa 1.0.18`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `mail-parser 0.11.9`, `once_cell 1.21.4`, `paste 1.0.15`, `pastey 0.1.1`, `proc-macro2 1.0.106`, `quote 1.0.46`, `ref-cast-impl 1.0.25`, `ref-cast 1.0.25`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `serde_json 1.0.154`, `syn 2.0.118`, `syn 3.0.0`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror 1.0.69`, `thiserror 2.0.18`, `typed-path 0.12.3`, `unicode-ident 1.0.24`, `zmij 1.0.21`
+Used by `adler2 2.0.1`, `anyhow 1.0.103`, `encodify 1.0.2`, `fast-float2 0.2.3`, `fastrand 2.4.1`, `hashify 0.3.1`, `indoc 2.0.7`, `itoa 1.0.18`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `mail-parser 1.0.0`, `once_cell 1.21.4`, `paste 1.0.15`, `pastey 0.1.1`, `proc-macro2 1.0.106`, `quote 1.0.46`, `ref-cast-impl 1.0.25`, `ref-cast 1.0.25`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `semver 1.0.28`, `serde 1.0.229`, `serde_core 1.0.229`, `serde_derive 1.0.229`, `serde_json 1.0.154`, `syn 2.0.118`, `syn 3.0.0`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `thiserror 1.0.69`, `thiserror 2.0.18`, `typed-path 0.13.0`, `unicode-ident 1.0.24`, `zmij 1.0.21`
 
 ```
 Permission is hereby granted, free of charge, to any
@@ -6060,7 +6086,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `zip 9.0.5`
+Used by `zip 9.1.3`
 
 ```
 The MIT License (MIT)
@@ -6174,7 +6200,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `aho-corasick 1.1.4`, `byteorder-lite 0.1.0`, `byteorder 1.5.0`, `encoding_rs_io 0.1.7`, `globset 0.4.18`, `grep-matcher 0.1.8`, `grep-regex 0.1.14`, `grep-searcher 0.1.17`, `ignore 0.4.33`, `memchr 2.8.2`, `walkdir 2.5.0`
+Used by `aho-corasick 1.1.4`, `byteorder-lite 0.1.0`, `byteorder 1.5.0`, `encoding_rs_io 0.1.7`, `globset 0.4.18`, `grep-matcher 0.1.8`, `grep-regex 0.1.14`, `grep-searcher 0.1.17`, `ignore 0.4.34`, `memchr 2.8.2`, `walkdir 2.5.0`
 
 ```
 The MIT License (MIT)

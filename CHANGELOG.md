@@ -6,6 +6,9 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+### Changed
+- zip 9.1.3, resvg 0.49.0, ignore 0.4.34, rusqlite 0.41.1, mail-parser 1.0.0
+
 ## [0.9.6] - 2026-10-31
 
 ### Fixed

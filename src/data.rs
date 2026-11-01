@@ -745,11 +745,7 @@ fn sqlite_columns(conn: &rusqlite::Connection, relation: &str) -> Result<Vec<Str
     let stmt = conn
         .prepare(&format!("SELECT * FROM ({relation}) LIMIT 0"))
         .map_err(|e| e.to_string())?;
-    Ok(stmt
-        .column_names()
-        .into_iter()
-        .map(|s| s.to_string())
-        .collect())
+    Ok(stmt.column_names().map(|s| s.to_string()).collect())
 }
 
 /// One-shot real row count of a relation.

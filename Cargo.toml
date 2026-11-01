@@ -50,7 +50,7 @@ zip = "9"
 quick-xml = "0.42"
 flate2 = "1"
 tar = "0.4"
-resvg = "0.48"
+resvg = "0.49"
 toml = "1.1"
 dirs = "7"
 serde = { version = "1", features = ["derive"] }
@@ -82,9 +82,9 @@ libloading = { version = "0.9", optional = true }
 # sqlite_scanner is a loadable extension only (no static feature exists) and would
 # auto-install over the network on first use, breaking sucher's offline guarantee.
 # rusqlite is the SQLite-native engine, fully static and offline (ADR 0016).
-rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 trash = "5"
-mail-parser = { version = "0.11.8", features = ["full_encoding"] }
+mail-parser = { version = "1.0.0", features = ["full_encoding"] }
 cfb = "0.15.0"
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned

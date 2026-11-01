@@ -15,7 +15,7 @@
 // Which container a file is comes from the bytes, not the extension: `.msg` is
 // whatever `cfb` can open, everything else is parsed as RFC 5322.
 
-use mail_parser::{Address, Message, MessageParser, MimeHeaders};
+use mail_parser::{AddressList, Message, MessageParser, MessagePart, PartKind};
 use std::io::{Read, Seek};
 use std::path::PathBuf;
 
@@ -127,15 +127,29 @@ fn mail_from_message(m: &Message) -> Mail {
         // date-formatting dependency.
         date: m.date().map(|d| d.to_rfc3339()).unwrap_or_default(),
         body: body_markdown(m),
-        attachments: m
-            .attachments()
-            .filter(|p| !p.is_multipart())
+        attachments: attached_parts(m)
+            .into_iter()
             .map(|p| {
                 let name = p.attachment_name().unwrap_or("(unnamed)").to_string();
-                (name, p.len() as u64)
+                (name, p.decoded_len() as u64)
             })
             .collect(),
     }
+}
+
+/// Every part 0.11 listed as an attachment. 1.0 follows RFC 8621 and keeps an
+/// image shown in a body out of `attachments()`, so a no-disposition PNG in a
+/// mixed message would vanish from the listing and the gallery; add every
+/// binary part back, in document order.
+fn attached_parts<'a>(m: &'a Message<'a>) -> Vec<MessagePart<'a>> {
+    let listed: Vec<_> = m.attachments().map(|p| p.id()).collect();
+    m.parts()
+        .filter(|p| {
+            !p.is_multipart()
+                && (listed.contains(&p.id())
+                    || matches!(p.kind(), PartKind::Binary | PartKind::InlineBinary))
+        })
+        .collect()
 }
 
 /// The body as markdown: a real HTML part is reduced by the shared HTML
@@ -143,7 +157,10 @@ fn mail_from_message(m: &Message) -> Mail {
 /// then renders as blockquotes). `body_html` synthesises HTML from a text-only
 /// message, so the choice is made on the part's own type, not on its presence.
 fn body_markdown(m: &Message) -> String {
-    if m.html_part(0).is_some_and(|p| p.is_text_html()) {
+    if m.html_body()
+        .next()
+        .is_some_and(|p| matches!(p.kind(), PartKind::Html))
+    {
         if let Some(html) = m.body_html(0) {
             return crate::html::markdown_from_str(&html);
         }
@@ -153,18 +170,15 @@ fn body_markdown(m: &Message) -> String {
 
 /// One header's addresses as `Name <addr>, …`. Groups are flattened; an address
 /// with no display name shows bare.
-fn addresses(a: Option<&Address>) -> String {
+fn addresses(a: Option<AddressList>) -> String {
     let Some(a) = a else {
         return String::new();
     };
-    a.iter()
+    a.mailboxes()
         .map(|addr| {
             match (
-                addr.name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty()),
-                addr.address.as_deref(),
+                addr.name().map(str::trim).filter(|s| !s.is_empty()),
+                addr.address(),
             ) {
                 (Some(n), Some(e)) => format!("{n} <{e}>"),
                 (Some(n), None) => n.to_string(),
@@ -184,9 +198,10 @@ fn eml_media(raw: &[u8]) -> Vec<(String, Vec<u8>)> {
     let Some(m) = MessageParser::default().parse(raw) else {
         return Vec::new();
     };
-    m.attachments()
+    attached_parts(&m)
+        .into_iter()
         .enumerate()
-        .filter(|(_, p)| p.is_binary())
+        .filter(|(_, p)| matches!(p.kind(), PartKind::Binary | PartKind::InlineBinary))
         .map(|(i, p)| {
             let name = p.attachment_name().map(str::to_string).unwrap_or_else(|| {
                 let sub = p
@@ -196,7 +211,7 @@ fn eml_media(raw: &[u8]) -> Vec<(String, Vec<u8>)> {
                     .to_ascii_lowercase();
                 format!("part{i}.{sub}")
             });
-            (name, p.contents().to_vec())
+            (name, p.decoded().into_owned())
         })
         .filter(|(name, _)| crate::util::is_raster_name(name))
         .collect()
@@ -230,12 +245,7 @@ fn msg_mail<F: Read + Seek>(mut c: cfb::CompoundFile<F>) -> Result<Mail, String>
     // them at all, sent items often don't). Reuse the RFC 5322 date parser we
     // already link rather than growing a second one here.
     let date = prop(&mut c, "/", P_TRANSPORT_HEADERS)
-        .and_then(|h| {
-            MessageParser::default()
-                .parse(h.as_bytes())?
-                .date()
-                .cloned()
-        })
+        .and_then(|h| MessageParser::default().parse(h.as_bytes())?.date())
         .map(|d| d.to_rfc3339())
         .unwrap_or_default();
     let body = match prop(&mut c, "/", P_BODY_HTML) {
@@ -404,6 +414,33 @@ JVBERi0xLjQK\r\n\
         let mail = eml_mail(EML).unwrap();
         // "JVBERi0xLjQK" is 12 base64 chars → 8 decoded bytes ("%PDF-1.4\n").
         assert_eq!(mail.attachments, vec![("report.pdf".to_string(), 9)]);
+    }
+
+    #[test]
+    fn eml_media_keeps_only_decoded_raster_parts() {
+        // The PDF is binary but not a raster; the unnamed PNG is named after
+        // its subtype. "iVBORw0K" decodes to the 6 bytes of a PNG signature start.
+        let raw = b"Content-Type: multipart/mixed; boundary=\"b\"\r\n\
+\r\n\
+--b\r\n\
+Content-Type: text/plain\r\n\
+\r\n\
+hi\r\n\
+--b\r\n\
+Content-Type: image/png\r\n\
+Content-Transfer-Encoding: base64\r\n\
+\r\n\
+iVBORw0K\r\n\
+--b\r\n\
+Content-Type: application/pdf; name=\"a.pdf\"\r\n\
+Content-Disposition: attachment\r\n\
+\r\n\
+%PDF\r\n\
+--b--\r\n";
+        let media = eml_media(raw);
+        assert_eq!(media.len(), 1);
+        assert!(media[0].0.ends_with(".png"), "{}", media[0].0);
+        assert_eq!(media[0].1, b"\x89PNG\r\n");
     }
 
     #[test]
