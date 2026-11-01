@@ -12,9 +12,17 @@
 // (building extensions that DuckDB loads). The surface is small enough to make
 // that cheap. `data.rs` already reads every value through `CAST(... AS VARCHAR)`
 // (the grid renders strings), and every result set it asks for is bounded, by
-// `LIMIT`, by `FIND_CAP`, or by being schema metadata. So this binding needs one
-// value accessor and can materialise results eagerly, which removes the whole
-// streaming/statement/lifetime layer a general binding would need.
+// `LIMIT`, by `FIND_CAP`, or by being schema metadata. So this binding can
+// materialise results eagerly, which removes the whole streaming/statement/
+// lifetime layer a general binding would need.
+//
+// Results are read through the data chunk API (`duckdb_fetch_chunk`), because the
+// row/cell accessors (`duckdb_row_count`, `duckdb_value_varchar`) are deprecated
+// since 1.0 and return empty strings on 2.0. No chunk-level call renders a cell
+// as text (DuckDB's own rendering needs a `duckdb_value`, which cannot be made
+// from a vector), so cells are decoded here, for the types a text grid query
+// yields: VARCHAR, booleans, integers and bare NULL. Anything else is an error that names
+// the column, never a silently different rendering; callers cast to VARCHAR.
 //
 // Absent library → `Connection::open_in_memory` returns `Err`, and the data-file
 // viewer surfaces that as a normal open failure, the way an unreadable file does.
@@ -30,9 +38,12 @@ type State = i32;
 
 /// `duckdb_result` from `duckdb.h`. NOT opaque: the caller allocates it and the
 /// library writes into it, so the layout has to match. Six pointer-width fields,
-/// five of them deprecated accessors we never read directly (we call
-/// `duckdb_column_count` / `duckdb_row_count` / `duckdb_result_error` instead).
+/// five of them deprecated fields we never read directly (we call
+/// `duckdb_column_count` / `duckdb_result_error` / `duckdb_fetch_chunk` instead).
+/// The layout is identical in DuckDB 1.5.5 and 2.0.0. `Copy` because
+/// `duckdb_fetch_chunk` takes the struct by value.
 #[repr(C)]
+#[derive(Clone, Copy)]
 struct RawResult {
     deprecated_column_count: Idx,
     deprecated_row_count: Idx,
@@ -55,6 +66,32 @@ impl RawResult {
     }
 }
 
+/// `duckdb_string_t`: 16 bytes, inline or pointer form. Opaque here because only
+/// `duckdb_string_t_length` / `duckdb_string_t_data` look inside it.
+#[repr(C)]
+struct StringT {
+    a: u64,
+    b: u64,
+}
+
+/// `duckdb_type` ids from `duckdb.h`, the same in 1.x and 2.x.
+mod ty {
+    pub const BOOLEAN: i32 = 1;
+    pub const TINYINT: i32 = 2;
+    pub const SMALLINT: i32 = 3;
+    pub const INTEGER: i32 = 4;
+    pub const BIGINT: i32 = 5;
+    pub const UTINYINT: i32 = 6;
+    pub const USMALLINT: i32 = 7;
+    pub const UINTEGER: i32 = 8;
+    pub const UBIGINT: i32 = 9;
+    pub const HUGEINT: i32 = 16;
+    pub const VARCHAR: i32 = 17;
+    pub const UHUGEINT: i32 = 32;
+    /// The type of a bare `NULL`; every row is NULL, there is no data to read.
+    pub const SQLNULL: i32 = 36;
+}
+
 /// The resolved library and the entry points we use. Held for the life of the
 /// process: every handle below borrows from it, and unloading it while a
 /// connection is open would be a use-after-free.
@@ -70,9 +107,16 @@ struct Api {
     destroy_result: unsafe extern "C" fn(*mut RawResult),
     result_error: unsafe extern "C" fn(*mut RawResult) -> *const c_char,
     column_count: unsafe extern "C" fn(*mut RawResult) -> Idx,
-    row_count: unsafe extern "C" fn(*mut RawResult) -> Idx,
-    value_varchar: unsafe extern "C" fn(*mut RawResult, Idx, Idx) -> *mut c_char,
-    free: unsafe extern "C" fn(*mut c_void),
+    column_type: unsafe extern "C" fn(*mut RawResult, Idx) -> i32,
+    fetch_chunk: unsafe extern "C" fn(RawResult) -> *mut c_void,
+    destroy_chunk: unsafe extern "C" fn(*mut *mut c_void),
+    chunk_size: unsafe extern "C" fn(*mut c_void) -> Idx,
+    chunk_vector: unsafe extern "C" fn(*mut c_void, Idx) -> *mut c_void,
+    vector_data: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
+    vector_validity: unsafe extern "C" fn(*mut c_void) -> *mut u64,
+    row_is_valid: unsafe extern "C" fn(*mut u64, Idx) -> bool,
+    string_length: unsafe extern "C" fn(StringT) -> u32,
+    string_data: unsafe extern "C" fn(*mut StringT) -> *const c_char,
 }
 
 // The library is loaded once and never unloaded, and the DuckDB C API is
@@ -89,10 +133,12 @@ fn api() -> Result<&'static Api, String> {
 
 /// Whether a `duckdb_library_version()` string ("v1.5.5") is one whose C ABI this
 /// file transcribes. `duckdb_result` is caller-allocated, so a library from
-/// another major version can change its layout and return empty or garbage cells
-/// without any error: Homebrew's `duckdb` moved to 2.0 and did exactly that.
+/// another major version can change its layout and return garbage without any
+/// error. 1.x and 2.x share the layout and the chunk API; the deprecated cell
+/// accessors that 2.0 broke are not used, so both are accepted.
 fn version_is_supported(v: &str) -> bool {
-    v.strip_prefix('v').unwrap_or(v).starts_with("1.")
+    let v = v.strip_prefix('v').unwrap_or(v);
+    v.starts_with("1.") || v.starts_with("2.")
 }
 
 fn load() -> Result<Api, String> {
@@ -119,7 +165,7 @@ fn load() -> Result<Api, String> {
         };
         if !version_is_supported(&found) {
             return Err(format!(
-                "{} is DuckDB {}, but sucher needs 1.x; set SUCHER_DUCKDB_LIB to a 1.x libduckdb",
+                "{} is DuckDB {}, but sucher needs 1.x or 2.x; set SUCHER_DUCKDB_LIB to a 1.x or 2.x libduckdb",
                 path.display(),
                 if found.is_empty() {
                     "of unknown version"
@@ -137,9 +183,16 @@ fn load() -> Result<Api, String> {
             destroy_result: sym!(b"duckdb_destroy_result"),
             result_error: sym!(b"duckdb_result_error"),
             column_count: sym!(b"duckdb_column_count"),
-            row_count: sym!(b"duckdb_row_count"),
-            value_varchar: sym!(b"duckdb_value_varchar"),
-            free: sym!(b"duckdb_free"),
+            column_type: sym!(b"duckdb_column_type"),
+            fetch_chunk: sym!(b"duckdb_fetch_chunk"),
+            destroy_chunk: sym!(b"duckdb_destroy_data_chunk"),
+            chunk_size: sym!(b"duckdb_data_chunk_get_size"),
+            chunk_vector: sym!(b"duckdb_data_chunk_get_vector"),
+            vector_data: sym!(b"duckdb_vector_get_data"),
+            vector_validity: sym!(b"duckdb_vector_get_validity"),
+            row_is_valid: sym!(b"duckdb_validity_row_is_valid"),
+            string_length: sym!(b"duckdb_string_t_length"),
+            string_data: sym!(b"duckdb_string_t_data"),
             _lib: lib,
         };
         Ok(api)
@@ -170,8 +223,8 @@ fn lib_file_name() -> &'static str {
 /// 3. one directory up, which is where a `cargo test` binary sits relative to the
 ///    profile directory the staged copy lands in (`target/debug/deps/…`),
 /// 4. `libexec` beside the real (symlink-resolved) executable, where the
-///    Homebrew formula puts its 1.x copy: Homebrew's own `duckdb` owns
-///    `lib/libduckdb.dylib` and is 2.x, which the version gate refuses,
+///    Homebrew formula puts its pinned copy, ahead of Homebrew's own `duckdb`
+///    in `lib/libduckdb.dylib`,
 /// 5. common system library directories.
 ///
 /// Returns `None` if not found; the caller then reports the data file as
@@ -247,8 +300,7 @@ impl Table {
     }
 
     /// Cell `(row, col)` parsed as an integer, `0` when absent or unparseable.
-    /// Used for `count(*)` and `row_number()`, which DuckDB renders as digits
-    /// through the same VARCHAR conversion as everything else.
+    /// Used for `count(*)` and `row_number()`.
     pub fn int(&self, row: usize, col: usize) -> i64 {
         self.text(row, col).trim().parse().unwrap_or(0)
     }
@@ -291,17 +343,24 @@ impl Connection {
     /// rides on this, `open_conn` sends both `SET` pragmas as one batch, so
     /// `execute_batch_runs_every_statement` asserts it rather than assuming it.
     pub fn execute_batch(&self, sql: &str) -> Result<(), String> {
-        self.query(sql).map(|_| ())
+        // Not `query`: a batch's last statement may yield a type `query` does not
+        // decode (nobody reads it), and that must not fail the batch.
+        self.run(sql, false).map(|_| ())
     }
 
     /// Run one statement and materialise the whole result as text.
     pub fn query(&self, sql: &str) -> Result<Table, String> {
+        self.run(sql, true)
+    }
+
+    fn run(&self, sql: &str, read: bool) -> Result<Table, String> {
         let api = api()?;
         let c_sql = CString::new(sql).map_err(|_| "query contains a NUL byte".to_string())?;
         let mut raw = RawResult::zeroed();
         // SAFETY: `raw` matches `duckdb_result`'s layout and outlives every call
-        // below; it is destroyed on both the success and the error path. Each
-        // `value_varchar` pointer is owned by us and freed with `duckdb_free`.
+        // below; it is destroyed on every path. Chunks are owned by us and
+        // destroyed after each read; vector and string pointers are borrowed from
+        // the chunk and copied out before it goes.
         unsafe {
             let state = (api.query)(self.con, c_sql.as_ptr(), &mut raw);
             if state != 0 {
@@ -314,25 +373,114 @@ impl Connection {
                 (api.destroy_result)(&mut raw);
                 return Err(msg);
             }
+            if !read {
+                (api.destroy_result)(&mut raw);
+                return Ok(Table { rows: Vec::new() });
+            }
             let ncols = (api.column_count)(&mut raw) as usize;
-            let nrows = (api.row_count)(&mut raw) as usize;
-            let mut rows = Vec::with_capacity(nrows);
-            for r in 0..nrows {
-                let mut row = Vec::with_capacity(ncols);
-                for c in 0..ncols {
-                    let p = (api.value_varchar)(&mut raw, c as Idx, r as Idx);
-                    if p.is_null() {
-                        // NULL, and also any value DuckDB declines to convert.
-                        row.push(None);
-                    } else {
-                        row.push(Some(CStr::from_ptr(p).to_string_lossy().into_owned()));
-                        (api.free)(p as *mut c_void);
+            let types: Vec<i32> = (0..ncols)
+                .map(|c| (api.column_type)(&mut raw, c as Idx))
+                .collect();
+            if let Some((c, t)) = types.iter().enumerate().find(|(_, t)| !decodable(**t)) {
+                (api.destroy_result)(&mut raw);
+                return Err(format!(
+                    "column {c} has DuckDB type id {t}, which sucher does not decode; \
+                     CAST it to VARCHAR"
+                ));
+            }
+            let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+            loop {
+                let mut chunk = (api.fetch_chunk)(raw);
+                if chunk.is_null() {
+                    break;
+                }
+                let n = (api.chunk_size)(chunk) as usize;
+                let first = rows.len();
+                rows.resize_with(first + n, || Vec::with_capacity(ncols));
+                for (c, &t) in types.iter().enumerate() {
+                    if t == ty::SQLNULL {
+                        for row in &mut rows[first..] {
+                            row.push(None);
+                        }
+                        continue;
+                    }
+                    let vec = (api.chunk_vector)(chunk, c as Idx);
+                    let data = (api.vector_data)(vec) as *mut u8;
+                    let validity = (api.vector_validity)(vec);
+                    for r in 0..n {
+                        // A null validity mask means every row is valid.
+                        let valid = validity.is_null() || (api.row_is_valid)(validity, r as Idx);
+                        rows[first + r].push(if valid {
+                            Some(cell(api, t, data, r))
+                        } else {
+                            None
+                        });
                     }
                 }
-                rows.push(row);
+                (api.destroy_chunk)(&mut chunk);
             }
             (api.destroy_result)(&mut raw);
             Ok(Table { rows })
+        }
+    }
+}
+
+fn decodable(t: i32) -> bool {
+    matches!(
+        t,
+        ty::BOOLEAN
+            | ty::TINYINT
+            | ty::SMALLINT
+            | ty::INTEGER
+            | ty::BIGINT
+            | ty::UTINYINT
+            | ty::USMALLINT
+            | ty::UINTEGER
+            | ty::UBIGINT
+            | ty::HUGEINT
+            | ty::UHUGEINT
+            | ty::VARCHAR
+            | ty::SQLNULL
+    )
+}
+
+/// Render row `r` of a flat vector of type `t` the way DuckDB's VARCHAR cast
+/// does. `t` has passed `decodable`.
+///
+/// # Safety
+/// `data` must be the data pointer of a vector of type `t` with more than `r` rows.
+unsafe fn cell(api: &Api, t: i32, data: *mut u8, r: usize) -> String {
+    macro_rules! at {
+        ($ty:ty) => {
+            data.cast::<$ty>().add(r).read_unaligned()
+        };
+    }
+    match t {
+        ty::BOOLEAN => (if at!(u8) != 0 { "true" } else { "false" }).to_string(),
+        ty::TINYINT => at!(i8).to_string(),
+        ty::SMALLINT => at!(i16).to_string(),
+        ty::INTEGER => at!(i32).to_string(),
+        ty::BIGINT => at!(i64).to_string(),
+        ty::UTINYINT => at!(u8).to_string(),
+        ty::USMALLINT => at!(u16).to_string(),
+        ty::UINTEGER => at!(u32).to_string(),
+        ty::UBIGINT => at!(u64).to_string(),
+        // `duckdb_hugeint` is { lower: u64, upper: i64 }.
+        ty::HUGEINT => {
+            let lo = at!(u64) as u128;
+            let hi = data.cast::<i64>().add(r * 2 + 1).read_unaligned();
+            ((hi as i128) << 64 | lo as i128).to_string()
+        }
+        ty::UHUGEINT => {
+            let lo = at!(u64) as u128;
+            let hi = data.cast::<u64>().add(r * 2 + 1).read_unaligned() as u128;
+            (hi << 64 | lo).to_string()
+        }
+        _ => {
+            let mut s = data.cast::<StringT>().add(r).read_unaligned();
+            let len = (api.string_length)(StringT { a: s.a, b: s.b }) as usize;
+            let p = (api.string_data)(&mut s) as *const u8;
+            String::from_utf8_lossy(std::slice::from_raw_parts(p, len)).into_owned()
         }
     }
 }
@@ -365,10 +513,11 @@ mod tests {
     }
 
     #[test]
-    fn only_duckdb_1x_passes_the_version_gate() {
+    fn duckdb_1x_and_2x_pass_the_version_gate() {
         assert!(version_is_supported("v1.5.5"));
         assert!(version_is_supported("1.0.0"));
-        assert!(!version_is_supported("v2.0.0"));
+        assert!(version_is_supported("v2.0.0"));
+        assert!(!version_is_supported("v3.0.0"));
         assert!(!version_is_supported("v0.10.2"));
         assert!(!version_is_supported(""));
     }
@@ -448,6 +597,82 @@ mod tests {
             .query("SELECT current_setting('autoload_known_extensions')")
             .expect("read flag");
         assert_eq!(flag.text(0, 0), "false", "the second SET took effect");
+    }
+
+    #[test]
+    fn every_decoded_type_renders_as_the_old_varchar_accessor_did() {
+        // Expected strings were produced by `duckdb_value_varchar` on 1.5.5.
+        let c = conn();
+        let t = c
+            .query(
+                "SELECT true, false, (-5)::TINYINT, (-300)::SMALLINT, (-70000)::INTEGER, \
+                 (-5000000000)::BIGINT, 200::UTINYINT, 60000::USMALLINT, \
+                 4000000000::UINTEGER, 18446744073709551615::UBIGINT, \
+                 (-170141183460469231731687303715884105728)::HUGEINT, \
+                 340282366920938463463374607431768211455::UHUGEINT, \
+                 'short', 'a string well past the twelve byte inline limit', '', \
+                 'h\u{e9}llo \u{4e16}\u{754c}', NULL::INTEGER, NULL::VARCHAR",
+            )
+            .expect("query");
+        let want = [
+            Some("true"),
+            Some("false"),
+            Some("-5"),
+            Some("-300"),
+            Some("-70000"),
+            Some("-5000000000"),
+            Some("200"),
+            Some("60000"),
+            Some("4000000000"),
+            Some("18446744073709551615"),
+            Some("-170141183460469231731687303715884105728"),
+            Some("340282366920938463463374607431768211455"),
+            Some("short"),
+            Some("a string well past the twelve byte inline limit"),
+            Some(""),
+            Some("h\u{e9}llo \u{4e16}\u{754c}"),
+            None,
+            None,
+        ];
+        let got: Vec<Option<&str>> = t.rows()[0].iter().map(|v| v.as_deref()).collect();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn types_cast_to_varchar_keep_duckdbs_rendering() {
+        // The path data.rs takes for everything else: DuckDB renders, we copy.
+        let c = conn();
+        let t = c
+            .query(
+                "SELECT CAST(DATE '2024-02-29' AS VARCHAR), CAST(1.50::DECIMAL(5,2) AS VARCHAR), \
+                 CAST([1, NULL, 3] AS VARCHAR), CAST({'a': 1, 'b': 'x'} AS VARCHAR), \
+                 CAST('\\xAA\\xBB'::BLOB AS VARCHAR), CAST(1.0::DOUBLE AS VARCHAR)",
+            )
+            .expect("query");
+        assert_eq!(t.text(0, 0), "2024-02-29");
+        assert_eq!(t.text(0, 1), "1.50");
+        assert_eq!(t.text(0, 2), "[1, NULL, 3]");
+        assert_eq!(t.text(0, 3), "{'a': 1, 'b': x}");
+        assert_eq!(t.text(0, 4), "\\xAA\\xBB");
+        assert_eq!(t.text(0, 5), "1.0");
+    }
+
+    #[test]
+    fn an_undecoded_type_is_an_error_not_a_wrong_cell() {
+        let c = conn();
+        let err = c.query("SELECT DATE '2024-02-29'").expect_err("date");
+        assert!(err.contains("column 0") && err.contains("VARCHAR"), "{err}");
+    }
+
+    #[test]
+    fn results_spanning_several_chunks_arrive_whole() {
+        let c = conn();
+        let t = c
+            .query("SELECT i, CAST(i AS VARCHAR) FROM range(5000) t(i)")
+            .expect("query");
+        assert_eq!(t.rows().len(), 5000);
+        assert_eq!(t.int(4999, 0), 4999);
+        assert_eq!(t.text(4999, 1), "4999");
     }
 
     #[test]

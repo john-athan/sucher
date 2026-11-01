@@ -174,10 +174,11 @@ binary. DuckDB itself isn't linked in: `duckdyn.rs` loads `libduckdb.dylib` (or
 formula installs that copy into its own `libexec`; a plain
 `cargo install sucher` places no sidecar, so Parquet/JSONL/DuckDB only open if
 a `libduckdb` is already reachable one of those ways or via `SUCHER_DUCKDB_LIB`,
-otherwise the file reports the library missing rather than opening. Only a
-DuckDB 1.x library is accepted (the binding is written against its C ABI), so
-a 2.x copy, such as current Homebrew `duckdb`, is refused with a message naming
-the version; point `SUCHER_DUCKDB_LIB` at a 1.x one. If you
+otherwise the file reports the library missing rather than opening. A
+DuckDB 1.x or 2.x library is accepted (the binding reads results through the
+chunk API both share), so Homebrew's own `duckdb` works too; any other major is
+refused with a message naming the version, and `SUCHER_DUCKDB_LIB` points at a
+different library. If you
 don't want even that weight, `cargo install sucher --no-default-features`
 drops the `data` feature entirely (Parquet then falls back to the hexdump and
 JSONL to the text viewer).
