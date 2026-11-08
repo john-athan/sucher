@@ -43,7 +43,7 @@ strip = true
 pulldown-cmark = "0.13"
 ratatui = "0.30"
 crossterm = "0.29"
-calamine = "0.37"
+calamine = "0.38"
 ratatui-image = { version = "11", default-features = false, features = ["crossterm", "image-defaults"] }
 image = "0.25"
 zip = "9"
@@ -85,7 +85,7 @@ libloading = { version = "0.9", optional = true }
 rusqlite = { version = "0.41", features = ["bundled"], optional = true }
 trash = "5"
 mail-parser = { version = "1.0.0", features = ["full_encoding"] }
-cfb = "0.15.0"
+cfb = "0.16.0"
 
 # build.rs: fetch (curl) + checksum (sha2) + unpack (flate2/tar) the pinned
 # libpdfium for the build target. flate2/tar mirror the runtime deps' versions.
