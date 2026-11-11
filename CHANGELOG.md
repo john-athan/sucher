@@ -9,6 +9,7 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 ### Changed
 - data files now read through DuckDB's chunk API and work with DuckDB 2.x libraries too
 - zip 9.1.3, resvg 0.49.0, ignore 0.4.34, rusqlite 0.41.1, mail-parser 1.0.0
+- pulldown-cmark 0.13.6, calamine 0.38.0, zip 9.5.1, toml 1.2.1, pdfium-render 0.9.5, mail-parser 1.0.1, cfb 0.16.0
 
 ## [0.9.6] - 2026-10-31
 
