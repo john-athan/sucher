@@ -1683,7 +1683,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `core-foundation-sys 0.8.7`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`
+Used by `core-foundation-sys 0.8.7`, `string_cache 0.11.0`, `string_cache_codegen 0.11.2`
 
 ```
 Copyright (c) 2012-2013 Mozilla Foundation
@@ -1909,7 +1909,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `html5ever 0.39.0`, `markup5ever 0.39.0`, `markup5ever_rcdom 0.39.0+unofficial`, `web_atoms 0.2.6`, `xml5ever 0.39.0`
+Used by `html5ever 0.40.1`, `markup5ever 0.40.0`, `markup5ever_rcdom 0.40.1+unofficial`, `web_atoms 0.3.0`, `xml5ever 0.40.0`
 
 ```
 Copyright (c) 2014 The html5ever Project Developers
@@ -6227,7 +6227,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `phf 0.13.1`, `phf_codegen 0.13.1`, `phf_generator 0.13.1`, `phf_shared 0.13.1`
+Used by `phf 0.14.0`, `phf_codegen 0.14.0`, `phf_generator 0.14.0`, `phf_shared 0.14.0`
 
 ```
 The MIT License (MIT)

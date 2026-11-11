@@ -34,7 +34,7 @@ pub(crate) fn markdown_from_str(html: &str) -> String {
 /// Lowercased tag name of an element node, else None.
 fn tag_of(node: &Handle) -> Option<String> {
     match &node.data {
-        NodeData::Element { name, .. } => Some(name.local.as_ref().to_ascii_lowercase()),
+        NodeData::Element { name, .. } => Some(str::to_ascii_lowercase(&name.local)),
         _ => None,
     }
 }
@@ -43,7 +43,7 @@ fn tag_of(node: &Handle) -> Option<String> {
 fn attr(node: &Handle, key: &str) -> Option<String> {
     if let NodeData::Element { attrs, .. } = &node.data {
         for a in attrs.borrow().iter() {
-            if a.name.local.as_ref().eq_ignore_ascii_case(key) {
+            if str::eq_ignore_ascii_case(&a.name.local, key) {
                 return Some(a.value.to_string());
             }
         }
