@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-11-11
+
 ### Changed
 - html5ever 0.40 and markup5ever_rcdom 0.40.1 for HTML previews
 
