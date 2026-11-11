@@ -658,8 +658,10 @@ text-sizing protocol.
   which the headless rasteriser doesn't load, so text elements may not appear.
 - Archives are listed and folder-navigable, but never extracted: you can browse
   into directories, though individual entries can't be opened or unpacked.
-- Spreadsheet dates show as serial numbers (style table isn't read); the
-  streaming reader caps very large sheets. (Data files don't have this wart,
+- Spreadsheet dates show as serial numbers: the streaming xlsx reader doesn't
+  read the style table, and for xls/xlsb sucher prints calamine's date cells as
+  the raw serial instead of formatting them; the streaming reader caps very
+  large sheets. (Data files don't have this wart,
   DuckDB renders dates as ISO text.)
 - Data files are **read-only**: databases are attached `READ_ONLY`, and there's
   no writing or editing. A `.db` that isn't actually SQLite errors on open rather
