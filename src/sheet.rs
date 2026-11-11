@@ -6,7 +6,7 @@
 // The grid renders only the visible window and tracks the cursor.
 
 use crate::xlsx::StreamBook;
-use calamine::{open_workbook_auto, Data, Reader};
+use calamine::{open_workbook_auto, Data, ExcelDateTime, Reader};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -48,8 +48,121 @@ fn fmt_cell(d: &Data) -> String {
         Data::Int(i) => i.to_string(),
         Data::Bool(b) => b.to_string(),
         Data::Error(e) => format!("#{e:?}"),
-        other => other.to_string(),
+        Data::DateTime(dt) => fmt_excel(dt),
+        Data::DateTimeIso(s) => fmt_iso_datetime(s),
+        Data::DurationIso(s) => fmt_iso_duration(s),
     }
+}
+
+// Whole-hours-and-minutes clock text; seconds only when they carry information,
+// so a column of dates and times stays narrow inside COL_W.
+fn clock(h: u32, m: u32, s: u32) -> String {
+    if s == 0 {
+        format!("{h:02}:{m:02}")
+    } else {
+        format!("{h:02}:{m:02}:{s:02}")
+    }
+}
+
+// calamine's own conversion already applies the 1900 leap-year bug and the 1904
+// epoch, so the serial is not re-derived here. Milliseconds are dropped: Excel
+// shows none unless the format asks, and rounding would carry into the minute.
+fn fmt_excel(dt: &ExcelDateTime) -> String {
+    let v = dt.as_f64();
+    if !v.is_finite() {
+        return v.to_string();
+    }
+    if dt.is_duration() {
+        // [h]:MM:SS: hours are not capped at 24, which is the point of a duration.
+        let total = (v.abs() * 86400.0).round() as u64;
+        let sign = if v < 0.0 { "-" } else { "" };
+        return format!(
+            "{sign}{}:{:02}:{:02}",
+            total / 3600,
+            total / 60 % 60,
+            total % 60
+        );
+    }
+    // A serial below 1 is a bare time of day; its date part would be the epoch.
+    // Rounding to the second first keeps 0.99999999 from showing as 23:59:59.
+    let secs = (v.fract().abs() * 86400.0).round() as u32;
+    let (h, m, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    if (0.0..1.0).contains(&v) {
+        return clock(h, m, s);
+    }
+    let (y, mo, d, ..) = dt.to_ymd_hms_milli();
+    let date = format!("{y:04}-{mo:02}-{d:02}");
+    if secs == 0 {
+        date
+    } else {
+        format!("{date} {}", clock(h, m, s))
+    }
+}
+
+// ods dates arrive as ISO text: `2024-03-05`, `2024-03-05T00:00:00` or with a
+// time and optional fraction. Anything unexpected is shown untouched.
+fn fmt_iso_datetime(s: &str) -> String {
+    let Some((date, time)) = s.split_once('T') else {
+        return s.to_string();
+    };
+    let time = time.split(['.', 'Z', '+']).next().unwrap_or("");
+    let mut it = time.split(':').map(|p| p.parse::<u32>());
+    let (Some(Ok(h)), Some(Ok(m)), sec) = (it.next(), it.next(), it.next()) else {
+        return s.to_string();
+    };
+    let sec = match sec {
+        None => 0,
+        Some(Ok(v)) => v,
+        Some(Err(_)) => return s.to_string(),
+    };
+    if h == 0 && m == 0 && sec == 0 {
+        date.to_string()
+    } else {
+        format!("{date} {}", clock(h, m, sec))
+    }
+}
+
+// ods durations are `PT1H30M5S` (days as `P1DT..` and fractional seconds occur).
+fn fmt_iso_duration(s: &str) -> String {
+    let parse = || -> Option<String> {
+        let (neg, rest) = match s.strip_prefix('-') {
+            Some(r) => (true, r),
+            None => (false, s),
+        };
+        let rest = rest.strip_prefix('P')?;
+        let (days, time) = rest.split_once('T').unwrap_or((rest, ""));
+        let mut secs = 0f64;
+        for (part, in_time) in [(days, false), (time, true)] {
+            let mut num = String::new();
+            for c in part.chars() {
+                if c.is_ascii_digit() || c == '.' {
+                    num.push(c);
+                    continue;
+                }
+                let v: f64 = num.parse().ok()?;
+                num.clear();
+                secs += v * match (c, in_time) {
+                    ('D', false) => 86400.0,
+                    ('H', true) => 3600.0,
+                    ('M', true) => 60.0,
+                    ('S', true) => 1.0,
+                    _ => return None,
+                };
+            }
+            if !num.is_empty() {
+                return None;
+            }
+        }
+        let total = secs.round() as u64;
+        Some(format!(
+            "{}{}:{:02}:{:02}",
+            if neg { "-" } else { "" },
+            total / 3600,
+            total / 60 % 60,
+            total % 60
+        ))
+    };
+    parse().unwrap_or_else(|| s.to_string())
 }
 
 impl MemBook {
@@ -934,8 +1047,61 @@ fn truncate(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_delimited, preview_grid};
+    use super::{fmt_cell, parse_delimited, preview_grid};
+    use calamine::{Data, ExcelDateTime, ExcelDateTimeType};
     use std::io::Write;
+
+    fn xl(v: f64, ty: ExcelDateTimeType, is_1904: bool) -> String {
+        fmt_cell(&Data::DateTime(ExcelDateTime::new(v, ty, is_1904)))
+    }
+
+    fn date(v: f64) -> String {
+        xl(v, ExcelDateTimeType::DateTime, false)
+    }
+
+    #[test]
+    fn excel_serial_1900_leap_bug_boundary() {
+        assert_eq!(date(59.0), "1900-02-28");
+        assert_eq!(date(61.0), "1900-03-01");
+    }
+
+    #[test]
+    fn excel_serial_modern_date_and_time_parts() {
+        assert_eq!(date(45356.0), "2024-03-05");
+        assert_eq!(date(45356.5), "2024-03-05 12:00");
+        assert_eq!(date(45356.5 + 30.0 / 86400.0), "2024-03-05 12:00:30");
+        // Pure time of day has no date part.
+        assert_eq!(date(0.75), "18:00");
+        assert_eq!(date(0.5 + 15.0 / 86400.0), "12:00:15");
+    }
+
+    #[test]
+    fn excel_serial_1904_system() {
+        // 1904-01-01 is serial 0 there; 1904 is a leap year, so four years are 1461 days.
+        assert_eq!(xl(1461.0, ExcelDateTimeType::DateTime, true), "1908-01-01");
+        assert_eq!(xl(43894.0, ExcelDateTimeType::DateTime, true), "2024-03-05");
+    }
+
+    #[test]
+    fn excel_duration_hours_are_not_wrapped() {
+        assert_eq!(xl(1.5, ExcelDateTimeType::TimeDelta, false), "36:00:00");
+        assert_eq!(xl(0.0625, ExcelDateTimeType::TimeDelta, false), "1:30:00");
+    }
+
+    #[test]
+    fn ods_iso_dates_and_durations() {
+        let iso = |s: &str| fmt_cell(&Data::DateTimeIso(s.into()));
+        let dur = |s: &str| fmt_cell(&Data::DurationIso(s.into()));
+        assert_eq!(iso("2024-03-05T00:00:00"), "2024-03-05");
+        assert_eq!(iso("2024-03-05"), "2024-03-05");
+        assert_eq!(iso("2024-03-05T13:45:00"), "2024-03-05 13:45");
+        assert_eq!(iso("2024-03-05T13:45:09.250"), "2024-03-05 13:45:09");
+        assert_eq!(iso("garbage"), "garbage");
+        assert_eq!(dur("PT1H30M"), "1:30:00");
+        assert_eq!(dur("PT36H0M5S"), "36:00:05");
+        assert_eq!(dur("P1DT2H"), "26:00:00");
+        assert_eq!(dur("nonsense"), "nonsense");
+    }
 
     fn csv(text: &str) -> Vec<Vec<String>> {
         parse_delimited(text, ',')
