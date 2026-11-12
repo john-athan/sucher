@@ -109,8 +109,7 @@ impl StreamBook {
     pub fn window(&self, r0: usize, r1: usize, c0: usize, c1: usize) -> Vec<Vec<String>> {
         let d = self.data.lock().unwrap();
         let mut out = Vec::new();
-        for r in r0..r1.min(d.rows.len()) {
-            let row = &d.rows[r];
+        for row in d.rows.iter().take(r1).skip(r0) {
             let mut line = Vec::with_capacity(c1.saturating_sub(c0));
             for c in c0..c1 {
                 line.push(row.get(c).cloned().unwrap_or_default());
