@@ -16,7 +16,7 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 351 |
+| MIT License | 352 |
 | BSD 3-Clause "New" or "Revised" License | 13 |
 | Apache License 2.0 | 7 |
 | BSD 2-Clause "Simplified" License | 5 |
@@ -3407,6 +3407,40 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
+Used by `getrandom 0.3.4`
+
+```
+Copyright (c) 2018-2025 The rust-random Project Developers
+Copyright (c) 2014 The Rust Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+### MIT License
+
 Used by `rand_core 0.10.1`
 
 ```
@@ -6156,7 +6190,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `zip 9.7.2`
+Used by `zip 9.7.3`
 
 ```
 The MIT License (MIT)
