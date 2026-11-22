@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/social-preview.png" alt="sucher, fast terminal viewer and directory browser for markdown, spreadsheets, PDF, images, SVG, video, docx, pptx, Keynote, archives and more" width="820">
+  <img src="assets/logo.svg" width="96" alt="sucher: a terminal window with a magnifier over a pixel image">
 </p>
 
 # sucher
