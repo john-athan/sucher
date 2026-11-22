@@ -6,6 +6,16 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-11-22
+
+### Changed
+- Cargo.toml author address is admin@kaleve.dev, not the private one
+- zip 9.7.3, with THIRD_PARTY_LICENSES.md regenerated: the dependabot PR failed only because the notices it invalidated were not rebuilt
+- The social card's source is now social-preview.svg; the PIL script that drew the old card without the logo is gone
+- Add a logo and a social card that carries it, and put the logo at the top of the README
+- Run CI through tools/validate.sh, which calls make check
+- Fleet base from oss-kit: dependabot generated from the repo's kinds, runtime versions in pin files that CI reads, and what else the fleet now requires here (licence, check script, Info.plist as version source)
+
 ## [0.9.9] - 2026-11-22
 
 ### Fixed
