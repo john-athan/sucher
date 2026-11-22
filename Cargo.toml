@@ -2,7 +2,7 @@
 name = "sucher"
 version = "0.9.9"
 edition = "2024"
-authors = ["Jonathan Kaleve <jonathan.kaleve@gmail.com>"]
+authors = ["Jonathan Kaleve <admin@kaleve.dev>"]
 description = "A fast terminal viewer for files that are awkward in a browser: markdown, spreadsheets, PDF, images, video, docx, pptx, Keynote, email, archives and binary."
 license = "MIT"
 readme = "README.md"
