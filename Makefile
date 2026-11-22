@@ -15,7 +15,8 @@ CARGO_BIN := $(HOME)/.cargo/bin
 .PHONY: build install link uninstall run notices deny check
 
 # Everything CI checks, in the order CI checks it, runnable here first. `oss
-# check sucher` calls exactly this, and so does .github/workflows/ci.yml, so
+# check sucher` calls tools/validate.sh, which runs exactly this, and so does
+# .github/workflows/ci.yml through it, so
 # there is one definition of what "green" means rather than three.
 check:
 	cargo fmt --check

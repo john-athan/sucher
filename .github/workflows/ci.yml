@@ -1,9 +1,9 @@
 name: CI
 
-# A caller, never a container. Everything below is `make check`, which is the
-# same target `oss check sucher` runs and the same one to run by hand before a
-# push. There is one definition of what green means, in the Makefile, rather
-# than one here and a different one on the machine the code was written on.
+# A caller, never a container. The last step is tools/validate.sh, which runs
+# `make check`: the same script `oss check sucher` runs and the one to run by
+# hand before a push. There is one definition of what green means, rather than
+# one here and a different one on the machine the code was written on.
 
 on:
   push:
@@ -46,5 +46,5 @@ jobs:
       - name: Install cargo-about
         run: cargo install cargo-about --locked --features cli --version "$(cat .cargo-about-version)"
 
-      - name: Check
-        run: make check
+      - name: Validate
+        run: tools/validate.sh
