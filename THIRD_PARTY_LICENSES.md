@@ -16,15 +16,15 @@ dependency graph is listed in `THIRD_PARTY.md`.
 
 | License | Crates |
 | --- | --- |
-| MIT License | 348 |
+| MIT License | 351 |
 | BSD 3-Clause "New" or "Revised" License | 13 |
 | Apache License 2.0 | 7 |
 | BSD 2-Clause "Simplified" License | 5 |
+| Unicode License v3 | 5 |
 | zlib License | 3 |
 | MIT No Attribution | 2 |
 | ISC License | 1 |
 | Mozilla Public License 2.0 | 1 |
-| Unicode License v3 | 1 |
 | bzip2 and libbzip2 License v1.0.6 | 1 |
 
 ## Full texts
@@ -1509,7 +1509,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ### ISC License
 
-Used by `libloading 0.9.0`
+Used by `libloading 0.9.1`
 
 ```
 Copyright © 2015, Simonas Kazlauskas
@@ -1942,7 +1942,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `libsqlite3-sys 0.39.1`, `rusqlite 0.41.1`
+Used by `libsqlite3-sys 0.40.0`, `rusqlite 0.43.0`
 
 ```
 Copyright (c) 2014 The rusqlite developers
@@ -3540,7 +3540,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `font-types 0.12.7`, `read-fonts 0.41.0`, `skrifa 0.44.0`
+Used by `font-types 0.12.7`, `read-fonts 0.46.0`, `skrifa 0.49.0`
 
 ```
 Copyright (c) 2019 Fontations Developers
@@ -4500,7 +4500,22 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `resvg 0.49.0`, `usvg 0.49.0`
+Used by `synstructure 0.14.0`
+
+```
+Copyright 2016 Nika Layzell
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+```
+
+### MIT License
+
+Used by `resvg 0.50.0`, `usvg 0.50.0`
 
 ```
 Copyright 2017 the Resvg Authors
@@ -4567,7 +4582,7 @@ DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `trash 5.3.0`
+Used by `trash 5.4.0`
 
 ```
 Copyright 2019 Artúr Barnabás Kovács
@@ -6141,7 +6156,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `zip 9.5.1`
+Used by `zip 9.7.2`
 
 ```
 The MIT License (MIT)
@@ -6255,7 +6270,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ### MIT License
 
-Used by `aho-corasick 1.1.5`, `byteorder-lite 0.1.0`, `byteorder 1.5.0`, `encoding_rs_io 0.1.8`, `globset 0.4.21`, `grep-matcher 0.1.9`, `grep-regex 0.1.14`, `grep-searcher 0.1.17`, `ignore 0.4.34`, `memchr 2.8.3`, `walkdir 2.5.0`
+Used by `aho-corasick 1.1.5`, `byteorder-lite 0.1.0`, `byteorder 1.5.0`, `encoding_rs_io 0.1.8`, `globset 0.4.21`, `grep-matcher 0.1.9`, `grep-regex 0.1.14`, `grep-searcher 0.1.17`, `ignore 0.4.34`, `jiff-core 1.0.1`, `jiff 1.0.2`, `memchr 2.8.3`, `walkdir 2.5.0`
 
 ```
 The MIT License (MIT)
@@ -6935,7 +6950,7 @@ THE SOFTWARE.
 
 ### MIT License
 
-Used by `harfrust 0.12.0`
+Used by `harfrust 0.15.0`
 
 ```
 The MIT License (MIT)
@@ -7566,6 +7581,60 @@ Except as contained in this notice, the name of a copyright holder shall
 not be used in advertising or otherwise to promote the sale, use or other
 dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
+
+```
+
+### Unicode License v3
+
+Used by `yoke-derive 0.8.4`, `yoke 0.8.4`, `zerofrom-derive 0.1.8`, `zerofrom 0.1.8`
+
+```
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 2020-2024 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+
+SPDX-License-Identifier: Unicode-3.0
+
+—
+
+Portions of ICU4X may have been adapted from ICU4C and/or ICU4J.
+ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation and others.
 
 ```
 
