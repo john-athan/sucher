@@ -5613,7 +5613,7 @@ SOFTWARE.
 
 ### MIT License
 
-Used by `sucher 0.9.8`
+Used by `sucher 0.9.9`
 
 ```
 MIT License

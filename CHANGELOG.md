@@ -6,6 +6,8 @@ versioning while pre-1.0 (breaking changes may land in minor releases).
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-11-22
+
 ### Fixed
 - xls, xlsb and ods previews show dates, times and durations instead of raw serial numbers or ISO strings; xlsx still shows serials
 
