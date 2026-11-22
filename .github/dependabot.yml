@@ -1,35 +1,31 @@
 version: 2
-updates:
-  - package-ecosystem: cargo
-    directory: "/"
-    schedule:
-      interval: weekly
-      day: "sunday"
-      time: "06:00"
-      timezone: "Europe/Berlin"
-    open-pull-requests-limit: 1
-    groups:
-      cargo:
-        patterns:
-          - "*"
-        update-types:
-          - major
-          - minor
-          - patch
 
-  - package-ecosystem: github-actions
+# One pull request per ecosystem per week, majors included. They are reviewed
+# and merged together with `oss update --merge`, which is what keeps two repos
+# built from the same template from drifting apart.
+updates:
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
       day: "sunday"
       time: "06:00"
       timezone: "Europe/Berlin"
     open-pull-requests-limit: 1
     groups:
       github-actions:
-        patterns:
-          - "*"
-        update-types:
-          - major
-          - minor
-          - patch
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
+
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 1
+    groups:
+      cargo:
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
