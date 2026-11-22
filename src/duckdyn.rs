@@ -253,6 +253,15 @@ fn resolve_library_path() -> Option<PathBuf> {
             dirs.push(keg);
         }
     }
+    // Cargo 1.100 builds unit-test binaries inside the build directory
+    // (`target/debug/build/sucher/<hash>/out/`), not `target/debug/deps/`, so
+    // neither of the directories above reaches the profile directory where
+    // build.rs staged the library. OUT_DIR is that same build directory, four
+    // levels below the profile directory.
+    #[cfg(test)]
+    if let Some(profile) = std::path::Path::new(env!("OUT_DIR")).ancestors().nth(4) {
+        dirs.push(profile.to_path_buf());
+    }
     #[cfg(target_os = "macos")]
     {
         dirs.push(PathBuf::from("/opt/homebrew/lib"));

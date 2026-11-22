@@ -242,11 +242,13 @@ fn thin_to_host_arch(lib: &Path) {
 /// (`<profile>/build/<pkg>-<hash>/out`). `None` if the layout is not that shape,
 /// in which case the sidecar is simply not staged.
 fn profile_dir(out: &Path) -> Option<PathBuf> {
-    let build = out.parent()?.parent()?;
-    if build.file_name()? != "build" {
-        return None;
-    }
-    Some(build.parent()?.to_path_buf())
+    // OUT_DIR is `<profile>/build/<pkg>-<hash>/out` in the classic layout and
+    // `<profile>/build/<pkg>/<hash>/out` since Cargo 1.100, so look for the
+    // `build` directory rather than counting levels.
+    out.ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == "build"))
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
 }
 
 fn warn(msg: &str) {
