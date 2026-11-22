@@ -78,9 +78,9 @@ use super::plan::{Kind, Node, NodeKind, Plan, Step};
 use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// How often progress is allowed onto the channel. The UI polls at 60 ms, so a
@@ -422,7 +422,11 @@ fn trash_only_note(paths: &[PathBuf]) -> String {
     format!(
         "{} went to the system trash, and that is where {} come back from: sucher does not restore from it",
         named.join(", "),
-        if paths.len() == 1 { "it does" } else { "they do" }
+        if paths.len() == 1 {
+            "it does"
+        } else {
+            "they do"
+        }
     )
 }
 
@@ -603,7 +607,7 @@ impl<'a> Exec<'a> {
                     "cannot move {} to {}: {e}",
                     step.src.display(),
                     step.dest.display()
-                ))
+                ));
             }
         }
         self.journal.steps.push(Undoable::Moved {
@@ -1007,7 +1011,7 @@ fn raw_cross_device(_e: &io::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fileop::plan::{plan, Conflict, Op, PlanCtx, Source};
+    use crate::fileop::plan::{Conflict, Op, PlanCtx, Source, plan};
     use std::fs;
     use std::sync::Mutex;
     use tempfile::TempDir;

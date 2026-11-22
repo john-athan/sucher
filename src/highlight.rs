@@ -512,9 +512,10 @@ mod tests {
         assert_eq!(lines[0][0].kind, TokenKind::Comment);
         // After the close on line 2, `let` is a keyword again.
         let l2 = &lines[1];
-        assert!(l2
-            .iter()
-            .any(|t| t.kind == TokenKind::Keyword && t.text == "let"));
+        assert!(
+            l2.iter()
+                .any(|t| t.kind == TokenKind::Keyword && t.text == "let")
+        );
     }
 
     #[test]
@@ -538,10 +539,12 @@ mod tests {
         );
         // Everything but the leading indentation (Plain, before the `"""` opens)
         // is part of the string.
-        assert!(lines[1]
-            .iter()
-            .filter(|t| !t.text.trim().is_empty())
-            .all(|t| t.kind == TokenKind::Str));
+        assert!(
+            lines[1]
+                .iter()
+                .filter(|t| !t.text.trim().is_empty())
+                .all(|t| t.kind == TokenKind::Str)
+        );
     }
 
     #[test]
@@ -554,9 +557,11 @@ mod tests {
         // Line 1 is entirely inside the string.
         assert!(lines[1].iter().all(|t| t.kind == TokenKind::Str));
         // Line 2 closes the string; line 3 is ordinary code again.
-        assert!(lines[3]
-            .iter()
-            .any(|t| t.kind == TokenKind::Keyword && t.text == "return"));
+        assert!(
+            lines[3]
+                .iter()
+                .any(|t| t.kind == TokenKind::Keyword && t.text == "return")
+        );
     }
 
     #[test]
@@ -565,10 +570,12 @@ mod tests {
         let src = "def f():\n    ''' nothing here is deployed '''\n    return 1";
         let lines = highlight(src, syn);
         assert!(lines[1].iter().all(|t| t.kind != TokenKind::Keyword));
-        assert!(lines[1]
-            .iter()
-            .filter(|t| !t.text.trim().is_empty())
-            .all(|t| t.kind == TokenKind::Str));
+        assert!(
+            lines[1]
+                .iter()
+                .filter(|t| !t.text.trim().is_empty())
+                .all(|t| t.kind == TokenKind::Str)
+        );
     }
 
     #[test]
@@ -604,9 +611,10 @@ mod tests {
         let k = kinds(&line);
         assert!(k.contains(&(TokenKind::Keyword, "FROM")));
         assert!(k.contains(&(TokenKind::Keyword, "AS")));
-        assert!(k
-            .iter()
-            .any(|(kind, text)| *kind == TokenKind::Comment && text.starts_with('#')));
+        assert!(
+            k.iter()
+                .any(|(kind, text)| *kind == TokenKind::Comment && text.starts_with('#'))
+        );
 
         let mut blk2 = None;
         let lower = highlight_line("from alpine", syn, &mut blk2);

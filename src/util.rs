@@ -778,9 +778,11 @@ mod tests {
         assert_eq!(seq.iter().filter(|&&b| b == 0x07).count(), 1);
         assert_eq!(seq[0], 0x1b);
         assert_eq!(seq[seq.len() - 1], 0x07);
-        assert!(seq[7..seq.len() - 1]
-            .iter()
-            .all(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/' || *b == b'='));
+        assert!(
+            seq[7..seq.len() - 1]
+                .iter()
+                .all(|b| b.is_ascii_alphanumeric() || *b == b'+' || *b == b'/' || *b == b'=')
+        );
     }
 
     #[test]

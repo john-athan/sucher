@@ -109,10 +109,10 @@ fn opf_path_from_container(xml: &str) -> Option<String> {
         match r.read_event_into(&mut buf) {
             Ok(Event::Eof) => break,
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
-                if e.local_name().as_ref() == "rootfile" {
-                    if let Some(p) = attr(&e, "full-path") {
-                        return Some(p);
-                    }
+                if e.local_name().as_ref() == "rootfile"
+                    && let Some(p) = attr(&e, "full-path")
+                {
+                    return Some(p);
                 }
             }
             Err(_) => break,

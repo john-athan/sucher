@@ -175,11 +175,7 @@ enum Transfer {
 impl Transfer {
     /// Which transfer a clipboard load asks for: a cut moves, a yank copies.
     fn of(cut: bool) -> Self {
-        if cut {
-            Transfer::Move
-        } else {
-            Transfer::Copy
-        }
+        if cut { Transfer::Move } else { Transfer::Copy }
     }
 
     fn op(self, sources: Vec<fileop::Source>, dest: PathBuf) -> fileop::Op {
@@ -489,11 +485,7 @@ fn sort_cmp<T: Sortable>(a: &T, b: &T, sort: Sort) -> Ordering {
             cmp_name_ci(name_ext(a.sort_name()), name_ext(b.sort_name())).then_with(by_name)
         }
     };
-    if sort.reverse {
-        ord.reverse()
-    } else {
-        ord
-    }
+    if sort.reverse { ord.reverse() } else { ord }
 }
 
 /// What the preview pane is currently showing.
@@ -1219,10 +1211,10 @@ impl App {
             // Going up: the new (parent) listing enters from the left.
             self.enter_dir(parent, SlideDir::FromLeft);
             // Land on the directory we came out of.
-            if let Some(name) = from {
-                if let Some(pos) = self.view.iter().position(|&i| self.all[i].name == name) {
-                    self.state.select(Some(pos));
-                }
+            if let Some(name) = from
+                && let Some(pos) = self.view.iter().position(|&i| self.all[i].name == name)
+            {
+                self.state.select(Some(pos));
             }
         }
     }
@@ -2214,14 +2206,14 @@ impl App {
                         MouseEventKind::Down(MouseButton::Left) => {
                             if me.row == 0 {
                                 // Breadcrumb row (handled first, exactly as before).
-                                if let Some(target) = crumb_hit(&self.crumb_hits, me.column) {
-                                    if target != self.cwd {
-                                        // A breadcrumb always jumps to an ancestor
-                                        // (up), so the new listing enters from the
-                                        // left, matching `go_parent` (ADR 0006 D3).
-                                        self.enter_dir(target, SlideDir::FromLeft);
-                                        dirty = true;
-                                    }
+                                if let Some(target) = crumb_hit(&self.crumb_hits, me.column)
+                                    && target != self.cwd
+                                {
+                                    // A breadcrumb always jumps to an ancestor
+                                    // (up), so the new listing enters from the
+                                    // left, matching `go_parent` (ADR 0006 D3).
+                                    self.enter_dir(target, SlideDir::FromLeft);
+                                    dirty = true;
                                 }
                             } else if let Some(idx) = row_to_index(
                                 self.list_area,
@@ -2282,10 +2274,10 @@ impl App {
                     // GIF: advance to the next frame if its delay elapsed. `tick`
                     // re-encodes and returns true only on a real frame change, so
                     // we redraw exactly when the picture moved.
-                    if let Some(pane) = self.pane.as_mut() {
-                        if pane.tick(Instant::now()) {
-                            dirty = true;
-                        }
+                    if let Some(pane) = self.pane.as_mut()
+                        && pane.tick(Instant::now())
+                    {
+                        dirty = true;
                     }
                 }
             }
@@ -2718,24 +2710,26 @@ impl App {
         // 2. If the worker is idle, launch the latest wanted raster. The
         //    want/pending split coalesces fast scrolling: only the final landing
         //    spot is ever started once the in-flight job drains.
-        if self.raster_pending.is_none() {
-            if let Some((path, kind)) = self.raster_want.take() {
-                if let Some((_, img)) = self.img_cache.iter().find(|(p, _)| *p == path) {
-                    // Became available while waiting, install without a worker.
-                    if Some(&path) == cur.as_ref() {
-                        let img = img.clone();
-                        self.show_image(img);
-                        dirty = true;
-                    }
-                } else {
-                    let tx = self.raster_tx.clone();
-                    let p = path.clone();
-                    thread::spawn(move || {
-                        // An image may be an animated GIF: try frames first, and
-                        // fall back to a single still decode (which also covers a
-                        // static/oversized GIF, where `decode_frames` returns None).
-                        // Every other format is always a single still poster.
-                        let result: Option<Rastered> = match kind {
+        if self.raster_pending.is_none()
+            && let Some((path, kind)) = self.raster_want.take()
+        {
+            if let Some((_, img)) = self.img_cache.iter().find(|(p, _)| *p == path) {
+                // Became available while waiting, install without a worker.
+                if Some(&path) == cur.as_ref() {
+                    let img = img.clone();
+                    self.show_image(img);
+                    dirty = true;
+                }
+            } else {
+                let tx = self.raster_tx.clone();
+                let p = path.clone();
+                thread::spawn(move || {
+                    // An image may be an animated GIF: try frames first, and
+                    // fall back to a single still decode (which also covers a
+                    // static/oversized GIF, where `decode_frames` returns None).
+                    // Every other format is always a single still poster.
+                    let result: Option<Rastered> =
+                        match kind {
                             Format::Image => media::decode_frames(&p)
                                 .map(Rastered::Animated)
                                 .or_else(|| {
@@ -2764,10 +2758,9 @@ impl App {
                                 .map(Rastered::Still),
                             _ => None,
                         };
-                        let _ = tx.send((p, result));
-                    });
-                    self.raster_pending = Some(path);
-                }
+                    let _ = tx.send((p, result));
+                });
+                self.raster_pending = Some(path);
             }
         }
 
@@ -3964,11 +3957,7 @@ fn fade_color(fade_t: Option<f32>, c: Color) -> Color {
 fn entry_block(view: &EntryListView, active: bool, filter: bool) -> Block<'static> {
     let accent = theme::palette().accent;
     let border = if active {
-        if filter {
-            theme::palette().doc
-        } else {
-            accent
-        }
+        if filter { theme::palette().doc } else { accent }
     } else {
         theme::palette().dim
     };
@@ -4843,7 +4832,9 @@ fn clipboard_text(base: &Path, paths: &[PathBuf]) -> String {
 /// unit-tested.
 fn yank_status(n: usize) -> String {
     let noun = if n == 1 { "path" } else { "paths" };
-    format!("sent {n} {noun} to the terminal via OSC 52 · the terminal decides whether the clipboard takes it")
+    format!(
+        "sent {n} {noun} to the terminal via OSC 52 · the terminal decides whether the clipboard takes it"
+    )
 }
 
 /// The paths an operation acts on: the mark set when it is non-empty, otherwise
@@ -4909,12 +4900,12 @@ fn dest_listing(dir: &Path) -> Vec<String> {
 /// has a four-character stem and a five-byte one, and a byte index would put the
 /// cursor inside the `é`.
 fn stem_end(name: &str, is_dir: bool) -> usize {
-    if !is_dir {
-        if let Some(dot) = name.rfind('.') {
-            if dot > 0 && dot + 1 < name.len() {
-                return name[..dot].chars().count();
-            }
-        }
+    if !is_dir
+        && let Some(dot) = name.rfind('.')
+        && dot > 0
+        && dot + 1 < name.len()
+    {
+        return name[..dot].chars().count();
     }
     name.chars().count()
 }
@@ -5225,10 +5216,10 @@ fn reselect(names: &[&str], wanted: Option<&str>, prev: Option<usize>) -> Option
     if names.is_empty() {
         return None;
     }
-    if let Some(wanted) = wanted {
-        if let Some(i) = names.iter().position(|n| *n == wanted) {
-            return Some(i);
-        }
+    if let Some(wanted) = wanted
+        && let Some(i) = names.iter().position(|n| *n == wanted)
+    {
+        return Some(i);
     }
     Some(prev.unwrap_or(0).min(names.len() - 1))
 }
@@ -5412,17 +5403,17 @@ fn head_spans(head: &git::RepoHead, dirty: bool, icons: IconMode) -> Vec<Span<'s
 
 fn crumb_segments(cwd: &Path, home: Option<&Path>) -> Vec<(String, PathBuf)> {
     // Under home: anchor on `~`, then append each remaining component.
-    if let Some(home) = home {
-        if let Ok(rest) = cwd.strip_prefix(home) {
-            let mut out = vec![("~".to_string(), home.to_path_buf())];
-            let mut acc = home.to_path_buf();
-            for comp in rest.components() {
-                let name = comp.as_os_str().to_string_lossy().into_owned();
-                acc = acc.join(&name);
-                out.push((name, acc.clone()));
-            }
-            return out;
+    if let Some(home) = home
+        && let Ok(rest) = cwd.strip_prefix(home)
+    {
+        let mut out = vec![("~".to_string(), home.to_path_buf())];
+        let mut acc = home.to_path_buf();
+        for comp in rest.components() {
+            let name = comp.as_os_str().to_string_lossy().into_owned();
+            acc = acc.join(&name);
+            out.push((name, acc.clone()));
         }
+        return out;
     }
     // Root-anchored: the `/` segment, then each normal component cumulatively.
     let mut out = vec![("/".to_string(), PathBuf::from("/"))];
@@ -6015,7 +6006,7 @@ mod tests {
         // A click outside the pane's x-range (adjacent pane, same row) → None.
         assert_eq!(row_to_index(area, 0, 3, 9, 5), None); // left of x
         assert_eq!(row_to_index(area, 0, 3, 40, 5), None); // at x+width (excluded)
-                                                           // With a scrolled list (offset 12), the first visible row is view[12].
+        // With a scrolled list (offset 12), the first visible row is view[12].
         assert_eq!(row_to_index(area, 12, 3, 15, 100), Some(12));
         assert_eq!(row_to_index(area, 12, 5, 15, 100), Some(14));
         // Offset math must still bounds-check: row resolves to index 14 but the
@@ -6034,7 +6025,7 @@ mod tests {
         assert_eq!(visible_window(0, Some(50), 100, 10), (41, 41..51));
         assert_eq!(visible_window(0, Some(9), 100, 10), (0, 0..10)); // last row still fits
         assert_eq!(visible_window(0, Some(10), 100, 10), (1, 1..11)); // one past → scroll 1
-                                                                      // Scroll UP: selection above the window → offset drops to the selection.
+        // Scroll UP: selection above the window → offset drops to the selection.
         assert_eq!(visible_window(40, Some(12), 100, 10), (12, 12..22));
         // Clamp at the end: a big offset with no lower selection can't scroll past
         // `len - height`, so the last page is fully filled.

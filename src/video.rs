@@ -65,12 +65,11 @@ fn ffprobe(path: &str) -> Probe {
         if let Some(fr) = it.next() {
             // r_frame_rate is "num/den"
             let mut parts = fr.trim().split('/');
-            if let (Some(n), Some(d)) = (parts.next(), parts.next()) {
-                if let (Ok(n), Ok(d)) = (n.parse::<f64>(), d.parse::<f64>()) {
-                    if d > 0.0 {
-                        p.fps = n / d;
-                    }
-                }
+            if let (Some(n), Some(d)) = (parts.next(), parts.next())
+                && let (Ok(n), Ok(d)) = (n.parse::<f64>(), d.parse::<f64>())
+                && d > 0.0
+            {
+                p.fps = n / d;
             }
         }
         if let Some(d) = it.next().and_then(|v| v.trim().parse().ok()) {
@@ -140,7 +139,7 @@ fn target_w() -> u32 {
 struct Latest {
     img: Option<DynamicImage>,
     pos: f64,
-    gen: u64,
+    seq: u64,
     ended: bool,
 }
 
@@ -287,16 +286,16 @@ impl VideoApp {
                     if l.ended {
                         ended = true;
                         None
-                    } else if l.gen != self.last_gen {
-                        l.img.clone().map(|img| (img, l.pos, l.gen))
+                    } else if l.seq != self.last_gen {
+                        l.img.clone().map(|img| (img, l.pos, l.seq))
                     } else {
                         None
                     }
                 };
-                if let Some((img, pos, gen)) = newframe {
+                if let Some((img, pos, seq)) = newframe {
                     self.pane.set(img);
                     self.pos = pos;
-                    self.last_gen = gen;
+                    self.last_gen = seq;
                     dirty = true;
                 } else if ended {
                     self.stop_play();
@@ -305,38 +304,38 @@ impl VideoApp {
             }
 
             let timeout = if self.playing { 16 } else { 1000 };
-            if event::poll(Duration::from_millis(timeout))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind != KeyEventKind::Press {
-                        continue;
+            if event::poll(Duration::from_millis(timeout))?
+                && let Event::Key(key) = event::read()?
+            {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                dirty = true;
+                match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                    KeyCode::Char('x') => util::open_in_native_app(&self.path),
+                    KeyCode::Char(' ') => {
+                        if self.playing {
+                            self.stop_play();
+                        } else {
+                            self.start_play();
+                        }
                     }
-                    dirty = true;
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Char('x') => util::open_in_native_app(&self.path),
-                        KeyCode::Char(' ') => {
-                            if self.playing {
-                                self.stop_play();
-                            } else {
-                                self.start_play();
-                            }
-                        }
-                        KeyCode::Right | KeyCode::Char('l') => self.seek(5.0),
-                        KeyCode::Left | KeyCode::Char('h') => self.seek(-5.0),
-                        KeyCode::Up | KeyCode::Char('k') => self.seek(30.0),
-                        KeyCode::Down | KeyCode::Char('j') => self.seek(-30.0),
-                        KeyCode::Char('.') => self.seek(1.0 / PLAY_FPS),
-                        KeyCode::Char(',') => self.seek(-1.0 / PLAY_FPS),
-                        KeyCode::Char('g') | KeyCode::Home => {
-                            self.pos = 0.0;
-                            self.seek(0.0);
-                        }
-                        KeyCode::Char('G') | KeyCode::End => {
-                            self.pos = (self.probe.dur - 1.0).max(0.0);
-                            self.seek(0.0);
-                        }
-                        _ => {}
+                    KeyCode::Right | KeyCode::Char('l') => self.seek(5.0),
+                    KeyCode::Left | KeyCode::Char('h') => self.seek(-5.0),
+                    KeyCode::Up | KeyCode::Char('k') => self.seek(30.0),
+                    KeyCode::Down | KeyCode::Char('j') => self.seek(-30.0),
+                    KeyCode::Char('.') => self.seek(1.0 / PLAY_FPS),
+                    KeyCode::Char(',') => self.seek(-1.0 / PLAY_FPS),
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        self.pos = 0.0;
+                        self.seek(0.0);
                     }
+                    KeyCode::Char('G') | KeyCode::End => {
+                        self.pos = (self.probe.dur - 1.0).max(0.0);
+                        self.seek(0.0);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -410,12 +409,12 @@ fn decode_loop(
         if target > elapsed {
             std::thread::sleep(Duration::from_secs_f64(target - elapsed));
         }
-        if let Some(img) = RgbImage::from_raw(w, h, buf.clone()) {
-            if let Ok(mut l) = shared.lock() {
-                l.img = Some(DynamicImage::ImageRgb8(img));
-                l.pos = pos0 + target;
-                l.gen += 1;
-            }
+        if let Some(img) = RgbImage::from_raw(w, h, buf.clone())
+            && let Ok(mut l) = shared.lock()
+        {
+            l.img = Some(DynamicImage::ImageRgb8(img));
+            l.pos = pos0 + target;
+            l.seq += 1;
         }
         i += 1;
     }

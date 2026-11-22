@@ -22,8 +22,8 @@ use image::DynamicImage;
 #[cfg(pdfium_embedded)]
 use std::path::Path;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Sender};
 use std::sync::OnceLock;
+use std::sync::mpsc::{self, Sender};
 
 /// One render request handed to the service thread, with a private reply channel.
 struct Job {
@@ -185,10 +185,10 @@ fn resolve_library_path() -> Option<PathBuf> {
     }
     let file = lib_file_name();
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(d) = exe.parent() {
-            dirs.push(d.to_path_buf());
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(d) = exe.parent()
+    {
+        dirs.push(d.to_path_buf());
     }
     #[cfg(target_os = "macos")]
     {

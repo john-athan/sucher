@@ -505,9 +505,11 @@ mod tests {
         // The middle line is entirely inside the block comment.
         assert!(rows[1].iter().all(|t| t.kind == TokenKind::Comment));
         // After the block closes on line 3, `let` is a keyword again.
-        assert!(rows[2]
-            .iter()
-            .any(|t| t.kind == TokenKind::Keyword && t.text == "let"));
+        assert!(
+            rows[2]
+                .iter()
+                .any(|t| t.kind == TokenKind::Keyword && t.text == "let")
+        );
     }
 
     #[test]

@@ -43,10 +43,10 @@ fn page_count(path: &str) -> usize {
     if let Ok(o) = out {
         let txt = String::from_utf8_lossy(&o.stdout);
         for line in txt.lines() {
-            if let Some(rest) = line.strip_prefix("Pages:") {
-                if let Ok(n) = rest.trim().parse::<usize>() {
-                    return n;
-                }
+            if let Some(rest) = line.strip_prefix("Pages:")
+                && let Ok(n) = rest.trim().parse::<usize>()
+            {
+                return n;
             }
         }
     }
@@ -90,10 +90,10 @@ fn render_page(path: &str, page: usize, target_w: u32) -> Result<image::DynamicI
 /// both when the library is absent and when a specific pdfium render fails (a
 /// document pdfium rejects but poppler can still draw). See ADR 0015.
 fn render(path: &str, page: usize, target_w: u32) -> Result<image::DynamicImage, String> {
-    if crate::pdfium::available() {
-        if let Ok(img) = crate::pdfium::render(path, page, target_w) {
-            return Ok(img);
-        }
+    if crate::pdfium::available()
+        && let Ok(img) = crate::pdfium::render(path, page, target_w)
+    {
+        return Ok(img);
     }
     render_page(path, page, target_w)
 }

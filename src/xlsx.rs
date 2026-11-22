@@ -360,10 +360,10 @@ fn stream_sheet(
     // NOT when `parse_sheet_xml` returned because `stop` was set for a sheet
     // switch, that sheet's data is being discarded, and flagging it `done` would
     // misreport a partial, superseded load as complete (pre-refactor semantics).
-    if !stop.load(Ordering::Relaxed) {
-        if let Ok(mut d) = data.lock() {
-            d.done = true;
-        }
+    if !stop.load(Ordering::Relaxed)
+        && let Ok(mut d) = data.lock()
+    {
+        d.done = true;
     }
 }
 

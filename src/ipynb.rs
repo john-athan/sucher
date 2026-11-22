@@ -10,7 +10,7 @@
 // `cell_source`, `strip_ansi`, `b64_decode`, …) unit-tested against inline JSON
 // and known vectors; `to_markdown` and `media` are the thin file-IO wrappers.
 
-use crate::util::{read_to_string_capped, MAX_DECODE_BYTES};
+use crate::util::{MAX_DECODE_BYTES, read_to_string_capped};
 use serde_json::Value;
 use std::fs::File;
 use std::path::PathBuf;

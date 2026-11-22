@@ -591,12 +591,12 @@ impl Names {
 /// extension to preserve at all, so `v1.2` stays `v1.2 (2)` instead of being cut
 /// into `v1 (2).2`.
 fn suffixed(name: &str, n: usize, kind: NodeKind) -> String {
-    if kind != NodeKind::Dir {
-        if let Some(dot) = name.rfind('.') {
-            if dot > 0 && dot + 1 < name.len() {
-                return format!("{} ({n}).{}", &name[..dot], &name[dot + 1..]);
-            }
-        }
+    if kind != NodeKind::Dir
+        && let Some(dot) = name.rfind('.')
+        && dot > 0
+        && dot + 1 < name.len()
+    {
+        return format!("{} ({n}).{}", &name[..dot], &name[dot + 1..]);
     }
     format!("{name} ({n})")
 }

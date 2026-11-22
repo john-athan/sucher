@@ -329,10 +329,10 @@ impl App {
         let Some(path) = self.images.get(self.gallery_idx) else {
             return;
         };
-        if let Ok(Ok(img)) = crate::util::open_image_reader(path).map(|r| r.decode()) {
-            if let Some(pane) = self.pane.as_mut() {
-                pane.set(img);
-            }
+        if let Ok(Ok(img)) = crate::util::open_image_reader(path).map(|r| r.decode())
+            && let Some(pane) = self.pane.as_mut()
+        {
+            pane.set(img);
         }
     }
 
@@ -843,14 +843,14 @@ fn percent_decode(s: &str) -> String {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3]) {
-                if let Ok(b) = u8::from_str_radix(hex, 16) {
-                    out.push(b);
-                    i += 3;
-                    continue;
-                }
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(hex) = std::str::from_utf8(&bytes[i + 1..i + 3])
+            && let Ok(b) = u8::from_str_radix(hex, 16)
+        {
+            out.push(b);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;

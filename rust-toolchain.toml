@@ -1,0 +1,5 @@
+# The one source of truth for the Rust version: rustup (and so CI) reads this
+# file, so a local build and `make check` in CI use the same compiler.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]

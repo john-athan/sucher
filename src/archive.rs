@@ -286,11 +286,11 @@ impl App {
 
     /// Descend into the selected folder (Enter/l/→ on a directory row).
     fn enter(&mut self) {
-        if let Some(node) = self.view.get(self.sel) {
-            if node.is_dir {
-                self.cwd = format!("{}{}", self.cwd, node.label); // label ends in '/'
-                self.rebuild();
-            }
+        if let Some(node) = self.view.get(self.sel)
+            && node.is_dir
+        {
+            self.cwd = format!("{}{}", self.cwd, node.label); // label ends in '/'
+            self.rebuild();
         }
     }
 
@@ -392,7 +392,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{children, Entry};
+    use super::{Entry, children};
 
     fn e(name: &str, is_dir: bool) -> Entry {
         Entry {

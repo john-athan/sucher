@@ -479,7 +479,7 @@ fn normalize(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{markdown_from_str, MAX_DEPTH};
+    use super::{MAX_DEPTH, markdown_from_str};
 
     const DOC: &str = r#"<!DOCTYPE html>
 <html><head><title>ignored</title><style>body{color:red}</style></head>

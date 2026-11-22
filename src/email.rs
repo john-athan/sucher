@@ -160,10 +160,9 @@ fn body_markdown(m: &Message) -> String {
     if m.html_body()
         .next()
         .is_some_and(|p| matches!(p.kind(), PartKind::Html))
+        && let Some(html) = m.body_html(0)
     {
-        if let Some(html) = m.body_html(0) {
-            return crate::html::markdown_from_str(&html);
-        }
+        return crate::html::markdown_from_str(&html);
     }
     m.body_text(0).unwrap_or_default().into_owned()
 }

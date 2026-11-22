@@ -3,7 +3,7 @@
 // the pane holds their frames and the main loop ticks them; every other image
 // is a one-frame animation that never self-advances (no idle churn).
 
-use crate::anim::{self, ease_out_cubic, zoom_rect, Anim};
+use crate::anim::{self, Anim, ease_out_cubic, zoom_rect};
 use crate::media::{self, Frame, ImagePane};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use image::DynamicImage;
@@ -25,10 +25,10 @@ pub fn run(title: String, path: String) -> io::Result<()> {
     // Animated GIF? Decode its frames and loop them. `decode_frames` returns
     // None for a non-animated / oversized / undecodable GIF, so we fall through
     // to the ordinary single-image decode, a static first frame in that case.
-    if is_gif(&path) {
-        if let Some(frames) = media::decode_frames(Path::new(&path)) {
-            return show_frames(title, frames, Some(path));
-        }
+    if is_gif(&path)
+        && let Some(frames) = media::decode_frames(Path::new(&path))
+    {
+        return show_frames(title, frames, Some(path));
     }
     // Decode by content, not extension, with explicit pixel limits (ADR 0009):
     // `open_image_reader` sniffs the magic bytes (so a misnamed JPEG-as-.png still

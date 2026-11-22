@@ -49,7 +49,7 @@ mod plan;
 
 // The front door: the browser reaches the whole engine through `fileop::`, not
 // through its two private halves.
-pub use plan::{plan, Conflict, Kind, Node, NodeKind, Op, Plan, PlanCtx, Refusal, Source, Step};
+pub use plan::{Conflict, Kind, Node, NodeKind, Op, Plan, PlanCtx, Refusal, Source, Step, plan};
 // The executor's surface. Both directions leave through the same door and hand
 // back the same [`Run`], so the browser drives an undo with the pump it already
 // wrote for a paste.
@@ -64,7 +64,7 @@ pub use plan::{plan, Conflict, Kind, Node, NodeKind, Op, Plan, PlanCtx, Refusal,
 // builds, and the narrow `cfg_attr` says exactly that, the same way `format.rs`
 // scopes its allow to the builds where the item genuinely has no caller.
 #[cfg_attr(not(test), allow(unused_imports))]
-pub use exec::{start, start_undo, Direction, Failure, Journal, Msg, Report, Run, Undoable};
+pub use exec::{Direction, Failure, Journal, Msg, Report, Run, Undoable, start, start_undo};
 
 use std::ffi::OsString;
 use std::fs::{self, Metadata};

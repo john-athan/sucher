@@ -175,10 +175,10 @@ impl Query {
                 return false;
             }
         }
-        if let Some((cmp, value)) = self.size {
-            if !cmp.test(size, value) {
-                return false;
-            }
+        if let Some((cmp, value)) = self.size
+            && !cmp.test(size, value)
+        {
+            return false;
         }
         if let Some((cmp, dur)) = self.age {
             let item_age = modified.and_then(|t| t.elapsed().ok());

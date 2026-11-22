@@ -704,9 +704,11 @@ mod tests {
     #[test]
     fn blockquote_gets_gutter() {
         let lines = plain_at("> quoted text here\n", 80);
-        assert!(lines
-            .iter()
-            .any(|l| l.starts_with("│ ") && l.contains("quoted")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("│ ") && l.contains("quoted"))
+        );
     }
 
     #[test]

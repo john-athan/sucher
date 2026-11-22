@@ -190,8 +190,8 @@ pub fn status_map(dir: &Path) -> Option<HashMap<String, GitStatus>> {
     let rev_out = String::from_utf8_lossy(&rev.stdout);
     let mut lines = rev_out.lines();
     let _toplevel = lines.next()?; // line 1: repo root (only used to confirm a repo)
-                                   // Line 2: the root-relative prefix. Empty at the repo root; `git` always
-                                   // emits it with a trailing `/` for a nested dir (e.g. `src/`).
+    // Line 2: the root-relative prefix. Empty at the repo root; `git` always
+    // emits it with a trailing `/` for a nested dir (e.g. `src/`).
     let prefix = lines.next().unwrap_or("").trim();
 
     // 2. Read the porcelain status, NUL-separated so paths are literal.

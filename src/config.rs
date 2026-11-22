@@ -480,7 +480,7 @@ mod tests {
     fn is_dark_black_white_and_boundary() {
         assert!(is_dark(0, 0, 0)); // black → dark
         assert!(!is_dark(255, 255, 255)); // white → light
-                                          // Mid-grey 127 luma = 127 < 128 → dark; 128 → light.
+        // Mid-grey 127 luma = 127 < 128 → dark; 128 → light.
         assert!(is_dark(127, 127, 127));
         assert!(!is_dark(128, 128, 128));
     }
@@ -504,18 +504,19 @@ mod tests {
     #[test]
     fn colorfgbg_last_field_is_background() {
         // Values are ANSI indices: 0 = black bg (dark), 15 = white bg (light).
+        // SAFETY (2024: env mutation is unsafe): the only test that touches COLORFGBG.
         let saved = std::env::var("COLORFGBG").ok();
-        std::env::set_var("COLORFGBG", "15;0");
+        unsafe { std::env::set_var("COLORFGBG", "15;0") };
         assert_eq!(from_colorfgbg(), Some(true));
-        std::env::set_var("COLORFGBG", "0;15");
+        unsafe { std::env::set_var("COLORFGBG", "0;15") };
         assert_eq!(from_colorfgbg(), Some(false));
-        std::env::set_var("COLORFGBG", "15;default;0");
+        unsafe { std::env::set_var("COLORFGBG", "15;default;0") };
         assert_eq!(from_colorfgbg(), Some(true));
-        std::env::set_var("COLORFGBG", "garbage");
+        unsafe { std::env::set_var("COLORFGBG", "garbage") };
         assert_eq!(from_colorfgbg(), None);
         match saved {
-            Some(v) => std::env::set_var("COLORFGBG", v),
-            None => std::env::remove_var("COLORFGBG"),
+            Some(v) => unsafe { std::env::set_var("COLORFGBG", v) },
+            None => unsafe { std::env::remove_var("COLORFGBG") },
         }
     }
 

@@ -13,8 +13,8 @@
 
 use image::codecs::gif::GifDecoder;
 use image::{AnimationDecoder, DynamicImage, ImageDecoder};
-use ratatui::layout::Rect;
 use ratatui::Frame as RtFrame;
+use ratatui::layout::Rect;
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};

@@ -27,7 +27,7 @@
 // Absent library → `Connection::open_in_memory` returns `Err`, and the data-file
 // viewer surfaces that as a normal open failure, the way an unreadable file does.
 
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -450,37 +450,39 @@ fn decodable(t: i32) -> bool {
 /// # Safety
 /// `data` must be the data pointer of a vector of type `t` with more than `r` rows.
 unsafe fn cell(api: &Api, t: i32, data: *mut u8, r: usize) -> String {
-    macro_rules! at {
-        ($ty:ty) => {
-            data.cast::<$ty>().add(r).read_unaligned()
-        };
-    }
-    match t {
-        ty::BOOLEAN => (if at!(u8) != 0 { "true" } else { "false" }).to_string(),
-        ty::TINYINT => at!(i8).to_string(),
-        ty::SMALLINT => at!(i16).to_string(),
-        ty::INTEGER => at!(i32).to_string(),
-        ty::BIGINT => at!(i64).to_string(),
-        ty::UTINYINT => at!(u8).to_string(),
-        ty::USMALLINT => at!(u16).to_string(),
-        ty::UINTEGER => at!(u32).to_string(),
-        ty::UBIGINT => at!(u64).to_string(),
-        // `duckdb_hugeint` is { lower: u64, upper: i64 }.
-        ty::HUGEINT => {
-            let lo = at!(u64) as u128;
-            let hi = data.cast::<i64>().add(r * 2 + 1).read_unaligned();
-            ((hi as i128) << 64 | lo as i128).to_string()
+    unsafe {
+        macro_rules! at {
+            ($ty:ty) => {
+                data.cast::<$ty>().add(r).read_unaligned()
+            };
         }
-        ty::UHUGEINT => {
-            let lo = at!(u64) as u128;
-            let hi = data.cast::<u64>().add(r * 2 + 1).read_unaligned() as u128;
-            (hi << 64 | lo).to_string()
-        }
-        _ => {
-            let mut s = data.cast::<StringT>().add(r).read_unaligned();
-            let len = (api.string_length)(StringT { a: s.a, b: s.b }) as usize;
-            let p = (api.string_data)(&mut s) as *const u8;
-            String::from_utf8_lossy(std::slice::from_raw_parts(p, len)).into_owned()
+        match t {
+            ty::BOOLEAN => (if at!(u8) != 0 { "true" } else { "false" }).to_string(),
+            ty::TINYINT => at!(i8).to_string(),
+            ty::SMALLINT => at!(i16).to_string(),
+            ty::INTEGER => at!(i32).to_string(),
+            ty::BIGINT => at!(i64).to_string(),
+            ty::UTINYINT => at!(u8).to_string(),
+            ty::USMALLINT => at!(u16).to_string(),
+            ty::UINTEGER => at!(u32).to_string(),
+            ty::UBIGINT => at!(u64).to_string(),
+            // `duckdb_hugeint` is { lower: u64, upper: i64 }.
+            ty::HUGEINT => {
+                let lo = at!(u64) as u128;
+                let hi = data.cast::<i64>().add(r * 2 + 1).read_unaligned();
+                ((hi as i128) << 64 | lo as i128).to_string()
+            }
+            ty::UHUGEINT => {
+                let lo = at!(u64) as u128;
+                let hi = data.cast::<u64>().add(r * 2 + 1).read_unaligned() as u128;
+                (hi << 64 | lo).to_string()
+            }
+            _ => {
+                let mut s = data.cast::<StringT>().add(r).read_unaligned();
+                let len = (api.string_length)(StringT { a: s.a, b: s.b }) as usize;
+                let p = (api.string_data)(&mut s) as *const u8;
+                String::from_utf8_lossy(std::slice::from_raw_parts(p, len)).into_owned()
+            }
         }
     }
 }

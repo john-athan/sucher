@@ -6,7 +6,7 @@
 // The grid renders only the visible window and tracks the cursor.
 
 use crate::xlsx::StreamBook;
-use calamine::{open_workbook_auto, Data, ExcelDateTime, Reader};
+use calamine::{Data, ExcelDateTime, Reader, open_workbook_auto};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -642,11 +642,7 @@ pub fn preview_grid(path: &str, max_rows: usize, max_cols: usize) -> Option<Vec<
     for r in &mut rows {
         r.truncate(max_cols);
     }
-    if rows.is_empty() {
-        None
-    } else {
-        Some(rows)
-    }
+    if rows.is_empty() { None } else { Some(rows) }
 }
 
 fn col_name(mut i: usize) -> String {

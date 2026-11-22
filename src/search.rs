@@ -46,9 +46,9 @@ use grep_searcher::sinks::Lossy;
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder};
 use ignore::{WalkBuilder, WalkState};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Maximum hits reported before the walk stops itself (ADR 0007 D3). Mirrors the
