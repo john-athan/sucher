@@ -40,6 +40,7 @@ s samples/sample.xlsx  # sheet    -> sheet.png
 
 ## Social preview
 
-`make-social.py` composes `social-preview.png` (1280x640) for the GitHub
-social card. Upload it under **Settings → General → Social preview** (UI only;
-no API). Regenerate: `python3 assets/make-social.py`.
+`social-preview.svg` is the source of `social-preview.png` (1280x640), the GitHub
+social card, with `logo.svg` and a `browser.png` crop embedded. Upload it under
+**Settings, General, Social preview** (UI only; no API). Regenerate:
+`rsvg-convert -w 1280 -h 640 assets/social-preview.svg -o assets/social-preview.png`.
